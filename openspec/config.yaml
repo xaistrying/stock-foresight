@@ -3,18 +3,89 @@ schema: spec-driven
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Product: web app predicting short-term price movement for Vietnamese stocks.
+  Dashboard = chart panel + ticker-loading panel (vnstock -> SQLite) + AI insight
+  panel (Confidence, Market Sentiment, Advice). Model v1 is a single XGBoost
+  regressor. SageMaker and real news-based sentiment are future milestones
+  (M7, M8) — not implemented, do not assume they exist.
+
+  Tech stack: FastAPI (Python, pip + requirements.txt — no poetry/uv without
+  asking first), Vite + React (npm), SQLite, XGBoost. Data source is the
+  `vnstock` package — use the project's vnstock skill, don't hand-roll calls
+  it already wraps. UI generation uses the Hallmark design skill, which
+  auto-attaches when asked to build UI; if it asks for audience/tone, answer
+  consistently: Audience = individual Vietnamese retail investors, Tone =
+  professional, data-dense, trustworthy — not playful, not marketing-style.
+
+  Common commands:
+    Backend setup: python -m venv .venv && source .venv/bin/activate
+    Backend install: pip install -r backend/requirements.txt
+    Backend run: uvicorn app.main:app --reload --app-dir backend
+    Backend tests: pytest backend/tests
+    Frontend: cd frontend && npm install && npm run dev
+    Frontend tests: cd frontend && npm run test
+
+  Non-negotiable domain rules — restate the rule number in any spec/design that
+  touches one of these; if a task seems to require changing one, stop and ask
+  first rather than silently changing it:
+    1. Prediction target: target_t = ln(close[t+5] / close[t]) — log return,
+       5 TRADING SESSIONS ahead, not calendar days.
+    2. Never show raw log return in the UI — convert to a simple percentage
+       for display.
+    3. Advice thresholds are volatility-relative: 0.5 x rolling_std(returns,
+       60 sessions), not a fixed number. The 0.5 coefficient is provisional
+       and may change after backtesting (M3) — the volatility-relative
+       *design* is not provisional.
+    4. Confidence score (v1) = backtested hit-rate over the ticker's most
+       recent ~60 predictions. Not a statistical prediction interval (that's
+       a future quantile-regression upgrade, out of v1 scope).
+    5. "Market Sentiment" is a technical proxy (RSI, MACD, Ichimoku position),
+       not real news/NLP sentiment. Must be labeled as such in the UI.
+    6. Never frame output as investment advice. Use "technical observation"
+       framing and show the disclaimer from docs/DISCLAIMER.md anywhere
+       Advice, Confidence, or Sentiment is displayed.
+
+  Repository structure: backend/app/{api,core,db,services,ml}/,
+  backend/data/app.db, frontend/src/{components,pages,api,hooks}/,
+  docs/{MODEL_CARD.md, DATA_DICTIONARY.md, DISCLAIMER.md}, scripts/, openspec/.
+  docs/DATA_DICTIONARY.md doesn't exist yet — created in M1.
+  docs/DISCLAIMER.md doesn't exist yet — created in M6, when Advice/Confidence/
+  Sentiment are first displayed. Not M1 — there's nothing to disclaim before
+  M6 produces UI output.
+  Do not assume a SQLite schema; it isn't finalized until M1.
+
+  Milestone status:
+    [x] M0 - Target variable decided
+    [ ] M1 - Data ingestion (ticker -> vnstock -> SQLite)
+    [ ] M2 - Feature engineering (Ichimoku, RSI, MACD, Bollinger, ATR, OBV)
+    [ ] M3 - XGBoost training pipeline + backtest
+    [ ] M4 - FastAPI prediction endpoints
+    [ ] M5 - Vite/React dashboard + ticker panel
+    [ ] M6 - AI insight panel (stubbed service, see contract below)
+    [ ] M7 - SageMaker integration (not started, not discussed yet)
+    [ ] M8 - Real news-based sentiment (not started)
+
+  AI insight panel response contract (used from M6, mocked until M7) — keep
+  ai_insight_service.py behind this interface so swapping the mock for a real
+  SageMaker call later touches only that one file:
+    { ticker, as_of, confidence_score, confidence_basis, sentiment_proxy,
+      sentiment_inputs, advice_text, note }
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - If the change touches any non-negotiable domain rule (1-6 above),
+      name the rule number explicitly and state whether it's honored
+      unchanged or requires sign-off to change.
+  design:
+    - Any threshold, score, or label definition must cite which domain rule
+      it implements, or note that it's new (not yet covered by this file).
+  tasks:
+    - Do not include tasks that hand-roll vnstock API calls already wrapped
+      by the project's vnstock skill.
+    - Any task that renders Confidence, Sentiment, or Advice in the UI must
+      include (a) labeling Sentiment explicitly as a technical proxy, not
+      real sentiment (rule 5), and (b) displaying the investment-advice
+      disclaimer (rule 6).
