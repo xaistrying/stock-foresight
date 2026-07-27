@@ -121,6 +121,42 @@ mkt.quote(["VCB", "HPG", "FPT"])
 The free tier is only guaranteed stable at `resolution='1D'`. Intraday minute-level data (1m/5m/15m)
 and fine-grained tick data are sponsor features — don't promise that level of detail on free tier.
 
+**`count` and the community-tier 8-year OHLCV limit** (confirmed by hands-on testing, 2026-07):
+
+- `ohlcv()` takes an optional `count` parameter (not in the official docs, discovered via testing).
+  It caps rows returned **counted backward from `end`, not forward from `start`**. If `[start, end]`
+  spans more sessions than `count`, the *oldest* rows are silently dropped — you get exactly `count`
+  rows ending at `end`. No error, no warning for this specific case.
+- **Never omit `count` for a wide date range.** With `count` omitted entirely, `ohlcv()` was
+  observed returning only ~100 rows for an 8+ year `start`/`end` range — a small, silent, wrong
+  slice, with no warning at all. Always pass an explicit, generously large `count` (e.g. `5000`).
+- **Community (free) tier hard-caps daily OHLCV at 8 years, measured back from the query's `end`
+  parameter — not from today's date.** Confirmed identical on both `source='kbs'` and
+  `source='vci'`. When the requested range exceeds 8 years back from `end`, the library logs this
+  warning and truncates instead of raising an exception:
+```
+  ⚠️ Phiên bản cộng đồng: Dữ liệu OHLCV (1D) giới hạn tối đa 8 năm.
+  ⚠️ Community edition: OHLCV data (1D) limited to 8 years.
+```
+  A single call cannot return more than 8 years of history relative to whatever `end` you pass.
+  Sliding `end` earlier doesn't help reach older data within one call; to walk further back,
+  repeat the query with progressively earlier `end` values and stop once the returned earliest
+  date stops moving.
+- **`df['time'].min()` from one bounded call is ambiguous** — it may be the ticker's true listing
+  date (if listed less than 8 years before `end`), or just the 8-year tier boundary (if the ticker
+  is actually older). One call can't distinguish the two; don't treat it as a confirmed listing
+  date without a follow-up query using an earlier `end`.
+- **Illustrative sanity-check range, not a constant** (observed 2026-07, `end≈2026-07-25`,
+  `count=8000`, across multiple VN30 constituents): full 8-year windows returned between
+  **1990 and 1997** sessions depending on the ticker. The spread exists even though `end` was
+  effectively the same day for all of them — [likely explanation, unconfirmed] individual
+  trading halts/suspension days differ per ticker. Treat ~1990–2000 as a rough ballpark for
+  "did this look like a full 8-year pull," not an exact number — it will also drift across
+  different `end` dates as holiday-calendar composition changes year to year. If a backfill
+  for a ticker with known long trading history returns something far below this ballpark
+  (with no tier-limit warning logged), that's a signal to check the ticker's listing date or
+  data availability, not assume the request itself failed.
+
 ### Fundamental — financial statements
 
 ```python
@@ -254,7 +290,12 @@ way sponsor tiers recommend.
    calls.
 7. **Cache results locally** (CSV/parquet/SQLite) for low-frequency data (quarterly/yearly
    financial statements, stock lists) — don't re-fetch on every script run.
-8. When unsure whether a method exists on the free tier, suggest the user run `show_api()` /
+8. **Always pass an explicit, large `count` when calling `ohlcv()` for a wide date range**
+   (e.g. `count=5000`) — never omit it. Omitting `count` was observed returning a small,
+   silent default slice (~100 rows) with no warning, even for an 8+ year `start`/`end` range.
+   Also expect a logged (not raised) warning when the community-tier 8-year limit binds —
+   see "Market — price & trades" above.
+9. When unsure whether a method exists on the free tier, suggest the user run `show_api()` /
    `show_doc("<Domain>.<method>")` themselves to confirm before writing code that assumes it.
 
 ## Common errors
