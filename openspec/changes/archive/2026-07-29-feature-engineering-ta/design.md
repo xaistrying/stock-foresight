@@ -176,6 +176,20 @@ recompute is what brings a ticker current). A real parameter-version
 column is deferred; the trigger for building it is "computed_at
 comparison stops being precise enough," which hasn't happened yet.
 
+### 9. Ingestion wiring: `load_ticker()` calls `recompute_features_for_ticker()`
+Decided during implementation/verification, not in the original proposal.
+Without this, `features` never populates via the actual running
+application — the only way to produce rows was calling
+`recompute_features_for_ticker` directly, which is how the unit tests
+exercise it but not how a real user or M3 will. This makes M2's stated
+goal (persisted features) actually reachable through the app, not just
+through test-only invocation.
+
+**Scope consequence**: this modifies `ticker-data-ingestion` (M1's
+capability) in a way the original M2 proposal ("Modified Capabilities:
+none") didn't anticipate. Documented here rather than left as a silent
+divergence from the archived M1 spec.
+
 ## Risks / Trade-offs
 
 - **[Risk]** Vietnamese tickers may have thin trading history (M1's ~8-year

@@ -58,7 +58,7 @@ context: |
   Milestone status:
     [x] M0 - Target variable decided
     [x] M1 - Data ingestion (ticker -> vnstock -> SQLite)
-    [ ] M2 - Feature engineering (Ichimoku, RSI, MACD, Bollinger, ATR, OBV)
+    [x] M2 - Feature engineering (Ichimoku, RSI, MACD, Bollinger, ATR, OBV)
     [ ] M3 - XGBoost training pipeline + backtest
     [ ] M4 - FastAPI prediction endpoints
     [ ] M5 - Vite/React dashboard + ticker panel

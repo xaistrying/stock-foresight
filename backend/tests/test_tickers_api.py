@@ -4,8 +4,9 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+import app.ml.feature_engineering as feature_engineering
 import app.services.ticker_ingestion as ticker_ingestion
-from app.db.schema import CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
 from app.main import app
 
 
@@ -15,11 +16,15 @@ def client(monkeypatch, tmp_path):
     conn = sqlite3.connect(db_path)
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_TICKERS_TABLE)
+    conn.execute(CREATE_FEATURES_TABLE)
     conn.commit()
     conn.close()
 
     monkeypatch.setattr(
         ticker_ingestion, "get_connection", lambda: sqlite3.connect(db_path)
+    )
+    monkeypatch.setattr(
+        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
     )
 
     df = pd.DataFrame(

@@ -1,10 +1,12 @@
 import logging
 from datetime import date, datetime, timedelta
+from dateutil.relativedelta import relativedelta
 
 from vnstock.core.exceptions import RateLimitError
 from vnstock.ui import Market
 
 from app.db.connection import get_connection
+from app.ml.feature_engineering import recompute_features_for_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,7 @@ def load_ticker(ticker: str) -> dict:
             )
 
     available_since = df["time"].min()
-    tier_floor = end - timedelta(days=365 * 8)
+    tier_floor = end - relativedelta(years=8)
     possibly_truncated_by_tier = (
         abs((date.fromisoformat(available_since) - tier_floor).days) <= 30
     )
@@ -73,8 +75,16 @@ def load_ticker(ticker: str) -> dict:
     finally:
         conn.close()
 
+    try:
+        recompute_features_for_ticker(ticker)
+        features_computed = True
+    except Exception:
+        logger.exception("Feature recomputation failed for %s", ticker)
+        features_computed = False
+
     return {
         "rows_loaded": len(rows),
         "available_since": available_since,
         "possibly_truncated_by_tier": possibly_truncated_by_tier,
+        "features_computed": features_computed,
     }

@@ -4,8 +4,9 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
+import app.ml.feature_engineering as feature_engineering
 import app.services.ticker_ingestion as ticker_ingestion
-from app.db.schema import CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
 from app.services.ticker_ingestion import UPSERT_OHLCV, load_ticker
 
 
@@ -14,11 +15,15 @@ def _load_with_fake_fetch(monkeypatch, tmp_path, df):
     conn = sqlite3.connect(db_path)
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_TICKERS_TABLE)
+    conn.execute(CREATE_FEATURES_TABLE)
     conn.commit()
     conn.close()
 
     monkeypatch.setattr(
         ticker_ingestion, "get_connection", lambda: sqlite3.connect(db_path)
+    )
+    monkeypatch.setattr(
+        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
     )
 
     class FakeEquity:
@@ -145,3 +150,38 @@ def test_possibly_truncated_by_tier_unset_outside_boundary(monkeypatch, tmp_path
 
     assert ticker_row == (0,)
     assert ohlcv_rows == [(available_since.isoformat(),)]
+
+
+def test_load_ticker_triggers_feature_computation_for_the_loaded_ticker(
+    monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setattr(
+        ticker_ingestion, "recompute_features_for_ticker", calls.append
+    )
+
+    df = _single_row_df(date(2024, 1, 2))
+    result, _db_path = _load_with_fake_fetch(monkeypatch, tmp_path, df)
+
+    assert calls == ["VIB"]
+    assert result["features_computed"] is True
+
+
+def test_load_ticker_reports_features_computed_false_without_failing_the_load(
+    monkeypatch, tmp_path
+):
+    def _boom(ticker):
+        raise RuntimeError("feature computation exploded")
+
+    monkeypatch.setattr(ticker_ingestion, "recompute_features_for_ticker", _boom)
+
+    df = _single_row_df(date(2024, 1, 2))
+    result, db_path = _load_with_fake_fetch(monkeypatch, tmp_path, df)
+
+    assert result["rows_loaded"] == 1
+    assert result["features_computed"] is False
+
+    conn = sqlite3.connect(db_path)
+    ohlcv_rows = conn.execute("SELECT date FROM ohlcv").fetchall()
+    conn.close()
+    assert ohlcv_rows == [("2024-01-02",)]

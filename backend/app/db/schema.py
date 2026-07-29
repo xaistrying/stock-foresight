@@ -19,3 +19,28 @@ CREATE TABLE IF NOT EXISTS tickers (
     last_loaded_at TEXT
 )
 """
+
+CREATE_FEATURES_TABLE = """
+CREATE TABLE IF NOT EXISTS features (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    tenkan_sen REAL,
+    kijun_sen REAL,
+    senkou_span_a REAL,
+    senkou_span_b REAL,
+    chikou_signal REAL,
+    rsi REAL,
+    macd_line REAL,
+    macd_signal REAL,
+    macd_histogram REAL,
+    bb_upper REAL,
+    bb_middle REAL,
+    bb_lower REAL,
+    atr REAL,
+    obv REAL,
+    target REAL,
+    near_gap INTEGER NOT NULL,
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (ticker, date)
+)
+"""
