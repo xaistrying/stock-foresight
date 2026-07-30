@@ -98,14 +98,23 @@ def _wilder_smooth(values: pd.Series, period: int) -> pd.Series:
     values, then recursively smooth (avg = (avg*(period-1) + new) / period).
     Index 0..period-2 are NaN (insufficient history); index period-1 is the
     seed. `values` must already be aligned so index 0 is the first usable
-    input (e.g. the first close-to-close delta)."""
+    input (e.g. the first close-to-close delta).
+
+    If `values` has fewer than `period` rows, there isn't enough history to
+    seed even the first value — returns an all-NaN series of the same
+    length/index rather than raising. Deliberate: a too-short series should
+    surface as missing indicator values (the row is already near_gap=1
+    regardless, per M2 Decision 2's longest-lookback rule), not as a crash
+    that silently empties the whole features table for that ticker.
+    """
+    if len(values) < period:
+        return pd.Series(pd.NA, index=values.index, dtype="Float64")
+
     smoothed = values.copy()
     smoothed.iloc[: period - 1] = pd.NA
     smoothed.iloc[period - 1] = values.iloc[:period].mean()
-
     for i in range(period, len(values)):
         smoothed.iloc[i] = (smoothed.iloc[i - 1] * (period - 1) + values.iloc[i]) / period
-
     return smoothed
 
 

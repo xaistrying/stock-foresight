@@ -44,3 +44,15 @@ CREATE TABLE IF NOT EXISTS features (
     PRIMARY KEY (ticker, date)
 )
 """
+
+CREATE_BACKTEST_PREDICTIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS backtest_predictions (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    fold INTEGER NOT NULL,
+    predicted REAL NOT NULL,
+    actual REAL NOT NULL,
+    hit INTEGER NOT NULL,
+    PRIMARY KEY (ticker, date)
+)
+"""

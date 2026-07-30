@@ -3,6 +3,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import pytest
+from dateutil.relativedelta import relativedelta
 
 import app.ml.feature_engineering as feature_engineering
 import app.services.ticker_ingestion as ticker_ingestion
@@ -112,7 +113,7 @@ def test_gap_over_five_days_is_logged_but_does_not_fail_load(monkeypatch, caplog
 
 def test_possibly_truncated_by_tier_set_at_boundary(monkeypatch, tmp_path):
     end = date.today()
-    tier_floor = end - timedelta(days=365 * 8)
+    tier_floor = end - relativedelta(years=8)
     available_since = tier_floor + timedelta(days=30)  # exactly 30 days away
 
     df = _single_row_df(available_since)
@@ -133,7 +134,7 @@ def test_possibly_truncated_by_tier_set_at_boundary(monkeypatch, tmp_path):
 
 def test_possibly_truncated_by_tier_unset_outside_boundary(monkeypatch, tmp_path):
     end = date.today()
-    tier_floor = end - timedelta(days=365 * 8)
+    tier_floor = end - relativedelta(years=8)
     available_since = tier_floor + timedelta(days=31)  # just outside the 30-day tolerance
 
     df = _single_row_df(available_since)

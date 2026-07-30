@@ -1,7 +1,12 @@
 import sqlite3
 from pathlib import Path
 
-from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+from app.db.schema import (
+    CREATE_BACKTEST_PREDICTIONS_TABLE,
+    CREATE_FEATURES_TABLE,
+    CREATE_OHLCV_TABLE,
+    CREATE_TICKERS_TABLE,
+)
 
 DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "app.db"
 
@@ -19,6 +24,7 @@ def init_db() -> None:
         conn.execute(CREATE_OHLCV_TABLE)
         conn.execute(CREATE_TICKERS_TABLE)
         conn.execute(CREATE_FEATURES_TABLE)
+        conn.execute(CREATE_BACKTEST_PREDICTIONS_TABLE)
         conn.commit()
     finally:
         conn.close()

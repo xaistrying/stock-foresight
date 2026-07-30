@@ -13,6 +13,7 @@ from app.ml.feature_engineering import (
     LONGEST_LOOKBACK_END_OFFSET,
     LONGEST_LOOKBACK_WINDOW,
     TARGET_HORIZON,
+    _wilder_smooth,
     compute_atr,
     compute_bollinger_bands,
     compute_ichimoku,
@@ -64,6 +65,19 @@ def test_atr_matches_hand_computed_wilder_seed_value():
 
     assert atr.iloc[:14].isna().all()
     assert atr.iloc[14] == pytest.approx(1.030714, abs=1e-5)
+
+
+def test_wilder_smooth_returns_nan_series_when_too_short():
+    short_series = pd.Series([1.0, 2.0, 3.0])  # len=3, period=14
+    result = _wilder_smooth(short_series, period=14)
+    assert len(result) == len(short_series)
+    assert result.isna().all()
+
+
+def test_wilder_smooth_seed_at_exact_boundary_still_works():
+    exact_series = pd.Series(range(14), dtype=float)  # len == period
+    result = _wilder_smooth(exact_series, period=14)
+    assert not pd.isna(result.iloc[13])  # seed value present, no crash
 
 
 def test_obv_matches_hand_computed_signed_cumulative_volume():
