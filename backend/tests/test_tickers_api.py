@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 import app.ml.feature_engineering as feature_engineering
 import app.services.ticker_ingestion as ticker_ingestion
 from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
@@ -56,3 +57,22 @@ def test_load_endpoint_succeeds_on_first_load_and_reload(client):
     reload_response = client.post("/tickers/VIB/load")
     assert reload_response.status_code == 200
     assert reload_response.json()["rows_loaded"] == 2
+
+
+def test_startup_fails_when_model_file_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(main_module, "MODEL_PATH", tmp_path / "missing_model.json")
+
+    with pytest.raises(Exception):
+        with TestClient(app):
+            pass
+
+
+def test_startup_loads_model_and_reuses_it_across_requests(client):
+    assert app.state.model is not None
+    loaded_model = app.state.model
+
+    client.post("/tickers/VIB/load")
+    assert app.state.model is loaded_model
+
+    client.post("/tickers/VIB/load")
+    assert app.state.model is loaded_model

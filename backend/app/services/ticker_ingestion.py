@@ -24,12 +24,13 @@ ON CONFLICT(ticker, date) DO UPDATE SET
 """
 
 UPSERT_TICKER = """
-INSERT INTO tickers (ticker, available_since, possibly_truncated_by_tier, last_loaded_at)
-VALUES (?, ?, ?, ?)
+INSERT INTO tickers (ticker, available_since, possibly_truncated_by_tier, last_loaded_at, features_computed)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(ticker) DO UPDATE SET
     available_since = excluded.available_since,
     possibly_truncated_by_tier = excluded.possibly_truncated_by_tier,
-    last_loaded_at = excluded.last_loaded_at
+    last_loaded_at = excluded.last_loaded_at,
+    features_computed = excluded.features_computed
 """
 
 
@@ -67,10 +68,6 @@ def load_ticker(ticker: str) -> dict:
     conn = get_connection()
     try:
         conn.executemany(UPSERT_OHLCV, rows)
-        conn.execute(
-            UPSERT_TICKER,
-            (ticker, available_since, int(possibly_truncated_by_tier), last_loaded_at),
-        )
         conn.commit()
     finally:
         conn.close()
@@ -81,6 +78,22 @@ def load_ticker(ticker: str) -> dict:
     except Exception:
         logger.exception("Feature recomputation failed for %s", ticker)
         features_computed = False
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            UPSERT_TICKER,
+            (
+                ticker,
+                available_since,
+                int(possibly_truncated_by_tier),
+                last_loaded_at,
+                int(features_computed),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
     return {
         "rows_loaded": len(rows),

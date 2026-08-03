@@ -18,6 +18,12 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_tickers_features_computed(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tickers)")}
+    if "features_computed" not in columns:
+        conn.execute("ALTER TABLE tickers ADD COLUMN features_computed INTEGER")
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
@@ -25,6 +31,7 @@ def init_db() -> None:
         conn.execute(CREATE_TICKERS_TABLE)
         conn.execute(CREATE_FEATURES_TABLE)
         conn.execute(CREATE_BACKTEST_PREDICTIONS_TABLE)
+        _migrate_tickers_features_computed(conn)
         conn.commit()
     finally:
         conn.close()

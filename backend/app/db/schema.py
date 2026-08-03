@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS tickers (
     ticker TEXT PRIMARY KEY,
     available_since TEXT,
     possibly_truncated_by_tier INTEGER,
-    last_loaded_at TEXT
+    last_loaded_at TEXT,
+    features_computed INTEGER
 )
 """
 

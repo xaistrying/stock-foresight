@@ -186,3 +186,51 @@ def test_load_ticker_reports_features_computed_false_without_failing_the_load(
     ohlcv_rows = conn.execute("SELECT date FROM ohlcv").fetchall()
     conn.close()
     assert ohlcv_rows == [("2024-01-02",)]
+
+
+def test_load_ticker_persists_features_computed_1_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        ticker_ingestion, "recompute_features_for_ticker", lambda ticker: None
+    )
+
+    df = _single_row_df(date(2024, 1, 2))
+    _result, db_path = _load_with_fake_fetch(monkeypatch, tmp_path, df)
+
+    conn = sqlite3.connect(db_path)
+    ticker_row = conn.execute(
+        "SELECT features_computed FROM tickers WHERE ticker = 'VIB'"
+    ).fetchone()
+    conn.close()
+    assert ticker_row == (1,)
+
+
+def test_load_ticker_persists_features_computed_0_on_failure(monkeypatch, tmp_path):
+    def _boom(ticker):
+        raise RuntimeError("feature computation exploded")
+
+    monkeypatch.setattr(ticker_ingestion, "recompute_features_for_ticker", _boom)
+
+    df = _single_row_df(date(2024, 1, 2))
+    _result, db_path = _load_with_fake_fetch(monkeypatch, tmp_path, df)
+
+    conn = sqlite3.connect(db_path)
+    ticker_row = conn.execute(
+        "SELECT features_computed FROM tickers WHERE ticker = 'VIB'"
+    ).fetchone()
+    conn.close()
+    assert ticker_row == (0,)
+
+
+def test_never_loaded_ticker_has_no_tickers_row_at_all(tmp_path):
+    db_path = tmp_path / "app.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(CREATE_OHLCV_TABLE)
+    conn.execute(CREATE_TICKERS_TABLE)
+    conn.execute(CREATE_FEATURES_TABLE)
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT * FROM tickers WHERE ticker = 'NEVERLOADED'"
+    ).fetchone()
+    conn.close()
+    assert row is None
