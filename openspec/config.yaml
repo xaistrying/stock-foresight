@@ -60,7 +60,7 @@ context: |
     [x] M1 - Data ingestion (ticker -> vnstock -> SQLite)
     [x] M2 - Feature engineering (Ichimoku, RSI, MACD, Bollinger, ATR, OBV)
     [x] M3 - XGBoost training pipeline + backtest
-    [ ] M4 - FastAPI prediction endpoints
+    [x] M4 - FastAPI prediction endpoints
     [ ] M5 - Vite/React dashboard + ticker panel
     [ ] M6 - AI insight panel (stubbed service, see contract below)
     [ ] M7 - SageMaker integration (not started, not discussed yet)
