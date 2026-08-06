@@ -4,6 +4,8 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 from dateutil.relativedelta import relativedelta
+from tenacity import RetryError
+from vnstock.core.exceptions import RateLimitError
 
 import app.ml.feature_engineering as feature_engineering
 import app.services.ticker_ingestion as ticker_ingestion
@@ -219,6 +221,78 @@ def test_load_ticker_persists_features_computed_0_on_failure(monkeypatch, tmp_pa
     ).fetchone()
     conn.close()
     assert ticker_row == (0,)
+
+
+class _FakeLastAttempt:
+    """Minimal stand-in for tenacity's Future — RetryError only relies on
+    `.last_attempt.exception()`, so that's all this fakes."""
+
+    def __init__(self, exc):
+        self._exc = exc
+
+    def exception(self):
+        return self._exc
+
+
+def _load_with_raising_fetch(monkeypatch, exc):
+    class RaisingEquity:
+        def ohlcv(self, **kwargs):
+            raise exc
+
+    monkeypatch.setattr(ticker_ingestion.mkt, "equity", lambda ticker: RaisingEquity())
+    return load_ticker("VIB")
+
+
+def test_rate_limit_reports_status_rate_limited(monkeypatch):
+    result = _load_with_raising_fetch(monkeypatch, RateLimitError("rate limited"))
+
+    assert result["status"] == "rate_limited"
+    assert result["rows_loaded"] == 0
+
+
+def test_invalid_symbol_format_reports_status_invalid_symbol(monkeypatch):
+    result = _load_with_raising_fetch(
+        monkeypatch,
+        ValueError("Invalid symbol. Your symbol format is not recognized!"),
+    )
+
+    assert result["status"] == "invalid_symbol"
+    assert result["rows_loaded"] == 0
+
+
+def test_invalid_symbol_length_reports_status_invalid_symbol(monkeypatch):
+    result = _load_with_raising_fetch(
+        monkeypatch,
+        ValueError("Symbol must be between 3 and 12 characters long."),
+    )
+
+    assert result["status"] == "invalid_symbol"
+    assert result["rows_loaded"] == 0
+
+
+def test_well_formed_ticker_with_no_data_reports_status_no_data(monkeypatch):
+    underlying = ValueError(
+        "Không tìm thấy dữ liệu. Vui lòng kiểm tra lại mã chứng khoán hoặc "
+        "thời gian truy xuất."
+    )
+    exc = RetryError(_FakeLastAttempt(underlying))
+
+    result = _load_with_raising_fetch(monkeypatch, exc)
+
+    assert result["status"] == "no_data"
+    assert result["rows_loaded"] == 0
+
+
+def test_unrecognized_value_error_is_not_misclassified(monkeypatch):
+    with pytest.raises(ValueError, match="some other problem"):
+        _load_with_raising_fetch(monkeypatch, ValueError("some other problem"))
+
+
+def test_successful_load_reports_status_ok(monkeypatch, tmp_path):
+    df = _single_row_df(date(2024, 1, 2))
+    result, _db_path = _load_with_fake_fetch(monkeypatch, tmp_path, df)
+
+    assert result["status"] == "ok"
 
 
 def test_never_loaded_ticker_has_no_tickers_row_at_all(tmp_path):

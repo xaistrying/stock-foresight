@@ -114,3 +114,31 @@ there).
 **Status**: mitigated locally (this `.venv` only), not durably fixed.
 Needs a decision: patch-on-install script, vendored fork, version pin, or
 report upstream to the `vnstock`/`vnai` maintainers.
+
+## Uncaught `tenacity.RetryError` for a well-formed ticker with no real data
+
+**Found**: while designing M5's ticker-panel error states, testing
+`load_ticker`'s exception handling.
+
+**Symptom**: a well-formed ticker symbol (3-12 characters, passes vnstock's
+format validation) that corresponds to no real data raised
+`tenacity.RetryError`, not `ValueError` — `load_ticker`'s
+`except ValueError` didn't see it, and the request crashed unhandled.
+
+**Confirmed live**: `mkt.equity("ZZZ").ohlcv(...)` raises
+`tenacity.RetryError`; `e.last_attempt.exception()` returns the real
+underlying `ValueError("Không tìm thấy dữ liệu. Vui lòng kiểm tra lại mã
+chứng khoán hoặc thời gian truy xuất.")`. Confirmed separately that a
+malformed-symbol `ValueError` (the `invalid_symbol` case) is *not*
+wrapped in `RetryError` — it still surfaces as a plain `ValueError`, so
+the two cases remain distinguishable after unwrapping.
+
+**Fix applied**: `load_ticker` now catches `(ValueError, RetryError)`
+together; when the caught exception is `RetryError`, it unwraps via
+`e.last_attempt.exception()` before passing to `_classify_load_error`,
+otherwise it passes the exception through directly. `_classify_load_error`
+gained a third match, `"Không tìm thấy dữ liệu"` → `status: "no_data"`,
+alongside the existing `invalid_symbol` matches.
+
+**Status**: fixed, closed. Not yet covered by a test (see the
+`vite-react-dashboard-ticker-panel` change's tasks.md task 3.3).
