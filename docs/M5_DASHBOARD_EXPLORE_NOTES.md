@@ -114,46 +114,130 @@ moved:
     just docs/MODEL_CARD.md + a CLI tool), fully separate from this
     dashboard.
 
+### Chart forecast overlay: single point, no fabricated path
+- The model produces exactly **one scalar per prediction**
+  (`predicted_log_return`, a single point 5 sessions ahead) — never a
+  day-by-day trajectory. The reference screenshot's smooth dashed curve
+  from "Today" out to "+7" implies interpolated points the model never
+  produced.
+- The old spec's blanket ban ("SHALL NOT render any indicator overlay
+  or predicted-vs-actual series") was written when M5 had no prediction
+  in scope at all — that premise no longer holds now that this change
+  absorbs M6. The requirement is being **narrowed, not violated**: chart
+  MAY show the single predicted point at t+5 (from `predicted_log_return`,
+  converted per rule 2), connected to today's close by one straight
+  dashed line — no fabricated intermediate points, no smooth curve. This
+  needs to be written into the new `dashboard-ui` spec explicitly citing
+  rule 6 (a curved/interpolated path would visually overclaim confidence
+  in a trajectory that isn't real).
+
+### "Backtest this ticker" button — settled shape
+- **Gate**: enabled once the ticker has at least N clean+labeled feature
+  rows (same `near_gap = 0 AND target IS NOT NULL` filter M3's training
+  pipeline already uses). Exact N left for design.md to pick empirically
+  (check what produces non-empty walk-forward folds in practice) —
+  deliberately not a multi-year-span requirement, just "enough rows for
+  a real fold," since requiring years of history would make the button
+  practically unusable for any freshly-searched ticker.
+- Below the row threshold: button is hidden/disabled, replaced by
+  explanatory text ("Needs more price history to backtest").
+- **In-progress state**: inline spinner on the button itself, button
+  disabled while running; the rest of the AI insight panel (Prediction,
+  Sentiment, Advice) stays fully interactive — a single-ticker backtest
+  is real compute (seconds to tens of seconds) but shouldn't block
+  anything else on the dashboard.
+- On completion, Confidence transitions to the normal real-hit-rate
+  display — no distinct "just backtested" visual state.
+
+## Copy contract (for the design/build pass)
+
+Drafted this session so a visual build (Hallmark / Claude design pass)
+has fixed content to work from rather than inventing wording. Follows
+the project's `copy.md` discipline (specific labels, no vague claims,
+active/direct phrasing) applied against rules 2–6.
+
+### Prediction
+| State | Headline | Subtext |
+|---|---|---|
+| `ok` | `+2.3%` / `−1.1%` (converted from `predicted_log_return`, rule 2 — raw log return never shown) | `Projected close · 5 trading sessions` |
+| `near_gap` | `Prediction unavailable` | `A recent data gap means the model can't produce a reliable estimate right now` |
+| not loaded (404) | `Not loaded yet` | `Load this ticker to see a prediction` |
+| feature failure (5xx) | `Prediction failed` | `Feature computation failed for this ticker — try reloading` |
+
+### Confidence (rule 4)
+| State | Headline | Subtext |
+|---|---|---|
+| has backtest history | `82%` + bar | `Hit-rate, last 60 predictions` |
+| searched ticker, insufficient rows | `N/A` | `Needs more price history to backtest — check back after more sessions load` |
+| searched ticker, enough rows, not run | `N/A` | `Enough history to backtest.` + button `Backtest this ticker` |
+| backtest running | `N/A` | button label becomes `Backtesting…` (disabled, spinner) |
+| backtest complete | `82%` + bar | same as "has backtest history" — no distinct transitional state |
+
+### Sentiment (rule 5)
+Label itself renamed to pre-empt misreading, not just annotated after
+the fact:
+| State | Headline | Subtext (always shown, not a tooltip) |
+|---|---|---|
+| any | `Technical Signal` (not "Market Sentiment") — value `Neutral` / `Bullish` / `Bearish` | `Based on RSI, MACD, Ichimoku position — not news or market sentiment` |
+
+### Advice (rule 3, rule 6)
+Framed as a conclusion from a stated criterion, not a bare directive.
+**Decided: directional wording, not BUY/SELL** — those are literal
+transaction verbs and read as instructions to act; "signal: up/down"
+stays in observation-mode.
+| State | Line 1 (reasoning, precedes verdict) | Line 2 (verdict) |
+|---|---|---|
+| within threshold | `Move is within normal volatility range` | `HOLD` |
+| above threshold, positive | `Move exceeds typical volatility to the upside` | `Signal: up` |
+| above threshold, negative | `Move exceeds typical volatility to the downside` | `Signal: down` |
+
+### Disclaimer (rule 6 — always visible, no toggle)
+- **Inline** (shown under the AI insight panel at all times):
+  > Technical observation from a backtested model — not a forecast, not investment advice.
+- **Full version** (linked/expandable; candidate first draft for
+  `docs/DISCLAIMER.md`, created when this change ships since it's now
+  M6-scope too):
+  > This panel shows technical observations generated by a statistical model trained on historical price patterns (see `docs/MODEL_CARD.md`). Confidence reflects the model's own backtested hit-rate, not a guarantee. Sentiment reflects technical indicators (RSI, MACD, Ichimoku), not real news or market sentiment. Nothing here is investment advice or a recommendation to buy, sell, or hold any security.
+
 ## Open threads (not yet resolved)
 
-- **Chart forecast overlay**: the reference screenshot shows a dashed
-  line extending the chart past "Today" to represent the forecast. The
-  old (rejected) spec explicitly forbade this: "Chart panel renders
-  OHLCV only... SHALL NOT render any indicator overlay or any
-  predicted-vs-actual series." Given the model produces a single
-  5-session-ahead point prediction (not a day-by-day curve), what would
-  a forecast overlay even honestly represent? Needs its own discussion —
-  flagged but not discussed this session.
-- **"Backtest this ticker" button UX**: gating condition (how much
-  history is "enough"), in-progress state (spinner? estimated duration?
-  does it block the rest of the panel?), and where it sits in the
-  Confidence card layout — not designed, just scoped as necessary.
 - Whether the new proposal.md should explicitly rename/reframe the
   change now that it absorbs M6 scope (e.g. is it still
   "vite-react-dashboard-ticker-panel," or does it need a new change
   name reflecting the combined M5+M6 scope?).
+- Visual container question: do Prediction/Confidence/Sentiment/Advice
+  sit as separate stat-tile cards, or one continuous panel with
+  dividers? Not settled — left for the design/build pass.
 
 ## Current settled dashboard shape (ASCII reference)
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Stock Prediction                             [search: any ticker]   │
-│                                                                      │
-│  chips: TCB VIB VHM VND MWG HPG MSN VNM SAB (+ any searched-in)      │
-│         each showing Fresh / Stale / Loading state                   │
-├──────────────────────────────────────────────────────────────────────┤
-│   Chart: OHLCV candles                     │  Prediction (%, rule 2) │
-│   (forecast overlay = open thread)         │  Confidence:            │
-│                                            │   • trained-9: real     │
-│                                            │     hit-rate (rule 4)   │
-│                                            │   • searched: "N/A" +   │
-│                                            │     [Backtest ticker]   │
-│                                            │     button (gated on    │
-│                                            │     history depth)      │
-│                                            │  Sentiment (rule 5,     │
-│                                            │   labeled proxy)        │
-│                                            │  Advice (rule 3)        │
-│                                            │  Disclaimer — always on │
-│                                            │   (rule 6, no toggle)   │
+┌───────────────────────────────────────────────────────────────────────┐
+│  Stock Prediction                             [search: any ticker]    │
+│                                                                       │
+│  chips: TCB VIB VHM VND MWG HPG MSN VNM SAB (+ any searched-in)       │
+│         each showing Fresh / Stale / Loading state                    │
+├───────────────────────────────────────────────────────────────────────┤
+│   Chart: OHLCV candles                     │  Prediction              │
+│   ─history──●╌╌╌╌╌○ (single t+5 point,     │  +2.3%                   │
+│   dashed line, no interpolated path)       │  Projected close ·       │
+│                                            │  5 trading sessions      │
+│                                            │                          │
+│                                            │  Confidence       82%    │
+│                                            │  ████████░░              │
+│                                            │  Hit-rate, last 60       │
+│                                            │  (or N/A + Backtest btn) │
+│                                            │                          │
+│                                            │  Technical Signal Neutral│
+│                                            │  RSI/MACD/Ichimoku —     │
+│                                            │  not news sentiment      │
+│                                            │                          │
+│                                            │  Move within normal      │
+│                                            │  volatility range        │
+│                                            │  HOLD                    │
+│                                            │                          │
+│                                            │  Technical observation   │
+│                                            │  from a backtested model │
+│                                            │  — not investment advice │
 └──────────────────────────────────────────────────────────────────────┘
 ```
