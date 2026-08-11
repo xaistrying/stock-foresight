@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import xgboost as xgb
 from fastapi import FastAPI
 
+from app.api.insight import router as insight_router
 from app.api.predictions import router as predictions_router
 from app.api.tickers import router as tickers_router
 from app.db.connection import init_db
@@ -20,3 +21,4 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(tickers_router)
 app.include_router(predictions_router)
+app.include_router(insight_router)

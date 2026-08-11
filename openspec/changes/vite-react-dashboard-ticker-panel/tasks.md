@@ -1,32 +1,32 @@
 ## 1. Backend: ticker catalog endpoint
 
-- [ ] 1.1 Add `GET /tickers` route in `backend/app/api/tickers.py`,
+- [x] 1.1 Add `GET /tickers` route in `backend/app/api/tickers.py`,
       importing `TRAINING_TICKERS` from `backend/app/ml/training.py` as
       the ticker set (no duplicate list).
-- [ ] 1.2 Query the `tickers` table for each `TRAINING_TICKERS` entry and
+- [x] 1.2 Query the `tickers` table for each `TRAINING_TICKERS` entry and
       build the response: one entry per ticker with `loaded`,
       `features_computed`, `last_loaded_at` (null/false-equivalent when
       no `tickers` row exists).
-- [ ] 1.3 Register the route on the existing `tickers_router` in
+- [x] 1.3 Register the route on the existing `tickers_router` in
       `backend/app/main.py` (no new router needed).
-- [ ] 1.4 Tests in `backend/tests/test_tickers_api.py`: response contains
+- [x] 1.4 Tests in `backend/tests/test_tickers_api.py`: response contains
       exactly `TRAINING_TICKERS`; never-loaded ticker returns
       not-loaded status without error; loaded ticker reflects its
       `tickers` row; request makes no `vnstock` call and writes no rows.
 
 ## 2. Backend: ticker history endpoint
 
-- [ ] 2.1 Add `GET /tickers/{ticker}/history` route in
+- [x] 2.1 Add `GET /tickers/{ticker}/history` route in
       `backend/app/api/tickers.py` (or a new module if `tickers.py`
       grows unwieldy — implementer's call, keep it colocated with the
       other ticker read endpoints if reasonable).
-- [ ] 2.2 Define the 300-session window as a named constant; query
+- [x] 2.2 Define the 300-session window as a named constant; query
       `ohlcv` for the most recent 300 rows for the ticker, ordered oldest
       to newest, returning only `date, open, high, low, close, volume`
       (no indicator columns, no `near_gap`).
-- [ ] 2.3 Return `404` when the ticker has zero rows in `ohlcv`; do not
+- [x] 2.3 Return `404` when the ticker has zero rows in `ohlcv`; do not
       call `load_ticker` or any `vnstock` function from this endpoint.
-- [ ] 2.4 Tests in `backend/tests/test_tickers_api.py` (or a new
+- [x] 2.4 Tests in `backend/tests/test_tickers_api.py` (or a new
       `test_ticker_history_api.py`): >300-row ticker returns exactly the
       300 most recent rows in ascending order; <300-row ticker returns
       all rows without error; never-loaded ticker returns 404 with no
@@ -57,7 +57,7 @@
 
 ## 4. Backend: AI insight endpoint (Confidence, Sentiment, Advice)
 
-- [ ] 4.1 Add `GET /tickers/{ticker}/insight` (or fold into the existing
+- [x] 4.1 Add `GET /tickers/{ticker}/insight` (or fold into the existing
       prediction route — implementer's call) returning `confidence_score`
       (nullable — `null` when `compute_rolling_hit_rate` returns `None`),
       `confidence_basis` (a string naming the hit-rate window, or naming
@@ -65,18 +65,18 @@
       RSI/MACD/Ichimoku drove the value), `advice_text` (directional
       wording, never "BUY"/"SELL"), matching the response contract in
       `openspec/config.yaml`.
-- [ ] 4.2 Confidence: call the existing `compute_rolling_hit_rate`
+- [x] 4.2 Confidence: call the existing `compute_rolling_hit_rate`
       (`backend/app/ml/backtest.py`) for the ticker; pass its value (or
       `None`) straight through — do not fabricate or substitute a pooled
       value when it's `None` (Rule 4, dashboard-ui spec's "N/A never
       substitutes" requirement).
-- [ ] 4.3 Sentiment: compute the technical proxy from RSI/MACD/Ichimoku
+- [x] 4.3 Sentiment: compute the technical proxy from RSI/MACD/Ichimoku
       position on the ticker's own persisted `features` row — works
       identically for any ticker, no `TRAINING_TICKERS` dependency.
-- [ ] 4.4 Advice: compute `0.5 x rolling_std(returns, 60 sessions)` on the
+- [x] 4.4 Advice: compute `0.5 x rolling_std(returns, 60 sessions)` on the
       ticker's own OHLCV, compare against the predicted move, and map to
       `"HOLD"` / `"up"` / `"down"` — never a BUY/SELL string.
-- [ ] 4.5 Tests in `backend/tests/test_ai_insight_api.py`: a
+- [x] 4.5 Tests in `backend/tests/test_ai_insight_api.py`: a
       `TRAINING_TICKERS` ticker with backtest rows returns a real
       `confidence_score`; a ticker with zero `backtest_predictions` rows
       returns `confidence_score: null` with a non-null `confidence_basis`
@@ -87,7 +87,7 @@
 
 ## 5. Backend: single-ticker backtest endpoint
 
-- [ ] 5.1 Add `POST /tickers/{ticker}/backtest`, gated on the ticker
+- [x] 5.1 Add `POST /tickers/{ticker}/backtest`, gated on the ticker
       having at least the minimum clean+labeled feature-row count needed
       to form a walk-forward fold (design.md Decision 12 — pick the
       threshold empirically by checking what reliably produces non-empty
@@ -95,21 +95,29 @@
       against a single ticker's data; document the chosen value in this
       task's implementation notes once picked). Return `409` (or similar)
       below the threshold rather than attempting a degenerate backtest.
-- [ ] 5.2 Implement a single-ticker variant of
+      **Threshold chosen: `SINGLE_TICKER_BACKTEST_MIN_ROWS = 30`**
+      clean+labeled rows (`backend/app/ml/backtest.py`) — verified
+      empirically (script run against `compute_fold_boundaries`/
+      `purge_training_rows` with `N_FOLDS=5`, both a gap-free sequence and
+      one with near_gap rows realistically interspersed) that 30 is the
+      smallest count reliably producing all 4 non-empty folds; 25 dropped
+      to 3/4 non-empty in both cases.
+- [x] 5.2 Implement a single-ticker variant of
       `run_walk_forward_backtest` (`backend/app/ml/backtest.py`) —
       reuses the existing fold/purge logic against one ticker's
       `features` rows instead of the pooled 9-ticker frame.
-- [ ] 5.3 Persist results via the existing `persist_backtest_predictions`
+- [x] 5.3 Persist results via the existing `persist_backtest_predictions`
       into the same `backtest_predictions` table the M3 training job
       writes, so a subsequent `GET /tickers/{ticker}/insight` call's
       `compute_rolling_hit_rate` reflects real data with no separate read
       path.
-- [ ] 5.4 Tests in `backend/tests/test_single_ticker_backtest.py`: a
+- [x] 5.4 Tests in `backend/tests/test_single_ticker_backtest.py`: a
       ticker below the row threshold gets a `409`/gated response, not an
       attempted backtest; a ticker above the threshold gets persisted
       `backtest_predictions` rows afterward; `compute_rolling_hit_rate`
       for that ticker returns non-`None` after the backtest completes
-      where it returned `None` before.
+      where it returned `None` before. All 3 tests pass; full suite
+      (`pytest backend/tests`) is 78 passed.
 
 ## 6. Frontend: project scaffold
 

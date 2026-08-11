@@ -11,6 +11,16 @@ from app.ml.training import (
     train_xgb_model,
 )
 
+# design.md Decision 12 / tasks.md 5.1: minimum clean+labeled row count
+# (near_gap=0, target not null) gating the single-ticker backtest button.
+# Empirically verified (not guessed) against compute_fold_boundaries /
+# purge_training_rows with N_FOLDS=5 and the 5-session purge window: 30
+# clean+labeled rows reliably yields all 4 non-empty walk-forward folds,
+# including with near_gap rows realistically interspersed in the
+# unfiltered sequence the purge reads label dates from. Below this,
+# the first fold's post-purge training set can come up empty.
+SINGLE_TICKER_BACKTEST_MIN_ROWS = 30
+
 
 def run_walk_forward_backtest(full_df: pd.DataFrame, clean_df: pd.DataFrame) -> pd.DataFrame:
     """Run the pooled walk-forward backtest (tasks.md 5.1): for each fold
@@ -72,6 +82,39 @@ def run_walk_forward_backtest(full_df: pd.DataFrame, clean_df: pd.DataFrame) -> 
     return pd.concat(results, ignore_index=True) if results else pd.DataFrame(
         columns=["ticker", "date", "fold", "predicted", "actual"]
     )
+
+
+def load_single_ticker_features(ticker: str) -> pd.DataFrame:
+    """Read `features` rows for one ticker outside `TRAINING_TICKERS`
+    (tasks.md 5.2), ordered by date ascending — the single-ticker analog of
+    `training.load_training_features`, minus the `TRAINING_TICKERS` IN
+    filter so it works for any ticker.
+    """
+    conn = get_connection()
+    try:
+        return pd.read_sql_query(
+            "SELECT * FROM features WHERE ticker = ? ORDER BY date ASC",
+            conn,
+            params=(ticker,),
+        )
+    finally:
+        conn.close()
+
+
+def run_single_ticker_backtest(full_df: pd.DataFrame, clean_df: pd.DataFrame) -> pd.DataFrame:
+    """Single-ticker variant of `run_walk_forward_backtest` (tasks.md 5.2):
+    identical fold/purge logic, applied to one ticker's `features` rows
+    instead of the pooled 9-ticker frame. Reuses `compute_fold_boundaries`
+    and `purge_training_rows` as-is (design.md Decision 12 — "reuses the
+    existing fold/purge logic"), rather than duplicating that logic for
+    the single-ticker case.
+
+    Callers are expected to have already gated on
+    `SINGLE_TICKER_BACKTEST_MIN_ROWS` — this function itself makes no
+    row-count assumptions beyond what `compute_fold_boundaries` already
+    enforces (at least `N_FOLDS` distinct dates).
+    """
+    return run_walk_forward_backtest(full_df, clean_df)
 
 
 def is_hit(predicted: pd.Series, actual: pd.Series) -> pd.Series:
