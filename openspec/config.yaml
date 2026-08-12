@@ -69,16 +69,48 @@ context: |
     [x] M2 - Feature engineering (Ichimoku, RSI, MACD, Bollinger, ATR, OBV)
     [x] M3 - XGBoost training pipeline + backtest
     [x] M4 - FastAPI prediction endpoints
-    [ ] M5 - Vite/React dashboard + ticker panel
-    [ ] M6 - AI insight panel (stubbed service, see contract below)
-    [ ] M7 - SageMaker integration (not started, not discussed yet)
-    [ ] M8 - Real news-based sentiment (not started)
+    [x] M5 - Vite/React dashboard + ticker panel (shipped 2026-08-12 via the
+        vite-react-dashboard-ticker-panel change; absorbed M6's AI insight
+        panel scope into this same change rather than leaving it a stub —
+        see docs/M5_DASHBOARD_EXPLORE_NOTES.md for why). Manual-refresh
+        follow-up also shipped same day (ticker-manual-refresh change).
+    [x] M6 - AI insight panel — delivered as part of M5 above, not as a
+        separate milestone. Confidence/Sentiment/Advice/disclaimer are
+        real (rules 3-6 in effect), not the stubbed contract below.
 
-  AI insight panel response contract (used from M6, mocked until M7) — keep
-  ai_insight_service.py behind this interface so swapping the mock for a real
-  SageMaker call later touches only that one file:
-    { ticker, as_of, confidence_score, confidence_basis, sentiment_proxy,
-      sentiment_inputs, advice_text, note }
+  Current focus: no active milestone. Priority is hardening and polishing
+  what M0-M6 already shipped, not starting M7/M8 — see Known gaps below and
+  docs/KNOWN_ISSUES.md / docs/DISCUSSION_*.md for specifics. Treat any new
+  proposal through this lens first: does it improve/fix the existing
+  dashboard, model, or pipeline, before considering new-milestone scope.
+
+  Known gaps in the shipped M5/M6 surface (each already has a doc, not
+  freshly discovered — fold into a proposal or explicitly defer again,
+  don't rediscover):
+    - Fresh/Stale is internal-consistency-only, never calendar-aware — a
+      ticker can sit unloaded for weeks and still show Fresh. See
+      docs/DISCUSSION_calendar_staleness.md (open, undecided).
+    - No mechanism logs live predictions or scores them against realized
+      outcomes later — Confidence (rule 4) is backtest-only, live drift is
+      invisible. See docs/DISCUSSION_prediction_outcome_tracking.md (open,
+      undecided; flagged as a likely prerequisite for real continuous
+      retraining, whenever that's picked up).
+    - vnstock/vnai's prompt-injection auto-write (setup_agent on import) is
+      only patched inside the gitignored backend/.venv — will silently
+      regress on next fresh install/upgrade. See docs/KNOWN_ISSUES.md
+      (mitigated locally, not durably fixed).
+
+  Future, deliberately not scoped yet (vague on purpose — do not start
+  designing against these without a dedicated explore/propose session
+  first; no interface contract below is binding until that happens):
+    [ ] M7 - SageMaker integration - idea only, not discussed, not started.
+        No target service (training vs. hosted inference vs. both),
+        no design, no contract decided.
+    [ ] M8 - Real news-based sentiment - idea only, not discussed, not
+        started. Would replace/augment the technical-proxy Sentiment
+        (rule 5) with real NLP sentiment; needs its own explore session
+        given rule 5's current "must be labeled as a technical proxy,
+        not real sentiment" constraint.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
