@@ -40,3 +40,20 @@ rather than silently changing it.
    `docs/DISCLAIMER.md` (created M6, not before — nothing to disclaim
    until M6 has UI output) anywhere Advice, Confidence, or Sentiment is
    displayed.
+
+## Open Discussions and Backlog
+
+Before exploring or proposing a change, check whether it touches a
+known open question or backlog item — folding it in (or explicitly
+deferring it again) beats silently re-discovering it later:
+
+- `docs/KNOWN_ISSUES.md` — confirmed, reproduced issues not yet
+  scheduled into a milestone.
+- `docs/DISCUSSION_*.md` — one file per open design question raised
+  during manual verification of a past change (e.g. calendar staleness
+  vs. the Fresh/Stale indicator, lack of prediction-outcome tracking).
+  Read any whose title looks relevant to the task at hand.
+
+This list itself may drift — if `docs/` gains a new `DISCUSSION_*.md`
+or backlog file, treat it as covered by this pointer without needing
+this file edited again.

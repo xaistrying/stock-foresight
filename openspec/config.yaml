@@ -55,6 +55,14 @@ context: |
   M6 produces UI output.
   Do not assume a SQLite schema; it isn't finalized until M1.
 
+  Before proposing, check docs/KNOWN_ISSUES.md (confirmed issues not yet
+  scheduled into a milestone) and any docs/DISCUSSION_*.md (open design
+  questions raised during manual verification of a past change) for items
+  relevant to the change at hand — fold them in or note them as explicitly
+  deferred, rather than silently re-discovering the same gap later. This
+  list of docs may grow; treat any new DISCUSSION_*.md or backlog file the
+  same way without needing this line updated.
+
   Milestone status:
     [x] M0 - Target variable decided
     [x] M1 - Data ingestion (ticker -> vnstock -> SQLite)
