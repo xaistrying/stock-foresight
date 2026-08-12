@@ -169,67 +169,163 @@
   color: var(--color-negative);
 }
 
-/* --- Chip --- */
+/* --- Chip (redesigned as a unified card, post ticker-manual-refresh UI
+ * pass) ---
+ * .ticker-chip is now the visible card itself: a bordered, rounded
+ * container that positions two interactive children plus one text
+ * footer. Previously the select button carried the chip's entire look
+ * and the refresh icon + last-loaded text floated beside it as a
+ * separate, visually disconnected column — this reads as one control
+ * with two triggers instead. Refresh sits absolutely-positioned in the
+ * card's own top-right corner (a sibling of the select button, never
+ * nested inside it — nesting a <button> in a <button> is invalid HTML,
+ * design.md Risk 2), and one footer line spans the full card width for
+ * whichever message applies (refresh outcome / status / last-loaded-at).
+ */
 
 .ticker-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-md);
-  font-family: var(--font-body);
-  font-size: var(--text-base);
-  font-weight: 600;
-  color: var(--color-ink);
+  position: relative;
+  display: flex;
+  min-width: 7.5rem;
   background: var(--color-paper);
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-full);
-  cursor: pointer;
+  border-radius: var(--radius-md);
   transition:
     border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
+    background var(--dur-fast) var(--ease-out);
 }
 
-.ticker-chip:hover:not(:disabled) {
+.ticker-chip:hover {
   border-color: var(--color-ink-3);
-  background: var(--color-paper-3);
-}
-
-.ticker-chip:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.ticker-chip:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.ticker-chip:disabled {
-  cursor: progress;
 }
 
 .ticker-chip[data-selected] {
   background: var(--color-accent-bg);
   border-color: var(--color-accent-border);
+}
+
+/* .ticker-chip__select fills the entire card — not just the top symbol
+   row — so the whole card body (including the footer text area) is one
+   click target, not just the text itself. Only the refresh button's own
+   corner (a sibling, positioned on top via z-index) is carved out of
+   that target. */
+.ticker-chip__select {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  align-items: flex-start;
+  /* Right padding clears the absolutely-positioned refresh button so
+     the symbol/footer text never sits underneath it. */
+  padding: var(--space-sm) 2.75rem var(--space-xs) var(--space-sm);
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background: none;
+  border: none;
+  border-radius: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ticker-chip__top {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.ticker-chip__select:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.ticker-chip__select:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ticker-chip__select:disabled {
+  cursor: progress;
+}
+
+.ticker-chip[data-selected] .ticker-chip__select {
   color: var(--color-accent);
 }
 
 .ticker-chip__symbol {
+  font-size: var(--text-base);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
 }
 
-.ticker-chip__status {
+/* --- Refresh control (ticker-manual-refresh) --- */
+
+.ticker-chip__refresh {
+  position: absolute;
+  /* Sits fully inside the card's own padding box (tasks.md 6.2's 44x44
+     touch target, without overflowing into a neighboring card's hit
+     area when chips are packed tightly in the flex-wrap row). Stacked
+     above .ticker-chip__select (which now spans the full card as one
+     click target) so its own corner still intercepts clicks/taps. */
+  top: 0;
+  right: 0;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2xs);
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: var(--color-ink-3);
+  background: transparent;
+  border: none;
+  border-radius: 0 var(--radius-md) 0 var(--radius-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.ticker-chip__refresh:hover:not(:disabled) {
+  color: var(--color-accent);
+  background: color-mix(in oklch, var(--color-accent) 12%, transparent);
+}
+
+.ticker-chip__refresh:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.ticker-chip__refresh:active:not(:disabled) {
+  transform: translateY(1px) scale(0.96);
+}
+
+.ticker-chip__refresh:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* Distinct visual state while the ticker's load is in flight (tasks.md
+   2.4) — spins the icon so a disabled-but-silent button doesn't read as
+   broken; reuses the same rotation keyframe as the freshness dot's
+   loading ring. */
+.ticker-chip__refresh[data-loading] .ticker-chip__refresh-icon {
+  animation: ticker-chip-spin 0.6s linear infinite;
+}
+
+/* --- Footer (single message slot: refresh outcome > status > last-
+   loaded-at > nothing) --- */
+
+.ticker-chip__footer {
+  margin-top: var(--space-2xs);
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--color-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ticker-chip[data-status='error'] .ticker-chip__status {
+.ticker-chip__footer[data-status='error'] {
   color: var(--color-negative);
+  font-weight: 600;
 }
 
 /* Freshness dot (replaces the old "Fresh"/"Stale"/"Loading" text label —
@@ -271,9 +367,9 @@
 }
 
 .ticker-chip--skeleton {
-  width: 4.5rem;
-  height: 2.25rem;
-  border-radius: var(--radius-full);
+  width: 6.5rem;
+  height: 3.5rem;
+  border-radius: var(--radius-md);
   background: linear-gradient(
     90deg,
     var(--color-paper-3) 25%,
@@ -302,6 +398,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ticker-chip,
+  .ticker-chip__refresh,
   .ticker-search__button,
   .ticker-search__input {
     transition: none;
@@ -311,7 +408,8 @@
     animation: none;
   }
 
-  .ticker-chip__dot[data-freshness='loading'] {
+  .ticker-chip__dot[data-freshness='loading'],
+  .ticker-chip__refresh[data-loading] .ticker-chip__refresh-icon {
     animation-duration: 1.2s;
   }
 }

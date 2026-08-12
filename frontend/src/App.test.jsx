@@ -64,7 +64,7 @@ describe('App (dashboard assembly)', () => {
 
     renderApp()
 
-    const chip = await screen.findByRole('button', { name: /TCB/ })
+    const chip = await screen.findByRole('button', { name: /^TCB/ })
     await userEvent.click(chip)
 
     // Prediction display for TCB.
@@ -148,7 +148,7 @@ describe('App (dashboard assembly)', () => {
     await userEvent.type(input, 'FPT')
     await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
 
-    expect(await screen.findByRole('button', { name: /FPT/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^FPT/ })).toBeInTheDocument()
     expect(await screen.findByText(/\+0\.00%/)).toBeInTheDocument()
     expect(await screen.findByText('Technical Signal')).toBeInTheDocument()
   })
@@ -180,7 +180,7 @@ describe('App (dashboard assembly)', () => {
     })
 
     renderApp()
-    const chip = await screen.findByRole('button', { name: /TCB/ })
+    const chip = await screen.findByRole('button', { name: /^TCB/ })
     await userEvent.click(chip)
     await screen.findByText('Technical Signal')
 

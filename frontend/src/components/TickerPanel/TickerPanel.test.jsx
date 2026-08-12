@@ -51,8 +51,8 @@ describe('TickerPanel', () => {
 
     renderPanel()
 
-    expect(await screen.findByRole('button', { name: /TCB/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /VIB/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^TCB/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^VIB/ })).toBeInTheDocument()
   })
 
   it('shows "Not loaded" for a never-loaded catalog ticker', async () => {
@@ -73,7 +73,7 @@ describe('TickerPanel', () => {
     const loadSpy = vi.spyOn(tickersApi, 'loadTicker')
 
     const { onSelectTicker } = renderPanel()
-    const chip = await screen.findByRole('button', { name: /TCB/ })
+    const chip = await screen.findByRole('button', { name: /^TCB/ })
     await userEvent.click(chip)
 
     expect(onSelectTicker).toHaveBeenCalledWith('TCB')
@@ -115,7 +115,7 @@ describe('TickerPanel', () => {
     const loadSpy = vi.spyOn(tickersApi, 'loadTicker')
 
     const { onSelectTicker } = renderPanel()
-    await screen.findByRole('button', { name: /TCB/ })
+    await screen.findByRole('button', { name: /^TCB/ })
 
     const input = screen.getByLabelText(/search ticker/i)
     await userEvent.type(input, 'TCB')
@@ -135,7 +135,7 @@ describe('TickerPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
 
     await waitFor(() => expect(onSelectTicker).toHaveBeenCalledWith('FPT'))
-    expect(await screen.findByRole('button', { name: /FPT/ })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^FPT/ })).toBeInTheDocument()
   })
 
   it('searching an unrecognized symbol shows a symbol-specific message, not a generic one', async () => {
@@ -170,7 +170,7 @@ describe('TickerPanel', () => {
 
     renderPanel()
 
-    const chip = await screen.findByRole('button', { name: /TCB/ })
+    const chip = await screen.findByRole('button', { name: /^TCB/ })
     await waitFor(() => {
       expect(chip.querySelector('.ticker-chip__dot')).toHaveAttribute('data-freshness', 'fresh')
     })
@@ -189,7 +189,7 @@ describe('TickerPanel', () => {
     mockFreshData()
 
     renderPanel()
-    await screen.findByRole('button', { name: /TCB/ })
+    await screen.findByRole('button', { name: /^TCB/ })
 
     expect(screen.getByText('Fresh')).toBeInTheDocument()
     expect(screen.getByText('Stale')).toBeInTheDocument()
@@ -207,9 +207,154 @@ describe('TickerPanel', () => {
 
     renderPanel({ selectedTicker: 'TCB' })
 
-    const tcbChip = await screen.findByRole('button', { name: /TCB/ })
-    const vibChip = screen.getByRole('button', { name: /VIB/ })
+    const tcbChip = await screen.findByRole('button', { name: /^TCB/ })
+    const vibChip = screen.getByRole('button', { name: /^VIB/ })
     expect(tcbChip).toHaveAttribute('aria-pressed', 'true')
     expect(vibChip).toHaveAttribute('aria-pressed', 'false')
+  })
+})
+
+// ticker-manual-refresh: a "Refresh" action on an already-loaded ticker
+// that re-runs the existing /load flow (tasks.md sections 2/3/5).
+describe('TickerPanel refresh action', () => {
+  it('shows a Refresh action only for a loaded ticker, not an unloaded one', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [
+        { ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        { ticker: 'VIB', loaded: false, features_computed: null, last_loaded_at: null },
+      ],
+    })
+    mockFreshData()
+
+    renderPanel()
+
+    expect(await screen.findByRole('button', { name: 'Refresh TCB' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Refresh VIB' })).not.toBeInTheDocument()
+  })
+
+  it('clicking Refresh calls POST /tickers/{ticker}/load without changing the selection', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    const loadSpy = vi
+      .spyOn(tickersApi, 'loadTicker')
+      .mockResolvedValue({ ticker: 'TCB', status: 'ok', rows_loaded: 300 })
+
+    const { onSelectTicker } = renderPanel()
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh TCB' })
+    await userEvent.click(refreshButton)
+
+    await waitFor(() => expect(loadSpy).toHaveBeenCalledWith('TCB'))
+    expect(onSelectTicker).not.toHaveBeenCalled()
+  })
+
+  it('disables Refresh while its own request is in flight', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    let resolveLoad
+    vi.spyOn(tickersApi, 'loadTicker').mockReturnValue(
+      new Promise((resolve) => {
+        resolveLoad = resolve
+      }),
+    )
+
+    renderPanel()
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh TCB' })
+    await userEvent.click(refreshButton)
+
+    await waitFor(() => expect(refreshButton).toBeDisabled())
+
+    resolveLoad({ ticker: 'TCB', status: 'ok', rows_loaded: 300 })
+    await waitFor(() => expect(refreshButton).not.toBeDisabled())
+  })
+
+  it('reuses the existing rate-limited message when Refresh does not complete with status ok', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'rate_limited' })
+
+    renderPanel()
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh TCB' })
+    await userEvent.click(refreshButton)
+
+    expect(await screen.findByText(/try again in a moment/i)).toBeInTheDocument()
+  })
+
+  it('does not invalidate history/prediction/insight when Refresh completes with a non-ok status', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'rate_limited' })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TickerPanel selectedTicker="TCB" onSelectTicker={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh TCB' })
+    invalidateSpy.mockClear() // ignore invalidations from the initial catalog/freshness fetch
+    await userEvent.click(refreshButton)
+
+    await screen.findByText(/try again in a moment/i)
+    expect(invalidateSpy).not.toHaveBeenCalled()
+  })
+
+  it('invalidates history/prediction/insight identically to a first-time load when Refresh succeeds', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'ok', rows_loaded: 300 })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TickerPanel selectedTicker="TCB" onSelectTicker={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh TCB' })
+    await userEvent.click(refreshButton)
+
+    await waitFor(() => {
+      const invalidatedKeys = invalidateSpy.mock.calls.map((call) => call[0].queryKey)
+      expect(invalidatedKeys).toEqual(
+        expect.arrayContaining([
+          ['tickers'],
+          ['ticker-history', 'TCB'],
+          ['ticker-prediction', 'TCB'],
+          ['ticker-insight', 'TCB'],
+        ]),
+      )
+    })
+  })
+
+  it('shows a relative last-loaded time for a loaded ticker, and none for a never-loaded one', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [
+        { ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: new Date().toISOString() },
+        { ticker: 'VIB', loaded: false, features_computed: null, last_loaded_at: null },
+      ],
+    })
+    mockFreshData()
+
+    renderPanel()
+
+    expect(await screen.findByText(/^Loaded /)).toBeInTheDocument()
+    expect(screen.getByText('Not loaded')).toBeInTheDocument()
   })
 })

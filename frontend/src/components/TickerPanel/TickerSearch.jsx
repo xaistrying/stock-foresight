@@ -59,7 +59,7 @@ export function TickerSearch({ knownTickers, onResolveKnown, onLoad, isLoading }
           id={inputId}
           type="text"
           className="ticker-search__input"
-          placeholder="e.g. FPT"
+          placeholder="e.g. VND"
           value={value}
           onChange={(event) => setValue(event.target.value)}
           disabled={isLoading}
