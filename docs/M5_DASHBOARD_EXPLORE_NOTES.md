@@ -213,7 +213,7 @@ stays in observation-mode.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│  Stock Prediction                             [search: any ticker]    │
+│  Stock Foresight                             [search: any ticker]    │
 │                                                                       │
 │  chips: TCB VIB VHM VND MWG HPG MSN VNM SAB (+ any searched-in)       │
 │         each showing Fresh / Stale / Loading state                    │

@@ -1,0 +1,328 @@
+/* Hallmark · component: ticker-panel · genre: modern-minimal (data-dense financial dashboard)
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: pass (46-50)
+ */
+
+.ticker-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.ticker-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.ticker-panel__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-style: normal;
+  font-size: var(--text-xl);
+  color: var(--color-ink);
+  letter-spacing: -0.01em;
+}
+
+.ticker-panel__error {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-negative);
+}
+
+.ticker-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.ticker-panel__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.ticker-panel__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--color-ink-3);
+}
+
+/* Legend's Loading key is a static ring — not spinning like the live
+   in-progress dot, since it's a key label, not an actual in-flight state. */
+.ticker-panel__legend-dot--loading {
+  width: 0.75rem;
+  height: 0.75rem;
+  background: transparent;
+  border: 1.5px solid var(--color-border-strong);
+  border-top-color: var(--color-ink-3);
+}
+
+/* --- Search --- */
+
+.ticker-search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.ticker-search__label {
+  font-size: var(--text-xs);
+  color: var(--color-ink-3);
+  font-weight: 500;
+}
+
+.ticker-search__row {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.ticker-search__input {
+  min-width: 0;
+  width: 12rem;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.ticker-search__input::placeholder {
+  color: var(--color-ink-3);
+}
+
+.ticker-search__input:hover:not(:disabled) {
+  border-color: var(--color-ink-3);
+}
+
+.ticker-search__input:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+  border-color: var(--color-accent-border);
+}
+
+.ticker-search__input:disabled {
+  background: var(--color-paper-3);
+  color: var(--color-ink-3);
+  cursor: not-allowed;
+}
+
+.ticker-search__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--space-md);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: oklch(99% 0.002 260);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.ticker-search__button:hover:not(:disabled) {
+  background: oklch(from var(--color-accent) calc(l - 0.05) c h);
+}
+
+.ticker-search__button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.ticker-search__button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ticker-search__button:disabled {
+  background: var(--color-border-strong);
+  border-color: var(--color-border-strong);
+  color: var(--color-ink-3);
+  cursor: not-allowed;
+}
+
+.ticker-search__feedback {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.ticker-search__feedback[data-kind='error'] {
+  color: var(--color-negative);
+}
+
+/* --- Chip --- */
+
+.ticker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.ticker-chip:hover:not(:disabled) {
+  border-color: var(--color-ink-3);
+  background: var(--color-paper-3);
+}
+
+.ticker-chip:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.ticker-chip:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ticker-chip:disabled {
+  cursor: progress;
+}
+
+.ticker-chip[data-selected] {
+  background: var(--color-accent-bg);
+  border-color: var(--color-accent-border);
+  color: var(--color-accent);
+}
+
+.ticker-chip__symbol {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.ticker-chip__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-ink-3);
+}
+
+.ticker-chip[data-status='error'] .ticker-chip__status {
+  color: var(--color-negative);
+}
+
+/* Freshness dot (replaces the old "Fresh"/"Stale"/"Loading" text label —
+   color-not-only, WCAG: the dot alone never carries the meaning, it's
+   paired with an aria-label/title on the element itself and explained
+   visibly by TickerPanel's legend). Fixed footprint (0.75rem box,
+   border-box) across every state — every chip passes through Loading
+   first while its freshness query is in flight, so a size difference
+   between the loading ring and the resting dot made each chip visibly
+   grow/shrink the moment it settled. The resting dot is centered inside
+   the same box via a 1.5px transparent border rather than shrinking the
+   box itself. */
+.ticker-chip__dot {
+  box-sizing: border-box;
+  width: 0.75rem;
+  height: 0.75rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  background: var(--color-ink-3);
+  background-clip: content-box;
+}
+
+.ticker-chip__dot[data-freshness='fresh'] {
+  background: var(--color-positive);
+  background-clip: content-box;
+}
+
+.ticker-chip__dot[data-freshness='stale'] {
+  background: var(--color-warning);
+  background-clip: content-box;
+}
+
+.ticker-chip__dot[data-freshness='loading'] {
+  background: transparent;
+  border-color: var(--color-border-strong);
+  border-top-color: var(--color-ink-3);
+  animation: ticker-chip-spin 0.6s linear infinite;
+}
+
+.ticker-chip--skeleton {
+  width: 4.5rem;
+  height: 2.25rem;
+  border-radius: var(--radius-full);
+  background: linear-gradient(
+    90deg,
+    var(--color-paper-3) 25%,
+    var(--color-border) 50%,
+    var(--color-paper-3) 75%
+  );
+  background-size: 200% 100%;
+  animation: ticker-chip-shimmer 1.4s ease-in-out infinite;
+  border: 1px solid var(--color-border);
+}
+
+@keyframes ticker-chip-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes ticker-chip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-chip,
+  .ticker-search__button,
+  .ticker-search__input {
+    transition: none;
+  }
+
+  .ticker-chip--skeleton {
+    animation: none;
+  }
+
+  .ticker-chip__dot[data-freshness='loading'] {
+    animation-duration: 1.2s;
+  }
+}
+
+@media (max-width: 480px) {
+  .ticker-panel__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ticker-search__input {
+    width: 100%;
+  }
+}

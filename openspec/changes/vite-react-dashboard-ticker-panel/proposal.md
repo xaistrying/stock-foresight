@@ -99,6 +99,45 @@ over, and are recorded there with rationale.
   see Domain rule interactions below for how Rule 6 is honored without
   that restriction.
 
+## Post-ship UI refinements (2026-08-12)
+
+After initial implementation, real usage against the live dashboard
+surfaced several UI issues, each fixed in a follow-up pass (see design.md
+Decisions 15-19 for full rationale):
+
+- **T+5 line placement**: the chart's predicted point was placed using a
+  flat `as_of + 7 calendar days` approximation, which lightweight-charts'
+  time scale rendered immediately adjacent to the last candle (reading as
+  "tomorrow," not "5 sessions out"), since it only reserves x-axis width
+  for timestamps it's actually seen. Fixed via weekday-stepping (skip
+  Sat/Sun) plus whitespace points for the 4 intermediate sessions — still
+  exactly one predicted value and one line (Decision 8 unchanged), only
+  its axis position corrected.
+- **Ticker freshness display**: chips originally showed the literal words
+  "Fresh"/"Stale"/"Loading" (Decision 10); replaced with a color dot
+  (accessible via `aria-label`, per WCAG's color-not-only rule) plus a
+  legend row explaining the mapping.
+- **Chart reset-zoom**: once a user manually zoomed/panned the chart,
+  there was no way back to a fitted view without reselecting the ticker.
+  Added a reset button that restores both the time scale and price scale
+  — including fixing a z-index conflict with lightweight-charts' own
+  internal canvases that initially made the button unclickable.
+- **Default chart zoom**: opening a ticker used to fit the entire
+  750-session history into one view, squeezing recent candles (and the
+  predicted point) into a thin sliver at the right edge. Now opens on the
+  most recent ~60 sessions (~3 months) instead, with the full history
+  still reachable by zooming out.
+- **Chip layout stability**: the freshness dot's Loading state (a
+  differently-sized spinner ring) caused every chip to visibly resize
+  the moment its freshness query settled. Fixed with a fixed-footprint
+  dot across all states.
+
+None of these change the domain-rule interactions above — Rule 2's
+percentage conversion, Rule 6's single-point/no-interpolation chart
+constraint (Decision 8), and Rule 4/5's Confidence/Sentiment computation
+are all unaffected; these are display-layer fixes to how existing,
+already-compliant data is rendered.
+
 **Domain rule interactions:**
 
 - **Rule 1** (target = 5-session log return): unaffected. M5 only

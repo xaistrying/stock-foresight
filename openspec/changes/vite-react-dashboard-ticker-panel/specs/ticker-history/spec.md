@@ -2,19 +2,21 @@
 
 ### Requirement: Serve a bounded trailing OHLCV window
 The system SHALL expose `GET /tickers/{ticker}/history`, which returns
-the most recent 300 sessions of OHLCV data for the ticker from the
-`ohlcv` table, ordered oldest to newest. The window size (300) SHALL be a
+the most recent 750 sessions of OHLCV data for the ticker from the
+`ohlcv` table, ordered oldest to newest. The window size (750) SHALL be a
 fixed backend constant, not a client-supplied parameter, in this version.
+(Widened from an original 300-session window post-ship — see design.md
+Decision 2.)
 
-#### Scenario: Ticker with more than 300 stored sessions
+#### Scenario: Ticker with more than 750 stored sessions
 - **WHEN** a client requests `GET /tickers/{ticker}/history` for a ticker
-  with more than 300 rows in `ohlcv`
-- **THEN** the system responds `200` with exactly the 300
+  with more than 750 rows in `ohlcv`
+- **THEN** the system responds `200` with exactly the 750
   chronologically most recent rows, ordered oldest to newest
 
-#### Scenario: Ticker with fewer than 300 stored sessions
+#### Scenario: Ticker with fewer than 750 stored sessions
 - **WHEN** a client requests `GET /tickers/{ticker}/history` for a ticker
-  with fewer than 300 rows in `ohlcv`
+  with fewer than 750 rows in `ohlcv`
 - **THEN** the system responds `200` with all available rows for that
   ticker, ordered oldest to newest, without treating the shortfall as an
   error

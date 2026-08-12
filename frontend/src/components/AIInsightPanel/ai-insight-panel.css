@@ -1,0 +1,173 @@
+/* Hallmark · component: ai-insight-panel · genre: modern-minimal (data-dense financial dashboard)
+ * states: empty · loading · not-loaded · failed · error · populated(confidence na/value, advice hold/up/down)
+ * contrast: pass (46-50)
+ */
+
+.ai-insight-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-lg);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.ai-insight-panel__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.ai-insight-panel__message {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--color-ink-2);
+}
+
+.ai-insight-panel__message--error {
+  color: var(--color-negative);
+}
+
+.ai-insight-panel__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ai-insight-panel__item:last-of-type {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.ai-insight-panel__label {
+  margin: 0;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-3);
+}
+
+.ai-insight-panel__value {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+
+.ai-insight-panel__value--na {
+  color: var(--color-ink-3);
+}
+
+.ai-insight-panel__value[data-verdict='up'] {
+  color: var(--color-positive);
+}
+
+.ai-insight-panel__value[data-verdict='down'] {
+  color: var(--color-negative);
+}
+
+.ai-insight-panel__subtext,
+.ai-insight-panel__reasoning,
+.ai-insight-panel__note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-3);
+}
+
+.ai-insight-panel__backtest {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  align-items: flex-start;
+}
+
+.ai-insight-panel__backtest-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin-top: var(--space-2xs);
+  padding: var(--space-xs) var(--space-md);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-accent-bg);
+  border: 1px solid var(--color-accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.ai-insight-panel__backtest-button:hover:not(:disabled) {
+  background: oklch(from var(--color-accent-bg) calc(l - 0.04) c h);
+}
+
+.ai-insight-panel__backtest-button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.ai-insight-panel__backtest-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ai-insight-panel__backtest-button:disabled {
+  cursor: progress;
+  color: var(--color-ink-3);
+  background: var(--color-paper-3);
+  border-color: var(--color-border-strong);
+}
+
+.ai-insight-panel__backtest-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-3);
+}
+
+.ai-insight-panel__backtest-note--error {
+  color: var(--color-negative);
+}
+
+.ai-insight-panel__disclaimer {
+  margin: 0;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  font-style: italic;
+  color: var(--color-ink-3);
+}
+
+.ai-insight-panel__spinner {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: ai-insight-panel-spin 0.7s linear infinite;
+}
+
+@keyframes ai-insight-panel-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-insight-panel__spinner {
+    animation-duration: 1.4s;
+  }
+
+  .ai-insight-panel__backtest-button {
+    transition: none;
+  }
+}

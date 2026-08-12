@@ -1,0 +1,21 @@
+/* Global page-level reset. Component-level styling lives in each
+   component's own CSS file, driven by the design tokens in
+   `styles/tokens.css` (imported before this file in main.jsx). Previously
+   held leftover Vite-template styles (a fixed-width, centered, bordered
+   #root, unused heading/code rules) that conflicted with the dashboard's
+   own layout once the real panels were assembled (tasks.md 11.1) — removed
+   rather than carried forward unused. */
+:root {
+  color-scheme: light dark;
+  font: 16px/145% var(--font-body, system-ui, sans-serif);
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+#root {
+  min-height: 100svh;
+}

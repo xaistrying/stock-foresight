@@ -1,0 +1,122 @@
+/* Hallmark · component: chart-panel · genre: modern-minimal (data-dense financial dashboard)
+ * states: default(=loaded) · loading · error · success(=predicted point shown) — see overlay states below
+ * contrast: pass (46-50)
+ */
+
+.chart-panel {
+  position: relative;
+  min-height: 22rem;
+  height: 22rem;
+  background: var(--color-paper);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.chart-panel__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Reset-zoom (post-ship revision): lightweight-charts leaves auto-fit mode
+   permanently once a user manually pans/zooms and won't self-correct, so
+   this restores the fitted view on demand. Sized to the 44x44 minimum
+   touch target even though the icon itself is small. */
+.chart-panel__reset-zoom {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  /* lightweight-charts' own internal canvases (e.g. the price-scale
+     overlay) set z-index: 2 on themselves — this must clear that or the
+     button becomes visually present but unclickable, intercepted by the
+     canvas underneath it despite being painted behind it. */
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: var(--color-ink-2);
+  background: color-mix(in oklch, var(--color-paper) 85%, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.chart-panel__reset-zoom:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+  background: var(--color-paper);
+}
+
+.chart-panel__reset-zoom:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.chart-panel__reset-zoom:active {
+  transform: translateY(1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-panel__reset-zoom {
+    transition: none;
+  }
+}
+
+.chart-panel__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  text-align: center;
+  padding: var(--space-xl);
+  background: color-mix(in oklch, var(--color-paper) 92%, transparent);
+  backdrop-filter: blur(1px);
+}
+
+.chart-panel__message {
+  margin: 0;
+  max-width: 26rem;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--color-ink-2);
+}
+
+.chart-panel__overlay[data-kind='error'] .chart-panel__message {
+  color: var(--color-negative);
+}
+
+.chart-panel__spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: chart-panel-spin 0.7s linear infinite;
+}
+
+@keyframes chart-panel-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-panel__spinner {
+    animation-duration: 1.4s;
+  }
+}
+
+@media (max-width: 480px) {
+  .chart-panel {
+    height: 16rem;
+  }
+}

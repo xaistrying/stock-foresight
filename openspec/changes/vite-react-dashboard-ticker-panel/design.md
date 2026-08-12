@@ -53,7 +53,8 @@ reasoning trail stays legible.
   and deliberately kept off this dashboard entirely, including as a
   placeholder (see `docs/M5_DASHBOARD_EXPLORE_NOTES.md`).
 - No chart zoom/range controls or configurable window size — the
-  300-session window is fixed.
+  750-session window is fixed (widened from the original 300 post-ship,
+  see Decision 2).
 - No user-adjustable prediction horizon, advice-style control, or
   disclaimer-visibility toggle — the reference screenshot's top control
   bar (`horizonDays`, `adviceStyle`, `showDisclaimer`) is dropped
@@ -74,11 +75,11 @@ API layer. Rejected — the two lists would drift silently if
 ticker), and nothing would catch the mismatch since they serve different
 layers of the same app.
 
-### Decision 2: `GET /tickers/{ticker}/history` is OHLCV-only, fixed 300-session window
+### Decision 2: `GET /tickers/{ticker}/history` is OHLCV-only, fixed 750-session window
 Returns `{ticker, rows: [{date, open, high, low, close, volume}, ...]}`
-for the most recent 300 sessions in `ohlcv`, no `near_gap` field, no
-indicator columns. Window size is a fixed backend constant, not a query
-parameter.
+for the most recent 750 sessions (~3 years) in `ohlcv`, no `near_gap`
+field, no indicator columns. Window size is a fixed backend constant, not
+a query parameter.
 
 Alternative considered: a `?sessions=` query param with a default and
 max clamp. Rejected for v1 — nothing in the current UI plan (no zoom/pan
@@ -90,6 +91,17 @@ Alternative considered: include `near_gap` per row so the chart could
 visually mark gaps. Rejected for v1 — deferred along with the indicator
 overlay decision above; scope stays OHLCV-only end to end for this
 endpoint's first version.
+
+**Revised (post-ship, 2026-08-12)**: shipped at 300, then widened to 750
+per the Risks section's own anticipated follow-up ("revisit after the
+dashboard ships and real usage is visible"). 750 sessions (~3 years) was
+chosen over the full ~2000-row history: `lightweight-charts` and the
+`/history` query handle either size without a measurable performance
+difference (payload is a few hundred KB at most; the query is a single
+indexed `ORDER BY date DESC LIMIT n`) — the real constraint is
+*readability* without pan/zoom controls, which this change still doesn't
+add. 750 was picked as enough added context to be useful without candles
+becoming illegibly thin at the dashboard's current fixed chart width.
 
 ### Decision 3 (REVISED 2026-08-11): Prediction serves any loaded ticker; Confidence alone stays scoped to `TRAINING_TICKERS`
 **Supersedes the original Decision 3** ("prediction display restricted
@@ -386,13 +398,125 @@ misreading. Rejected — discussed directly with the user; avoiding
 transaction verbs outright was preferred over relying on adjacent copy
 to do that work.
 
+### Decision 14 (added 2026-08-12): Dashboard uses the full viewport width, not a centered fixed-width column
+`App.css`'s `.app-shell` originally capped the dashboard at `max-width:
+72rem` and centered it (`margin: 0 auto`) — an unreviewed carryover from
+typical content-page layout, not a deliberate choice for a data-dense
+financial dashboard. Revised: the dashboard now fills the available
+viewport width, so the chart panel and AI insight panel get more room on
+wide screens rather than sitting in a fixed ~1152px column with unused
+space on either side.
+
+**Alternative considered**: keep a max-width but raise it (e.g. 96rem)
+instead of removing it entirely. Rejected — discussed directly with the
+user; the request was explicitly for the dashboard to use "the whole
+screen," not a wider-but-still-capped column.
+
+### Decision 15 (added 2026-08-12): T+5 predicted point uses weekday-stepping + whitespace points, not a flat +7-day offset
+The chart's single predicted point (Decision 8) was originally placed at
+`as_of + 7 calendar days` — a rough weekend-absorbing approximation. Real
+usage found this rendered the point immediately adjacent to the last
+candle, reading as "tomorrow" rather than "5 sessions out": lightweight-
+charts' time scale only reserves x-axis width for timestamps it has
+actually been given data for, so with only 2 data points (last close,
+target date) it collapsed the 4 intervening trading sessions regardless
+of what date string was used.
+
+Fixed two ways: (a) `approximateTargetDate` now steps forward 5 WEEKDAYS
+(skipping Sat/Sun) from `as_of` instead of a flat 7 calendar days — still
+an approximation (it doesn't know Vietnamese market holidays) but closer
+to 5 real trading sessions; (b) the chart also passes the 4 intermediate
+weekday dates as lightweight-charts "whitespace" points (`{time}`, no
+`value`) — these reserve axis space without adding a plotted value or a
+connecting line segment, so the model still gets credit for exactly one
+predicted point (Decision 8's constraint is unchanged), only its
+x-position on the axis is now honest.
+
+**Alternative considered**: ask the backend for a real t+5 target date
+instead of approximating client-side. Rejected for this pass — bigger
+scope (API change), and the weekday-stepping approximation was judged
+close enough for a visual placement heuristic that doesn't affect the
+predicted value itself (Rule 2's conversion is exact regardless).
+
+### Decision 16 (added 2026-08-12): Ticker freshness shown as a color dot + legend, not inline text
+Each chip originally showed the literal word "Fresh"/"Stale"/"Loading"
+next to the ticker symbol (Decision 10). Revised to a small color dot
+(green/amber/spinning-gray) instead, with a legend row below the chip
+list spelling out the color mapping — the words took up horizontal space
+disproportionate to the information conveyed, once every one of the 9
+chips carried one.
+
+A bare color dot alone would fail WCAG's color-not-only requirement
+(colorblind users, screen readers can't perceive color) — the dot
+carries an `aria-label`/`title` with the same wording the text used
+("Fresh — up to date with the latest trading session", etc.), so the
+information is still reachable by hover or screen reader, not lost.
+Load-failure messages ("Not loaded", rate-limited, etc.) are unaffected
+— those carry information a dot can't express and remain visible text.
+
+**Alternative considered**: a dot with a 1-letter glyph inside it
+(F/S/L) instead of a separate legend, for accessibility without hovering.
+Rejected — discussed directly with the user; the dot+legend combination
+was preferred.
+
+### Decision 17 (added 2026-08-12): Chart reset-zoom control, resetting both axes independently
+Once a user manually pans/zooms the chart (drag, scroll-wheel, pinch —
+lightweight-charts' native gestures, not something this dashboard adds),
+the time scale and price scale each permanently leave auto-fit mode and
+won't self-correct on new data. There was no way back to a fitted view
+without reselecting the ticker. Added a small icon button (top-right of
+the chart canvas) that restores both axes: `timeScale().fitContent()`
+(or the default-window equivalent, Decision 18) for the x-axis, and
+`priceScale().setAutoScale(true)` for the y-axis — `fitContent()` alone
+only affects the time scale, so a manually-dragged price axis needed its
+own explicit reset.
+
+**Implementation note, not a design decision but worth recording**:
+lightweight-charts sets `z-index: 2` on its own internal canvases (e.g.
+the price-scale overlay); the reset button initially rendered correctly
+but was unclickable, intercepted by that canvas despite being painted
+underneath it. Fixed by giving the button `z-index: 3`. Caught by testing
+the real interaction in a browser, not just inspecting the DOM/a
+screenshot.
+
+### Decision 18 (added 2026-08-12): Chart opens on the most recent ~60 sessions, not the full history
+Decision 2's widened 750-session window (~3 years), combined with
+`fitContent()` fitting the entire window on every ticker selection,
+squeezed the recent candles — and the predicted point — into a thin
+sliver at the right edge of an otherwise mostly-flat 3-year view. Revised
+so opening a ticker (or clicking "Reset zoom", Decision 17) shows the
+most recent 60 sessions (~3 months) via
+`timeScale().setVisibleLogicalRange()`, with a small right margin so the
+dashed prediction line/point isn't flush against the canvas edge. Falls
+back to the old `fitContent()` behavior when a ticker has fewer than 60
+sessions of history — nothing to crop. The full 750-session (or full
+~8-year model) history remains reachable by scrolling/zooming out or is
+unaffected respectively; only the *default* view changed.
+
+**Alternative considered**: 20 sessions (~1 month) or 125 sessions (~6
+months) as the default window. Chose 60 (~3 months) — discussed directly
+with the user — as enough to read short-term trend clearly while keeping
+today's close and the predicted point comfortably visible.
+
+### Decision 19 (added 2026-08-12): Freshness dot has a fixed footprint across all states
+The Loading spinner (a ring, added for Decision 16) and the resting
+Fresh/Stale dot were sized differently (0.75rem vs 0.5rem) — since every
+chip passes through Loading first while its freshness query is in
+flight, each chip visibly grew then shrank the moment it settled. Fixed
+by giving the dot a fixed 0.75rem box (`box-sizing: border-box`) across
+every state; the resting dot renders as a smaller circle centered inside
+that same box via `background-clip: content-box`, rather than the
+element itself changing size.
+
 ## Risks / Trade-offs
 
-- **[Risk]** Fixed 300-session window may be too short for tickers with
-  sparse recent trading or too long to render crisply on small screens.
-  → **Mitigation**: 300 is a named backend constant in one place; revisit
-  after the dashboard ships and real usage is visible, no migration cost
-  to change it later.
+- **[Risk]** *(Acted on 2026-08-12)* Fixed 300-session window was too
+  short once real usage showed it — users expected more visible history
+  than ~14 months. → **Resolution**: widened to 750 sessions (~3 years,
+  Decision 2 revised); still a fixed backend constant, no zoom/pan added.
+  Full ~8-year history remains available to the model (unrelated to this
+  window — it only affects the chart, never training/backtesting), and
+  the constant can be widened again the same way with no migration cost.
 - **[Risk]** `TRAINING_TICKERS` import creates a dependency from
   `app.api` on `app.ml.training` — a module that also does model
   training I/O. → **Mitigation**: only the list constant is imported, not

@@ -14,7 +14,9 @@ router = APIRouter()
 
 # Fixed trailing window for GET /tickers/{ticker}/history (design.md
 # Decision 2). Not a query parameter in v1 — see design.md for rationale.
-HISTORY_WINDOW_SESSIONS = 300
+# Widened from 300 to 750 (~3 years) post-ship, 2026-08-12 — the original
+# window read as too little visible chart history in real use.
+HISTORY_WINDOW_SESSIONS = 750
 
 
 @router.post("/tickers/{ticker}/load")

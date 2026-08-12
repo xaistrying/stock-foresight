@@ -179,7 +179,7 @@ def _insert_ohlcv_rows(db_path, ticker, num_rows):
         conn.close()
 
 
-def test_history_returns_300_most_recent_rows_ascending_when_more_stored(client):
+def test_history_returns_window_most_recent_rows_ascending_when_more_stored(client):
     _insert_ohlcv_rows(client.db_path, "VIB", tickers_api.HISTORY_WINDOW_SESSIONS + 50)
 
     response = client.get("/tickers/VIB/history")
