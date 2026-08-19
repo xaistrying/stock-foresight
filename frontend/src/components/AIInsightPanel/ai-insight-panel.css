@@ -33,7 +33,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2xs);
-  padding-bottom: var(--space-md);
+  padding-bottom: var(--space-lg);
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -57,12 +57,57 @@
   font-family: var(--font-display);
   font-weight: 600;
   font-size: var(--text-lg);
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
   color: var(--color-ink);
+  /* Loading -> populated is a full unmount/remount (different JSX branches
+     in AIInsightPanel.jsx, not the same node's text updating), so a plain
+     `transition` never fires — there's no prior state on the new node to
+     transition from. A mount-triggered animation is the one that actually
+     plays here. Confidence/Technical Signal/Advice's three values all
+     resolve in the same instant (one query, one re-render), so without
+     this they visibly snap in unison — a single value's swap (e.g.
+     PredictionDisplay's, which has no such animation) reads as smaller
+     and smoother by comparison purely because it's only one thing
+     changing at once, not three. */
+  animation: ai-insight-panel-value-in var(--dur-fast) var(--ease-out);
+}
+
+@keyframes ai-insight-panel-value-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .ai-insight-panel__value--na {
   color: var(--color-ink-3);
+}
+
+/* redesign-dashboard-visual-look Decision 1: only the Confidence percent
+   is genuinely numeric — Sentiment's value is a word ("Bullish") and
+   Advice's is a verdict ("HOLD"/"Signal: up"), neither of which should
+   switch to the mono/tabular register. Scoped to this one modifier
+   rather than applied to .ai-insight-panel__value generally. */
+.ai-insight-panel__value--numeric {
+  font-family: var(--font-mono);
+}
+
+/* Loading placeholder value ("N/A") — deliberately muted (not the same
+   color as a real .ai-insight-panel__value--na), not styled to look
+   like a real computed value, so a slow load can never be mistaken for
+   an actual Confidence/Sentiment/Advice result (rules 4/5 require those
+   to reflect real data, never a fabricated stand-in). Renders in the
+   same .ai-insight-panel__item markup as the populated state (see
+   AIInsightPanel.jsx's loading branch) so loading and populated share an
+   identical DOM shape — no separate skeleton layout to drift out of sync
+   with real content's height. Same font-size/family/weight as a real
+   value (only color differs) so the placeholder reads as visually
+   substantial rather than a barely-visible dash. */
+.ai-insight-panel__value--placeholder {
+  color: var(--color-border-strong);
 }
 
 .ai-insight-panel__value[data-verdict='up'] {
@@ -78,6 +123,7 @@
 .ai-insight-panel__note {
   margin: 0;
   font-size: var(--text-sm);
+  line-height: 1.2;
   color: var(--color-ink-3);
 }
 
@@ -162,6 +208,21 @@
   }
 }
 
+/* Visually hidden but still announced to screen readers — the loading
+   placeholder's item blocks are aria-hidden (decorative "—" stand-ins),
+   so this is the only accessible "loading" signal while they're shown. */
+.ai-insight-panel__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ai-insight-panel__spinner {
     animation-duration: 1.4s;
@@ -169,5 +230,9 @@
 
   .ai-insight-panel__backtest-button {
     transition: none;
+  }
+
+  .ai-insight-panel__value {
+    animation: none;
   }
 }

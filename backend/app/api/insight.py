@@ -112,8 +112,7 @@ def get_insight(ticker: str, request: Request):
 
     confidence_score = compute_rolling_hit_rate(ticker)
     confidence_basis = (
-        f"Hit-rate over the ticker's most recent {ROLLING_HIT_RATE_WINDOW} "
-        "backtested predictions."
+        f"{ROLLING_HIT_RATE_WINDOW}-prediction backtested hit-rate."
         if confidence_score is not None
         else "No backtested predictions for this ticker yet — needs more price "
         "history to backtest."

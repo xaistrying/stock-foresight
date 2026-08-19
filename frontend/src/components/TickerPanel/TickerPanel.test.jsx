@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -7,7 +7,9 @@ import * as tickersApi from '../../api/tickers'
 
 // Mirrors GET /tickers/{ticker}/prediction and /history enough for the
 // freshness computation (useTickerFreshness) to resolve deterministically
-// in tests, without a real backend.
+// in tests, without a real backend. Also mocks /insight — TickerChip now
+// prefetches it the same way (adjacent fix, see useTickerInsight.js) — so
+// existing tests don't hit the network for a query they don't care about.
 function mockFreshData() {
   vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
     ticker: 'TCB',
@@ -18,6 +20,14 @@ function mockFreshData() {
   vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
     ticker: 'TCB',
     rows: [{ date: '2026-08-10', open: 1, high: 1, low: 1, close: 1, volume: 1 }],
+  })
+  vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
+    ticker: 'TCB',
+    confidence_score: 0.55,
+    confidence_basis: '60-prediction backtested hit-rate.',
+    sentiment_proxy: 'bullish',
+    sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
+    advice_text: 'HOLD',
   })
 }
 
@@ -211,6 +221,143 @@ describe('TickerPanel', () => {
     const vibChip = screen.getByRole('button', { name: /^VIB/ })
     expect(tcbChip).toHaveAttribute('aria-pressed', 'true')
     expect(vibChip).toHaveAttribute('aria-pressed', 'false')
+  })
+})
+
+// redesign-dashboard-visual-look: the Watchlist (fixed set) and every
+// searched-in ticker beyond it render as two separately-labeled groups,
+// and the search input live-filters the searched-in group only (tasks.md
+// 6.1, dashboard-ui spec's "Filter narrows the searched-in list only" and
+// "Fixed Watchlist remains visible regardless of filter input" scenarios).
+describe('TickerPanel Watchlist / searched-tickers split', () => {
+  it('splits the Watchlist from a separately-labeled Searched tickers group', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    const input = screen.getByLabelText(/search ticker/i)
+    await userEvent.type(input, 'FPT')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
+
+    const watchlist = await screen.findByRole('group', { name: 'Watchlist' })
+    const searched = await screen.findByRole('group', { name: 'Searched tickers' })
+    expect(within(watchlist).getByRole('button', { name: /^TCB/ })).toBeInTheDocument()
+    expect(within(searched).getByRole('button', { name: /^FPT/ })).toBeInTheDocument()
+    expect(within(watchlist).queryByRole('button', { name: /^FPT/ })).not.toBeInTheDocument()
+  })
+
+  it('does not render a Searched tickers group when nothing has been searched in yet', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    expect(screen.queryByRole('group', { name: 'Searched tickers' })).not.toBeInTheDocument()
+  })
+
+  it('filtering the search input narrows only the Searched tickers group, never the Watchlist', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockImplementation((ticker) =>
+      Promise.resolve({ ticker, status: 'ok', rows_loaded: 300 }),
+    )
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    const input = screen.getByLabelText(/search ticker/i)
+    const loadButton = screen.getByRole('button', { name: /^load$/i })
+
+    await userEvent.type(input, 'FPT')
+    await userEvent.click(loadButton)
+    await waitFor(() => expect(screen.getByRole('button', { name: /^FPT/ })).toBeInTheDocument())
+
+    await userEvent.type(input, 'ABC')
+    await userEvent.click(loadButton)
+    await waitFor(() => expect(screen.getByRole('button', { name: /^ABC/ })).toBeInTheDocument())
+
+    // Filter without submitting — narrows the searched-in list only.
+    await userEvent.clear(input)
+    await userEvent.type(input, 'FP')
+
+    const searched = screen.getByRole('group', { name: 'Searched tickers' })
+    expect(within(searched).getByRole('button', { name: /^FPT/ })).toBeInTheDocument()
+    expect(within(searched).queryByRole('button', { name: /^ABC/ })).not.toBeInTheDocument()
+    // The fixed Watchlist is unaffected by the filter, even though "TCB"
+    // doesn't match the typed substring either.
+    expect(screen.getByRole('button', { name: /^TCB/ })).toBeInTheDocument()
+  })
+
+  it('announces the filtered count for screen readers as the user types', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers: [] })
+    vi.spyOn(tickersApi, 'loadTicker').mockImplementation((ticker) =>
+      Promise.resolve({ ticker, status: 'ok', rows_loaded: 300 }),
+    )
+
+    renderPanel()
+    const input = screen.getByLabelText(/search ticker/i)
+    const loadButton = screen.getByRole('button', { name: /^load$/i })
+
+    await userEvent.type(input, 'FPT')
+    await userEvent.click(loadButton)
+    await waitFor(() => expect(screen.getByRole('button', { name: /^FPT/ })).toBeInTheDocument())
+
+    await userEvent.type(input, 'ABC')
+    await userEvent.click(loadButton)
+    await waitFor(() => expect(screen.getByRole('button', { name: /^ABC/ })).toBeInTheDocument())
+
+    await userEvent.clear(input)
+    await userEvent.type(input, 'FP')
+
+    expect(await screen.findByText('1 of 2 tickers')).toBeInTheDocument()
+  })
+})
+
+// Adjacent fix (found live, not caused by redesign-dashboard-visual-look):
+// AIInsightPanel's first fetch for any given ticker was always cold —
+// unlike Prediction/Chart, nothing warmed `useTickerInsight`'s cache ahead
+// of selection — forcing a visible loading-placeholder flash on that
+// ticker's first selection. TickerChip now prefetches insight the same
+// way it already prefetches prediction/history for freshness.
+describe('TickerPanel insight prefetch', () => {
+  it('prefetches AI insight for every Watchlist ticker on render, not just the selected one', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [
+        { ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        { ticker: 'VIB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+      ],
+    })
+    mockFreshData()
+    const insightSpy = tickersApi.fetchTickerInsight
+
+    renderPanel({ selectedTicker: null })
+
+    await waitFor(() => {
+      expect(insightSpy).toHaveBeenCalledWith('TCB')
+      expect(insightSpy).toHaveBeenCalledWith('VIB')
+    })
+  })
+
+  it('does not prefetch insight for an unloaded (not-yet-loaded) ticker', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'VIB', loaded: false, features_computed: null, last_loaded_at: null }],
+    })
+    const insightSpy = vi.spyOn(tickersApi, 'fetchTickerInsight')
+
+    renderPanel()
+    await screen.findByRole('button', { name: /VIB/ })
+
+    expect(insightSpy).not.toHaveBeenCalled()
   })
 })
 

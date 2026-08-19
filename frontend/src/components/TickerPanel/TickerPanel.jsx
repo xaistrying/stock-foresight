@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTickers } from '../../hooks/useTickers'
 import { useSearchedTickers } from '../../hooks/useSearchedTickers'
@@ -14,14 +15,27 @@ import './ticker-panel.css'
  * any real ticker"). Selecting a ticker (chip or search) is reported via
  * `onSelectTicker` for the rest of the dashboard (chart/prediction/insight
  * panels, task 11) to consume.
+ *
+ * redesign-dashboard-visual-look Decision 4/5: the fixed 9 tickers render
+ * as the "Watchlist" group, unchanged in behavior. Every other,
+ * searched-in ticker renders in a separate "Searched tickers" group — a
+ * scrollable list rather than a wrapping chip row, since this list has no
+ * bound on how many entries a session can accumulate. `TickerSearch`'s
+ * input live-filters this second group only (`filterValue`); the
+ * Watchlist is never affected by it.
  */
 export function TickerPanel({ selectedTicker, onSelectTicker }) {
   const { data, isLoading, isError } = useTickers()
   const { searchedTickers, addSearchedTicker } = useSearchedTickers()
   const queryClient = useQueryClient()
+  const [filterValue, setFilterValue] = useState('')
 
   const catalogTickers = data?.tickers ?? []
   const knownTickers = [...catalogTickers.map((entry) => entry.ticker), ...searchedTickers]
+
+  const visibleSearchedTickers = filterValue.trim()
+    ? searchedTickers.filter((ticker) => ticker.toLowerCase().includes(filterValue.trim().toLowerCase()))
+    : searchedTickers
 
   // Search-triggered loads target an arbitrary, not-yet-known symbol, so
   // they can't go through a ticker-scoped useLoadTicker() hook instance
@@ -55,6 +69,7 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
           onResolveKnown={handleResolveKnown}
           onLoad={(ticker) => searchLoadMutation.mutateAsync(ticker)}
           isLoading={searchLoadMutation.isPending}
+          onFilterChange={setFilterValue}
         />
       </div>
 
@@ -64,7 +79,11 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
         </p>
       )}
 
-      <div className="ticker-panel__chips" role="group" aria-label="Tickers">
+      {/* Watchlist — the fixed 9 TRAINING_TICKERS, always visible
+          regardless of the search input's filter state (dashboard-ui
+          spec: "Fixed Watchlist remains visible regardless of filter
+          input"). */}
+      <div className="ticker-panel__chips" role="group" aria-label="Watchlist">
         {isLoading && (
           <>
             <span className="ticker-chip ticker-chip--skeleton" aria-hidden="true" />
@@ -81,16 +100,43 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
             onSelect={onSelectTicker}
           />
         ))}
-        {searchedTickers.map((ticker) => (
-          <TickerChip
-            key={ticker}
-            ticker={ticker}
-            catalogEntry={null}
-            isSelected={selectedTicker === ticker}
-            onSelect={onSelectTicker}
-          />
-        ))}
       </div>
+
+      {/* Searched tickers — every symbol searched-and-loaded beyond the
+          Watchlist, in a separate scrollable group (redesign-dashboard-
+          visual-look Decision 4). Only rendered once there's at least one,
+          so an empty session doesn't show an empty list with nothing to
+          scroll. */}
+      {searchedTickers.length > 0 && (
+        <div className="ticker-panel__searched">
+          <h2 className="ticker-panel__searched-heading">Searched tickers</h2>
+          <div className="ticker-panel__searched-list" role="group" aria-label="Searched tickers">
+            {visibleSearchedTickers.length > 0 ? (
+              visibleSearchedTickers.map((ticker) => (
+                <TickerChip
+                  key={ticker}
+                  ticker={ticker}
+                  catalogEntry={null}
+                  isSelected={selectedTicker === ticker}
+                  onSelect={onSelectTicker}
+                  variant="row"
+                />
+              ))
+            ) : (
+              <p className="ticker-panel__searched-empty">No searched tickers match "{filterValue.trim()}".</p>
+            )}
+          </div>
+          {/* Announces the filtered count to screen readers — the visible
+              row count changing as the user types would otherwise be
+              silent (dashboard-ui spec: "Filter narrows the searched-in
+              list only"). */}
+          <p className="ticker-panel__sr-only" aria-live="polite">
+            {filterValue.trim()
+              ? `${visibleSearchedTickers.length} of ${searchedTickers.length} tickers`
+              : `${searchedTickers.length} searched ${searchedTickers.length === 1 ? 'ticker' : 'tickers'}`}
+          </p>
+        </div>
+      )}
 
       {/* Freshness legend (post-ship revision) — chips show a color dot
           instead of a "Fresh"/"Stale"/"Loading" text label; this spells out

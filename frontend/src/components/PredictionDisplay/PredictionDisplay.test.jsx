@@ -21,9 +21,19 @@ beforeEach(() => {
 })
 
 describe('PredictionDisplay', () => {
-  it('shows an empty-state prompt when no ticker is selected', () => {
+  it('renders its title and an N/A placeholder when no ticker is selected (design.md Decision 13)', () => {
     renderDisplay(null)
-    expect(screen.getByText(/select a ticker to see its prediction/i)).toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { name: 'Prediction' })).toBeInTheDocument()
+    expect(screen.getByText('N/A')).toBeInTheDocument()
+  })
+
+  it('keeps the same three-line shape (percent/as-of/horizon) with no ticker selected, so selecting one causes no layout jump', () => {
+    renderDisplay(null)
+
+    expect(screen.getByText('N/A')).toBeInTheDocument()
+    expect(screen.getByText('As of —')).toBeInTheDocument()
+    expect(screen.getByText('Fixed horizon: 5 trading sessions')).toBeInTheDocument()
   })
 
   it('shows a loading message while the prediction is in flight', () => {

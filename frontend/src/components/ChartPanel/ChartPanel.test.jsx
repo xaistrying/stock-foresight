@@ -1,3 +1,4 @@
+import { act } from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
@@ -5,6 +6,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ChartPanel } from './ChartPanel'
 import * as tickersApi from '../../api/tickers'
 import { ApiError } from '../../api/client'
+
+// jsdom has no real CSS cascade, so readChartTheme()'s
+// getComputedStyle(...).getPropertyValue('--color-positive') calls resolve
+// to '' rather than a real token value — indistinguishable from each other
+// for a per-bar color-matching assertion. Mocked with distinct fake values
+// so the volume-coloring test (design.md Decision 7) can assert on
+// something meaningful.
+vi.mock('./chartTheme', () => ({
+  readChartTheme: () => ({
+    paper: 'rgb(255, 255, 255)',
+    border: 'rgb(200, 200, 200)',
+    ink2: 'rgb(50, 50, 50)',
+    ink3: 'rgb(100, 100, 100)',
+    positive: 'rgb(0, 128, 0)',
+    negative: 'rgb(200, 0, 0)',
+    accent: 'rgb(0, 0, 200)',
+  }),
+}))
 
 // Captures every setData call made to the predicted-point line series, so
 // tests can assert on the actual data points handed to lightweight-charts
@@ -14,10 +33,26 @@ import { ApiError } from '../../api/client'
 // namespace) is required here — Vitest can't redefine an ESM named export
 // directly, but a mock factory wrapping the real module works.
 const lineSeriesDataCalls = []
+const volumeSeriesDataCalls = []
 let fitContentCallCount = 0
 const setAutoScaleCalls = []
+const candleSetAutoScaleCalls = []
+const volumeSetAutoScaleCalls = []
 const visibleLogicalRangeCalls = []
 const createChartCalls = []
+// Captures the handler ChartPanel registers via subscribeCrosshairMove so
+// tests can simulate a crosshair position directly (jsdom fires no real
+// mouse-over-canvas events) — add-chart-ohlcv-legend tasks.md section 4.
+let crosshairMoveHandler = null
+// setStretchFactor calls per pane index (design.md Decision 10) — a test
+// asserts Reset zoom restores both panes' original stretch factors, not
+// just that *some* pane was resized.
+const stretchFactorCallsByPane = { 0: [], 1: [] }
+// Real series instances, captured so a test can build a `param.seriesData`
+// Map keyed by the exact same objects ChartPanel's crosshair handler looks
+// them up by (add-chart-ohlcv-legend tasks.md section 4).
+let candleSeriesInstance = null
+let volumeSeriesInstance = null
 
 vi.mock('lightweight-charts', async () => {
   const actual = await vi.importActual('lightweight-charts')
@@ -27,8 +62,8 @@ vi.mock('lightweight-charts', async () => {
       createChartCalls.push(args[1])
       const chart = actual.createChart(...args)
       const originalAddSeries = chart.addSeries.bind(chart)
-      chart.addSeries = (definition, options) => {
-        const series = originalAddSeries(definition, options)
+      chart.addSeries = (definition, options, paneIndex) => {
+        const series = originalAddSeries(definition, options, paneIndex)
         if (definition === actual.LineSeries) {
           const originalSetData = series.setData.bind(series)
           series.setData = (data) => {
@@ -36,7 +71,18 @@ vi.mock('lightweight-charts', async () => {
             return originalSetData(data)
           }
         }
-        if (definition === actual.CandlestickSeries) {
+        if (definition === actual.HistogramSeries) {
+          volumeSeriesInstance = series
+          const originalSetData = series.setData.bind(series)
+          series.setData = (data) => {
+            volumeSeriesDataCalls.push(data)
+            return originalSetData(data)
+          }
+          // Volume pane's own independent price scale (design.md Decision
+          // 8) — wrapped the same way as CandlestickSeries below, but into
+          // its own array, so a test can assert Reset zoom resets BOTH
+          // panes' price scales, not just tell they were both called on
+          // *some* series.
           const originalPriceScale = series.priceScale.bind(series)
           series.priceScale = () => {
             const priceScale = originalPriceScale()
@@ -44,6 +90,24 @@ vi.mock('lightweight-charts', async () => {
               const originalSetAutoScale = priceScale.setAutoScale.bind(priceScale)
               priceScale.setAutoScale = (on) => {
                 setAutoScaleCalls.push(on)
+                volumeSetAutoScaleCalls.push(on)
+                return originalSetAutoScale(on)
+              }
+              priceScale.__setAutoScaleWrapped = true
+            }
+            return priceScale
+          }
+        }
+        if (definition === actual.CandlestickSeries) {
+          candleSeriesInstance = series
+          const originalPriceScale = series.priceScale.bind(series)
+          series.priceScale = () => {
+            const priceScale = originalPriceScale()
+            if (!priceScale.__setAutoScaleWrapped) {
+              const originalSetAutoScale = priceScale.setAutoScale.bind(priceScale)
+              priceScale.setAutoScale = (on) => {
+                setAutoScaleCalls.push(on)
+                candleSetAutoScaleCalls.push(on)
                 return originalSetAutoScale(on)
               }
               priceScale.__setAutoScaleWrapped = true
@@ -75,6 +139,29 @@ vi.mock('lightweight-charts', async () => {
           timeScale.__fitContentWrapped = true
         }
         return timeScale
+      }
+      // chart.panes() returns a fresh array each call — wrap each pane's
+      // setStretchFactor by index (same __wrapped-marker convention as
+      // timeScale above), so calls from both chart-creation and Reset
+      // zoom (design.md Decision 10) are observable per pane.
+      const originalPanes = chart.panes.bind(chart)
+      chart.panes = () => {
+        const panes = originalPanes()
+        panes.forEach((pane, index) => {
+          if (pane.__setStretchFactorWrapped) return
+          const originalSetStretchFactor = pane.setStretchFactor.bind(pane)
+          pane.setStretchFactor = (factor) => {
+            ;(stretchFactorCallsByPane[index] ??= []).push(factor)
+            return originalSetStretchFactor(factor)
+          }
+          pane.__setStretchFactorWrapped = true
+        })
+        return panes
+      }
+      const originalSubscribeCrosshairMove = chart.subscribeCrosshairMove.bind(chart)
+      chart.subscribeCrosshairMove = (handler) => {
+        crosshairMoveHandler = handler
+        return originalSubscribeCrosshairMove(handler)
       }
       return chart
     },
@@ -108,10 +195,18 @@ function renderPanel(ticker) {
 beforeEach(() => {
   vi.restoreAllMocks()
   lineSeriesDataCalls.length = 0
+  volumeSeriesDataCalls.length = 0
   fitContentCallCount = 0
   setAutoScaleCalls.length = 0
+  candleSetAutoScaleCalls.length = 0
+  volumeSetAutoScaleCalls.length = 0
+  stretchFactorCallsByPane[0].length = 0
+  stretchFactorCallsByPane[1].length = 0
   visibleLogicalRangeCalls.length = 0
   createChartCalls.length = 0
+  crosshairMoveHandler = null
+  candleSeriesInstance = null
+  volumeSeriesInstance = null
 })
 
 // Generates `count` ascending daily OHLCV rows ending at `endDate` — used
@@ -258,6 +353,48 @@ describe('ChartPanel', () => {
     unmount()
   })
 
+  it('renders volume bars colored to match each session\'s up/down direction, matching CandlestickSeries\' own convention (design.md Decision 7)', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [
+        // Up session: close >= open.
+        { date: '2026-08-06', open: 10, high: 11, low: 9, close: 10.5, volume: 1000 },
+        // Down session: close < open.
+        { date: '2026-08-07', open: 10.5, high: 10.8, low: 9.8, close: 10, volume: 2000 },
+        // Flat session (close === open) counts as "up" — same >= comparison
+        // CandlestickSeries itself uses via upColor/downColor.
+        { date: '2026-08-10', open: 10, high: 10.2, low: 9.9, close: 10, volume: 1500 },
+      ],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'near_gap',
+    })
+
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => {
+      const lastCall = volumeSeriesDataCalls[volumeSeriesDataCalls.length - 1]
+      expect(lastCall).toHaveLength(3)
+    })
+
+    const lastCall = volumeSeriesDataCalls[volumeSeriesDataCalls.length - 1]
+    expect(lastCall[0]).toMatchObject({ time: '2026-08-06', value: 1000 })
+    expect(lastCall[1]).toMatchObject({ time: '2026-08-07', value: 2000 })
+    expect(lastCall[2]).toMatchObject({ time: '2026-08-10', value: 1500 })
+
+    // Up and flat sessions get theme.positive, the down session
+    // theme.negative — the same tokens CandlestickSeries itself uses for
+    // upColor/downColor (readChartTheme is mocked above with distinct
+    // fake values so this assertion is meaningful in jsdom).
+    expect(lastCall[0].color).toBe('rgb(0, 128, 0)')
+    expect(lastCall[1].color).toBe('rgb(200, 0, 0)')
+    expect(lastCall[2].color).toBe('rgb(0, 128, 0)')
+
+    unmount()
+  })
+
   it('clears the predicted-point line entirely when the prediction is unavailable (near_gap)', async () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
@@ -325,6 +462,17 @@ describe('ChartPanel', () => {
     // fitContent() alone only affects the time scale (design.md/tasks.md:
     // "if I manually adjust the x or y, it can not go back to auto mode").
     expect(setAutoScaleCalls).toContain(true)
+    // Both panes' independent price scales reset together (design.md
+    // Decision 8) — not just the candlestick pane's. Before this fix, a
+    // manual drag/zoom on the volume pane's own y-axis specifically
+    // wasn't undone by this button.
+    expect(candleSetAutoScaleCalls).toContain(true)
+    expect(volumeSetAutoScaleCalls).toContain(true)
+    // The pane divider's stretch-factor split resets to the original
+    // 3:1 (price:volume) ratio too (design.md Decision 10) — before this
+    // fix, a manually-dragged divider wasn't restored by this button.
+    expect(stretchFactorCallsByPane[0]).toContain(3)
+    expect(stretchFactorCallsByPane[1]).toContain(1)
 
     unmount()
   })
@@ -406,6 +554,139 @@ describe('ChartPanel', () => {
 
     expect(createChartCalls).toHaveLength(1)
     expect(createChartCalls[0].rightPriceScale.minimumWidth).toBeGreaterThan(0)
+
+    unmount()
+  })
+})
+
+// OHLCV legend (add-chart-ohlcv-legend tasks.md section 4). jsdom fires no
+// real mouse-over-canvas events, so hover is simulated by invoking the
+// handler ChartPanel registered via subscribeCrosshairMove directly
+// (captured above as `crosshairMoveHandler`), with a `param.seriesData`
+// Map keyed by the real series instances (`candleSeriesInstance`/
+// `volumeSeriesInstance`) the same way lightweight-charts itself would key
+// it.
+describe('ChartPanel OHLCV legend', () => {
+  // Every O/H/L/C/Volume value across both rows is distinct, so a test
+  // can look up any one of them with `findByText` without colliding with
+  // another value rendered elsewhere in the legend.
+  const rows = [
+    // Down session (close < open) — hovered in the "updates on hover"
+    // test; distinct from the default (latest) row below.
+    { date: '2026-08-06', open: 10, high: 10.2, low: 8.7, close: 8.8, volume: 1000 },
+    // Up session (close >= open) — the most recent row, so this is what
+    // the legend shows by default.
+    { date: '2026-08-07', open: 9.5, high: 12.3, low: 9.4, close: 11.6, volume: 2000000 },
+  ]
+
+  function mockHistoryAndPrediction() {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
+    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: rows[rows.length - 1].date,
+      status: 'near_gap',
+    })
+  }
+
+  it('shows the most recent session\'s OHLCV by default, before any crosshair event', async () => {
+    mockHistoryAndPrediction()
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(candleSeriesInstance).not.toBeNull())
+    const priceFormatter = candleSeriesInstance.priceFormatter()
+    const volumeFormatter = volumeSeriesInstance.priceFormatter()
+    const latest = rows[rows.length - 1]
+
+    expect(await screen.findByText(priceFormatter.format(latest.open))).toBeInTheDocument()
+    expect(screen.getByText(priceFormatter.format(latest.high))).toBeInTheDocument()
+    expect(screen.getByText(priceFormatter.format(latest.low))).toBeInTheDocument()
+    expect(screen.getByText(priceFormatter.format(latest.close))).toBeInTheDocument()
+    expect(screen.getByText(volumeFormatter.format(latest.volume))).toBeInTheDocument()
+
+    unmount()
+  })
+
+  it('updates to the hovered session\'s OHLCV when the crosshair moves', async () => {
+    mockHistoryAndPrediction()
+    const { unmount } = renderPanel('TCB')
+
+    // The legend only renders once `hasChartData` is true (the same
+    // gate "Reset zoom" uses) — wait for the default row's close to
+    // appear before simulating a hover, not just for the handler to be
+    // registered (which happens at chart-creation time, before history
+    // data resolves).
+    await waitFor(() => expect(candleSeriesInstance).not.toBeNull())
+    const defaultPriceFormatter = candleSeriesInstance.priceFormatter()
+    await screen.findByText(defaultPriceFormatter.format(rows[rows.length - 1].close))
+    const hovered = rows[0] // the down session, not the default latest one
+    await act(async () => {
+      crosshairMoveHandler({
+        time: hovered.date,
+        seriesData: new Map([
+          [candleSeriesInstance, { open: hovered.open, high: hovered.high, low: hovered.low, close: hovered.close }],
+          [volumeSeriesInstance, { value: hovered.volume }],
+        ]),
+      })
+    })
+
+    const priceFormatter = candleSeriesInstance.priceFormatter()
+    expect(await screen.findByText(priceFormatter.format(hovered.close))).toBeInTheDocument()
+    // The previously-default (latest) row's close is no longer shown.
+    const latest = rows[rows.length - 1]
+    expect(screen.queryByText(priceFormatter.format(latest.close))).not.toBeInTheDocument()
+
+    unmount()
+  })
+
+  it('colors the legend to match the hovered session\'s up/down direction', async () => {
+    mockHistoryAndPrediction()
+    const { unmount } = renderPanel('TCB')
+
+    // Default (latest row, index 1) is an up session (close >= open).
+    // `crosshairMoveHandler` is registered at chart-creation time, before
+    // history data (and so the legend element itself) exists — wait for
+    // the legend's own text, not just the handler capture, before
+    // querying the element.
+    await waitFor(() => expect(candleSeriesInstance).not.toBeNull())
+    const priceFormatter = candleSeriesInstance.priceFormatter()
+    await screen.findByText(priceFormatter.format(rows[rows.length - 1].close))
+    const legend = document.querySelector('.chart-panel__legend')
+    expect(legend).toHaveAttribute('data-direction', 'up')
+
+    // Hover the down session (index 0).
+    const down = rows[0]
+    await act(async () => {
+      crosshairMoveHandler({
+        time: down.date,
+        seriesData: new Map([
+          [candleSeriesInstance, { open: down.open, high: down.high, low: down.low, close: down.close }],
+          [volumeSeriesInstance, { value: down.volume }],
+        ]),
+      })
+    })
+    expect(legend).toHaveAttribute('data-direction', 'down')
+
+    unmount()
+  })
+
+  it('falls back to the most recent session when the crosshair has no candle data at that time', async () => {
+    mockHistoryAndPrediction()
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(crosshairMoveHandler).not.toBeNull())
+    const priceFormatter = candleSeriesInstance.priceFormatter()
+    const latest = rows[rows.length - 1]
+    await screen.findByText(priceFormatter.format(latest.close))
+
+    // Simulates the crosshair sitting on a whitespace-only point (e.g. one
+    // of the predicted-point line's intermediate dates) — a real `time`,
+    // but neither the candle nor volume series has data there.
+    await act(async () => {
+      crosshairMoveHandler({ time: '2099-01-01', seriesData: new Map() })
+    })
+
+    // Still shows the latest row's close — not blank, not a crash.
+    expect(await screen.findByText(priceFormatter.format(latest.close))).toBeInTheDocument()
 
     unmount()
   })

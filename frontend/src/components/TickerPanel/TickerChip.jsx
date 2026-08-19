@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { FRESHNESS, useTickerFreshness } from '../../hooks/useTickerFreshness'
+import { useTickerInsight } from '../../hooks/useTickerInsight'
 import { describeLoadStatus, useLoadTicker, useIsTickerLoading } from '../../hooks/useLoadTicker'
 import { formatLastLoadedAt } from '../../lib/relativeTime'
 import { ApiError } from '../../api/client'
@@ -42,8 +43,15 @@ const FRESHNESS_DESCRIPTION = {
  * started the mutation currently reflected by `loadMutation`, purely to
  * decide *where* to render the outcome message (select's status slot vs.
  * refresh's) — it does not affect request behavior.
+ *
+ * `variant` (redesign-dashboard-visual-look Decision 4) switches only the
+ * CSS layout — 'chip' (default) is the bordered card used for the fixed
+ * Watchlist; 'row' is a full-width, borderless list row used for the
+ * scrollable "Searched tickers" list, which needs to read as a list once
+ * a session accumulates many entries, not a wrapping wall of cards. All
+ * markup, ARIA, and behavior are identical between the two variants.
  */
-export function TickerChip({ ticker, catalogEntry, isSelected, onSelect }) {
+export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant = 'chip' }) {
   const isLoaded = catalogEntry?.loaded ?? true // searched-in tickers are loaded by construction
   const featuresFailed = catalogEntry?.features_computed === false
   const loadMutation = useLoadTicker(ticker)
@@ -53,6 +61,20 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect }) {
   const { freshness } = useTickerFreshness(ticker, {
     enabled: isLoaded && !featuresFailed,
   })
+
+  // Warms `useTickerInsight`'s cache for this ticker the same way the
+  // freshness check above already warms `prediction`/`history` — a
+  // pre-existing gap (found live, adjacent to but not caused by
+  // redesign-dashboard-visual-look) meant AIInsightPanel's first fetch
+  // for any given ticker was always cold, forcing a real loading-
+  // placeholder-to-populated DOM swap (and its fade-in animation) on
+  // that ticker's first selection, while Prediction/Chart — reading the
+  // now-cached prediction/history — painted instantly. The return value
+  // is intentionally unused here; this call exists purely to populate
+  // React Query's cache under the same `['ticker-insight', ticker]` key
+  // AIInsightPanel itself reads, so its own `useTickerInsight(ticker)`
+  // call finds warm data on a ticker's first real selection too.
+  useTickerInsight(ticker, { enabled: isLoaded && !featuresFailed })
 
   const effectiveFreshness = isTickerLoading ? FRESHNESS.LOADING : freshness
   const freshnessDescription = FRESHNESS_DESCRIPTION[effectiveFreshness]
@@ -129,6 +151,7 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect }) {
   return (
     <div
       className="ticker-chip"
+      data-variant={variant}
       data-selected={isSelected || undefined}
       data-freshness={effectiveFreshness}
       data-status={statusKind}

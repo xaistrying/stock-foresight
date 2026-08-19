@@ -7,18 +7,24 @@ TBD
 ## Requirements
 
 ### Requirement: Ticker panel shows the fixed set plus search for any real ticker
-The dashboard's ticker panel SHALL render one selectable chip per ticker
-returned by `GET /tickers` (the 9 `TRAINING_TICKERS`), always visible.
-The panel SHALL also provide a search action that resolves a
-user-entered ticker symbol; if that ticker is not yet loaded, the search
-action SHALL trigger `POST /tickers/{ticker}/load` the same way clicking
-an unloaded chip would, and the ticker SHALL join the selectable list
-once loaded successfully.
+The dashboard's ticker panel SHALL render one selectable **entry** (a chip
+for the fixed Watchlist, a list row for any other ticker) per ticker
+returned by `GET /tickers` (the 9 `TRAINING_TICKERS`) plus every
+successfully-loaded searched-in ticker. The 9 `TRAINING_TICKERS` SHALL
+always be visible as the fixed **Watchlist**, regardless of any filter or
+search input state. The panel SHALL also provide a search action that
+resolves a user-entered ticker symbol; if that ticker is not yet loaded,
+the search action SHALL trigger `POST /tickers/{ticker}/load` the same way
+selecting an unloaded entry would, and the ticker SHALL join the
+selectable searched-in list once loaded successfully. The same input MAY
+also live-filter the searched-in list's visible entries as the user types,
+provided this filtering never hides or otherwise affects the Watchlist.
 
 #### Scenario: Panel renders the fixed set as chips
 - **WHEN** the dashboard loads
-- **THEN** the ticker panel shows one selectable chip per ticker
-  returned by `GET /tickers`, always visible regardless of search state
+- **THEN** the ticker panel shows one selectable chip per ticker in the
+  Watchlist (the 9 tickers returned by `GET /tickers`), always visible
+  regardless of search or filter state
 
 #### Scenario: Searching an unloaded ticker triggers a load
 - **WHEN** a user searches a ticker symbol that has no rows in `ohlcv`
@@ -28,15 +34,28 @@ once loaded successfully.
 
 #### Scenario: Searching an already-loaded ticker selects it directly
 - **WHEN** a user searches a ticker symbol that already has data loaded
-  (whether one of the 9 chips or a previously searched-in ticker)
+  (whether a Watchlist entry or a previously searched-in ticker)
 - **THEN** the dashboard selects it directly without issuing a new
   `/load` request
 
 #### Scenario: A searched-in ticker persists as a selectable entry
 - **WHEN** a searched ticker outside `TRAINING_TICKERS` has loaded
   successfully at least once
-- **THEN** it remains selectable in the ticker panel for the rest of the
-  session, alongside the 9 fixed chips
+- **THEN** it remains selectable in the ticker panel's searched-in list for
+  the rest of the session, alongside the Watchlist
+
+#### Scenario: Filter narrows the searched-in list only
+- **WHEN** a user types a substring into the ticker panel's search input
+  without submitting
+- **THEN** the searched-in list's visible entries narrow to those whose
+  symbol contains the typed substring, and the count of visible entries is
+  announced to screen readers via an `aria-live` region
+
+#### Scenario: Fixed Watchlist remains visible regardless of filter input
+- **WHEN** a user types a substring into the ticker panel's search input
+  that matches none of the 9 `TRAINING_TICKERS`
+- **THEN** all 9 Watchlist entries remain visible and selectable; only the
+  searched-in list's visible entries change
 
 ### Requirement: Predicted log return is converted to a percentage before display
 Per domain Rule 2, the dashboard SHALL NOT render the raw
@@ -83,25 +102,102 @@ ticker, whether one of the 9 `TRAINING_TICKERS` or a searched-in ticker.
   failed for this ticker, distinct from the near_gap and not-loaded
   messages
 
-### Requirement: Chart panel renders OHLCV plus the single predicted point, no indicator overlay
-The chart panel SHALL render candles from `GET
-/tickers/{ticker}/history`. It SHALL NOT render any indicator overlay
-(Ichimoku, RSI, MACD, Bollinger, ATR, OBV). The chart MAY additionally
-render exactly one predicted point at t+5 sessions, derived from
-`predicted_log_return` per the percentage-conversion requirement above,
-connected to the most recent historical close by a single straight
-line. The chart SHALL NOT render any interpolated, smoothed, or
-otherwise fabricated point between the most recent historical close and
-the t+5 predicted point.
+### Requirement: Unselected-ticker state shows explicit placeholders, not an empty message
+
+When no ticker is selected, the Prediction display and AI insight panel
+SHALL each render their full populated layout (all labels and value
+slots) with an explicit non-fabricated placeholder value (`N/A`) in
+place of every value that depends on a selected ticker, rather than
+showing a "select a ticker" message or omitting either panel. This
+placeholder SHALL render at the same font-size, font-family, and weight
+as a real populated value, distinguished from one only by a muted color
+— not by a smaller or less visually substantial presentation — so it
+reads as a legible, deliberate "no value" state rather than a barely-
+visible mark. The AI insight panel's disclaimer SHALL render
+unconditionally in this state, consistent with its unconditional
+visibility whenever a ticker is selected. This requirement applies only
+to the no-ticker-selected case; each component's other states (loading,
+not-loaded, feature-computation failure, populated) are unaffected and
+continue to render independently per their own existing behavior.
+
+#### Scenario: No ticker selected shows N/A placeholders in both panels
+
+- **WHEN** the dashboard loads or a ticker is deselected, and no ticker is
+  currently selected
+- **THEN** the Prediction display renders its title and an `N/A`
+  placeholder, styled at the same font-size/family/weight as a real
+  percentage, in place of the percentage value, and the AI insight
+  panel renders Confidence, Technical Signal, and Advice labels each with
+  an `N/A` placeholder value styled at the same font-size/family/weight
+  as a real value, plus its disclaimer
+
+#### Scenario: Prediction display keeps the same three-line shape whether or not a ticker is selected
+
+- **WHEN** no ticker is selected
+- **THEN** the Prediction display renders all three of its populated-state
+  lines — the `N/A` percentage placeholder, an "As of —" placeholder in
+  place of the real date, and the unconditional "Fixed horizon: 5 trading
+  sessions" line (unchanged, since the horizon is fixed regardless of
+  ticker selection) — so selecting a ticker for the first time does not
+  grow the card by adding lines that were previously absent
+
+#### Scenario: N/A placeholders are visually distinct from a real N/A value by color, not by wording
+
+- **WHEN** the no-ticker `N/A` placeholder is shown
+- **THEN** it is styled in a distinctly muted color from a real computed
+  value or a real N/A result (e.g. Confidence's own no-backtest-history
+  N/A state), so it cannot be mistaken for actual Confidence/Sentiment/
+  Advice/Prediction data — consistent with rules 4/5/6's requirement that
+  these disclosures reflect real computed data or an explicit N/A, never
+  a value that could pass as real
+
+#### Scenario: Selecting a ticker replaces N/A placeholders with per-component states
+
+- **WHEN** a ticker is selected after the N/A-placeholder state was
+  showing
+- **THEN** the N/A placeholders are removed, and the Prediction display
+  and AI insight panel each independently render their own state
+  (loading, not-loaded, failure, or populated) for the selected ticker,
+  as already specified elsewhere in this capability
+
+### Requirement: Chart panel renders OHLCV plus the single predicted point, no derived-indicator overlay
+
+The chart panel SHALL render candles from `GET /tickers/{ticker}/history`,
+and MAY additionally render that same response's volume field as a
+histogram — both are raw OHLCV data already present in the response, not a
+derived indicator. The chart SHALL NOT render any derived technical
+indicator overlay (Ichimoku, RSI, MACD, Bollinger, ATR, OBV). The chart MAY
+additionally render exactly one predicted point at t+5 sessions, derived
+from `predicted_log_return` per the percentage-conversion requirement
+above, connected to the most recent historical close by a single straight
+line. The chart SHALL NOT render any interpolated, smoothed, or otherwise
+fabricated point between the most recent historical close and the t+5
+predicted point.
+
+This requirement's substantive constraint is unchanged — no derived
+technical indicator may be drawn. Only its wording is clarified to state
+explicitly that volume (already named as part of OHLCV) is not itself a
+prohibited indicator, since it is raw fetched data rather than something
+computed from the price series.
 
 #### Scenario: Chart shows candles for the selected ticker
 - **WHEN** a ticker is selected in the ticker panel
 - **THEN** the chart panel renders OHLC candles from that ticker's `GET
   /tickers/{ticker}/history` response
 
-#### Scenario: No indicator lines are drawn
+#### Scenario: No derived indicator lines are drawn
+
 - **WHEN** the chart panel renders
-- **THEN** no indicator overlay is drawn on or alongside the candles
+- **THEN** no derived technical indicator overlay (Ichimoku, RSI, MACD,
+  Bollinger, ATR, OBV) is drawn on or alongside the candles
+
+#### Scenario: Volume histogram is not a prohibited indicator overlay
+
+- **WHEN** the chart panel renders a volume histogram below the
+  candlesticks
+- **THEN** this does not violate the no-derived-indicator-overlay
+  constraint, since volume is raw OHLCV data already named in this
+  requirement, not a derived technical indicator
 
 #### Scenario: Predicted point is a single point, not a path
 - **WHEN** the chart panel renders a predicted point for a ticker with
@@ -114,6 +210,40 @@ the t+5 predicted point.
 - **WHEN** the prediction response has `status: "near_gap"`, or the
   request responds `404` or `5xx`
 - **THEN** the chart panel renders candles only, with no predicted point
+
+### Requirement: Chart panel shows an OHLCV legend for the hovered or most recent session
+The chart panel SHALL display a fixed-position legend showing that
+session's Open, High, Low, Close, and Volume values. The legend SHALL
+reflect the session currently under the crosshair; when the crosshair is
+not positioned over the chart, the legend SHALL show the most recent
+(rightmost) session's values instead of appearing blank. The legend's
+five values SHALL render in the same positive or negative color the
+chart already uses for that session's candle and volume bar (Close ≥
+Open → positive, else negative); the legend SHALL NOT introduce a
+different up/down comparison or a new color.
+
+#### Scenario: Legend defaults to the most recent session
+- **WHEN** the chart panel renders for a selected ticker and the
+  crosshair is not positioned over the chart
+- **THEN** the legend shows the most recent session's Open, High, Low,
+  Close, and Volume values
+
+#### Scenario: Legend updates to the hovered session
+- **WHEN** a user positions the crosshair over a specific candle
+- **THEN** the legend shows that candle's Open, High, Low, Close, and
+  Volume values, replacing whatever it showed before
+
+#### Scenario: Legend values are colored to match the session's direction
+- **WHEN** the legend displays a session whose Close is greater than or
+  equal to its Open
+- **THEN** the legend's O/H/L/C/Volume values render in the same
+  positive color used for that session's candle and volume bar
+
+#### Scenario: Legend reflects only real historical data
+- **WHEN** the chart panel renders a predicted point (per the existing
+  "Chart panel renders OHLCV plus the single predicted point" requirement)
+- **THEN** the legend never displays the predicted point's value as if it
+  were a real session's OHLCV
 
 ### Requirement: AI insight panel computes and displays Confidence, Sentiment, and Advice
 The dashboard SHALL display an AI insight panel with three elements —
@@ -207,6 +337,15 @@ for any loaded ticker.
   `TRAINING_TICKERS`
 - **THEN** Sentiment is computed and displayed the same way as for one
   of the 9 fixed tickers — Sentiment has no training-set dependency
+
+#### Scenario: Basis text renders unconditionally, even with no ticker selected or a ticker's insight still loading
+- **WHEN** no ticker is selected, or a selected ticker's insight is in
+  flight
+- **THEN** the RSI/MACD/Ichimoku-position basis text is still visible —
+  it does not wait for a ticker to be selected or its data to load, since
+  this basis is a fixed list that never varies per ticker (unlike
+  Confidence's basis or Advice's reasoning, which do depend on
+  per-ticker data and correctly remain placeholders until known)
 
 ### Requirement: Advice uses directional wording, never a transaction verb
 Per domain Rules 3 and 6, Advice SHALL be computed from `0.5 x

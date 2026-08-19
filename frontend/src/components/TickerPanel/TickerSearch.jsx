@@ -1,4 +1,5 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 import { describeLoadStatus } from '../../hooks/useLoadTicker'
 import { ApiError } from '../../api/client'
 
@@ -9,9 +10,14 @@ import { ApiError } from '../../api/client'
  * (dashboard-ui spec: "Searching an already-loaded ticker selects it
  * directly"). Otherwise triggers `POST /tickers/{ticker}/load` and only
  * adds it to the selectable list on `status: "ok"`.
+ *
+ * `onFilterChange` (redesign-dashboard-visual-look Decision 5) fires on
+ * every keystroke, in addition to this component's own submit-to-load
+ * behavior — the same input drives both a live filter of TickerPanel's
+ * "Searched tickers" list and, on submit, the existing resolve-or-load
+ * flow. It has no effect on the fixed Watchlist.
  */
-export function TickerSearch({ knownTickers, onResolveKnown, onLoad, isLoading }) {
-  const inputId = useId()
+export function TickerSearch({ knownTickers, onResolveKnown, onLoad, isLoading, onFilterChange }) {
   const [value, setValue] = useState('')
   const [feedback, setFeedback] = useState(null) // { kind: 'error'|'info', text }
 
@@ -31,6 +37,7 @@ export function TickerSearch({ knownTickers, onResolveKnown, onLoad, isLoading }
       const result = await onLoad(symbol)
       if (result.status === 'ok') {
         setValue('')
+        onFilterChange?.('')
         setFeedback(null)
       } else {
         // Distinct message per status (design.md Decision 4/7) — never
@@ -51,21 +58,24 @@ export function TickerSearch({ knownTickers, onResolveKnown, onLoad, isLoading }
 
   return (
     <form className="ticker-search" onSubmit={handleSubmit} role="search">
-      <label htmlFor={inputId} className="ticker-search__label">
-        Search ticker
-      </label>
       <div className="ticker-search__row">
-        <input
-          id={inputId}
-          type="text"
-          className="ticker-search__input"
-          placeholder="e.g. VND"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          disabled={isLoading}
-          autoComplete="off"
-          spellCheck={false}
-        />
+        <div className="ticker-search__input-wrap">
+          <MagnifyingGlass className="ticker-search__icon" size={16} weight="regular" aria-hidden="true" />
+          <input
+            type="text"
+            className="ticker-search__input"
+            aria-label="Search ticker"
+            placeholder="Search ticker"
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value)
+              onFilterChange?.(event.target.value)
+            }}
+            disabled={isLoading}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
         <button type="submit" className="ticker-search__button" disabled={isLoading || !value.trim()}>
           {isLoading ? (
             <>

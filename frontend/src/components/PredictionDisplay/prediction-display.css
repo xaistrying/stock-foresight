@@ -29,9 +29,13 @@
   gap: var(--space-2xs);
 }
 
+/* redesign-dashboard-visual-look Decision 1: genuinely numeric values use
+   --font-mono (IBM Plex Mono) for real tabular alignment, not just the
+   font-variant-numeric hint alone — this is the app's most prominent
+   number, so it's the clearest place to carry the new register. */
 .prediction-display__percent {
   margin: 0;
-  font-family: var(--font-display);
+  font-family: var(--font-mono);
   font-weight: 600;
   font-size: var(--text-xl);
   font-variant-numeric: tabular-nums;
@@ -44,6 +48,16 @@
 
 .prediction-display__percent[data-direction='down'] {
   color: var(--color-negative);
+}
+
+/* No-ticker-selected placeholder ("N/A") — deliberately muted, matching
+   .ai-insight-panel__value--placeholder's pattern, so it can never be
+   mistaken for a real computed percentage (design.md Decision 13).
+   Renders in the same font-size/family/weight as a real percentage
+   (only color is overridden here) — a dash technically matched too but
+   read as far less visually substantial than real content. */
+.prediction-display__percent--placeholder {
+  color: var(--color-border-strong);
 }
 
 .prediction-display__as-of,

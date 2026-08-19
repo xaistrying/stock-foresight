@@ -30,7 +30,15 @@ export function PredictionDisplay({ ticker }) {
 
   let state = null
   if (!ticker) {
-    state = { kind: 'empty', message: 'Select a ticker to see its prediction.' }
+    // No ticker selected yet (design.md Decision 13, wording later revised
+    // to "N/A" — see prediction-display.css): render the title plus an
+    // explicit N/A placeholder in place of the percent/as-of/horizon
+    // block, instead of unmounting — keeps the dashboard's shape stable
+    // at all times, matching AIInsightPanel's equivalent no-ticker state.
+    // N/A renders at the same font-size/family/weight as a real
+    // percentage (only color differs, via --percent--placeholder), so it
+    // reads as visually substantial rather than a barely-visible dash.
+    state = { kind: 'no-ticker' }
   } else if (predictionQuery.isLoading) {
     state = { kind: 'loading', message: 'Loading prediction…' }
   } else if (notLoaded) {
@@ -72,6 +80,21 @@ export function PredictionDisplay({ ticker }) {
             {state.percent.toFixed(2)}%
           </p>
           <p className="prediction-display__as-of">As of {state.asOf}</p>
+          <p className="prediction-display__horizon">Fixed horizon: 5 trading sessions</p>
+        </div>
+      ) : state?.kind === 'no-ticker' ? (
+        <div className="prediction-display__result" data-kind="no-ticker">
+          <p className="prediction-display__percent prediction-display__percent--placeholder">N/A</p>
+          {/* Same three-line shape as the 'ok' branch above (percent +
+              as-of + horizon), not just the percent — otherwise selecting
+              a ticker for the first time grows the card by two lines,
+              the exact kind of layout jump the dash/N/A placeholder was
+              introduced to avoid in the first place. The horizon line
+              isn't ticker-dependent (Rule 1's 5-session horizon is fixed
+              regardless of selection) so it renders unconditionally,
+              identical to the populated state; only "As of" needs its
+              own placeholder since there's no real date yet. */}
+          <p className="prediction-display__as-of">As of —</p>
           <p className="prediction-display__horizon">Fixed horizon: 5 trading sessions</p>
         </div>
       ) : (

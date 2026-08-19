@@ -36,6 +36,77 @@ beforeEach(() => {
 })
 
 describe('App (dashboard assembly)', () => {
+  it('shows dash placeholders in both panels (not an empty message) before any ticker is selected', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers: [] })
+
+    renderApp()
+
+    // design.md Decision 13 (revised): both panels always render their full
+    // layout — no shared "select a ticker" message is shown for either.
+    expect(
+      screen.queryByText(/select a ticker to see its prediction and ai insight/i),
+    ).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Prediction' })).toBeInTheDocument()
+    // AIInsightPanel's Confidence/Technical Signal/Advice headings are
+    // static section titles, not data — they render immediately, even with
+    // no ticker selected (design.md Decision 13's third revision, after a
+    // follow-up report that a real geometry/label-swap flash was still
+    // happening on a ticker's first selection each session). Only each
+    // item's value is a placeholder here, not the label.
+    expect(screen.getByRole('heading', { name: 'Confidence' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Technical Signal' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Advice' })).toBeInTheDocument()
+    // Disclaimer renders unconditionally, even with no ticker selected.
+    expect(
+      screen.getByText(/technical observation from a backtested model/i),
+    ).toBeInTheDocument()
+    // Prediction's own N/A placeholder, plus AIInsightPanel's loading-
+    // placeholder N/A values (reused for the no-ticker state too).
+    expect(screen.getAllByText('N/A').length).toBeGreaterThan(0)
+  })
+
+  it('selecting a ticker replaces the dash placeholders with per-panel states', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'ok',
+      predicted_log_return: 0.02,
+    })
+    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'ok',
+      confidence_score: 0.75,
+      confidence_basis: '60-prediction backtested hit-rate.',
+      sentiment_proxy: 'bullish',
+      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
+      advice_text: 'up',
+      note: null,
+    })
+
+    renderApp()
+
+    // N/A placeholders shown before any ticker is selected — Prediction's
+    // title and AIInsightPanel's Confidence/Technical Signal/Advice
+    // headings are all static titles, visible immediately.
+    expect(await screen.findByRole('heading', { name: 'Prediction' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Confidence' })).toBeInTheDocument()
+    expect(screen.getAllByText('N/A').length).toBeGreaterThan(0)
+
+    const chip = await screen.findByRole('button', { name: /^TCB/ })
+    await userEvent.click(chip)
+
+    expect(await screen.findByText(/\+2\.02%/)).toBeInTheDocument()
+    expect(screen.queryByText('N/A')).not.toBeInTheDocument()
+  })
+
   it('selecting an already-loaded chip drives the chart, prediction, and AI insight panel for that ticker', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
@@ -55,7 +126,7 @@ describe('App (dashboard assembly)', () => {
       as_of: '2026-08-10',
       status: 'ok',
       confidence_score: 0.75,
-      confidence_basis: "Hit-rate over the ticker's most recent 60 backtested predictions.",
+      confidence_basis: '60-prediction backtested hit-rate.',
       sentiment_proxy: 'bullish',
       sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
       advice_text: 'up',
@@ -182,7 +253,9 @@ describe('App (dashboard assembly)', () => {
     renderApp()
     const chip = await screen.findByRole('button', { name: /^TCB/ })
     await userEvent.click(chip)
-    await screen.findByText('Technical Signal')
+    // "Technical Signal" is a static label, present immediately — wait on
+    // the real value instead to know TCB's data has actually loaded.
+    await screen.findByText('Neutral')
 
     // design.md Decision 9: horizonDays slider, adviceStyle dropdown, and a
     // showDisclaimer toggle were all reviewed and dropped, not relocated.

@@ -107,8 +107,7 @@ def test_insight_returns_real_confidence_for_ticker_with_backtest_rows(client):
     assert response.status_code == 200
     body = response.json()
     assert body["confidence_score"] == pytest.approx(45 / 60)
-    assert body["confidence_basis"] is not None
-    assert "60" in body["confidence_basis"]
+    assert body["confidence_basis"] == "60-prediction backtested hit-rate."
 
 
 def test_insight_returns_null_confidence_with_explanatory_basis_when_no_backtest_rows(client):

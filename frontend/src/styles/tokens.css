@@ -1,37 +1,54 @@
 /* Design tokens for the stock-foresight dashboard. Financial/data-dense
    domain — calm neutrals, one restrained accent, reserved semantic colors
    for up/down and status signal only (never decorative). Light/dark via
-   prefers-color-scheme; no user-facing theme toggle exists (or is planned). */
+   prefers-color-scheme; no user-facing theme toggle exists (or is planned).
+   redesign-dashboard-visual-look: retuned toward "Swiss Data Minimalism" —
+   a single sans family, tabular numerals for data, a cooler/deeper navy
+   register, and near-flat radii. Every value below was chosen against a
+   computed WCAG contrast check against the paper it renders on (see that
+   change's design.md Decision 2 and tasks.md 2.5) — still directional
+   enough to re-verify live once real components render it. */
 :root {
   /* Paper / ink */
-  --color-paper: oklch(99% 0.002 260);
-  --color-paper-2: oklch(97% 0.004 260);
-  --color-paper-3: oklch(94% 0.006 260);
-  --color-ink: oklch(22% 0.015 260);
-  --color-ink-2: oklch(42% 0.012 260);
-  --color-ink-3: oklch(58% 0.01 260);
-  --color-border: oklch(88% 0.006 260);
-  --color-border-strong: oklch(78% 0.008 260);
+  --color-paper: oklch(99% 0.002 258);
+  --color-paper-2: oklch(97% 0.004 258);
+  --color-paper-3: oklch(94% 0.006 258);
+  --color-ink: oklch(16% 0.02 258);
+  --color-ink-2: oklch(38% 0.016 258);
+  --color-ink-3: oklch(54% 0.013 258);
+  --color-border: oklch(87% 0.008 258);
+  --color-border-strong: oklch(76% 0.01 258);
 
-  /* Accent — restrained blue, used for selection/focus, not decoration */
-  --color-accent: oklch(48% 0.13 250);
-  --color-accent-bg: oklch(94% 0.03 250);
-  --color-accent-border: oklch(70% 0.09 250);
-  --color-focus: oklch(58% 0.15 250);
+  /* Accent — restrained navy, used for selection/focus, not decoration.
+     Deeper than the prior brighter selection-blue (redesign-dashboard-
+     visual-look Decision 2), reading as institutional rather than
+     interactive-bright. */
+  --color-accent: oklch(40% 0.12 258);
+  --color-accent-bg: oklch(93% 0.025 258);
+  --color-accent-border: oklch(64% 0.09 258);
+  --color-focus: oklch(52% 0.14 258);
 
-  /* Semantic — reserved for signal states only */
-  --color-positive: oklch(48% 0.13 155);
-  --color-positive-bg: oklch(95% 0.03 155);
-  --color-negative: oklch(50% 0.15 25);
-  --color-negative-bg: oklch(95% 0.03 25);
+  /* Semantic — reserved for signal states only. Positive/negative retuned
+     to lightweight-charts' own canonical bullish/bearish hues (teal-green
+     / coral-red) rather than pure green/red — redesign-dashboard-visual-
+     look Decision 2; this is a return to the charting library's defaults,
+     not a new custom pairing. */
+  --color-positive: oklch(54% 0.1 170);
+  --color-positive-bg: oklch(95% 0.025 170);
+  --color-negative: oklch(55% 0.17 20);
+  --color-negative-bg: oklch(95% 0.03 20);
   --color-warning: oklch(58% 0.14 75);
   --color-warning-bg: oklch(95% 0.05 75);
-  --color-neutral-signal: oklch(55% 0.01 260);
+  --color-neutral-signal: oklch(55% 0.01 258);
 
-  /* Type */
-  --font-display: 'Source Serif 4', ui-serif, Georgia, serif;
-  --font-body: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', Consolas, monospace;
+  /* Type — single sans family (IBM Plex Sans) for display+body, IBM Plex
+     Mono for genuinely numeric data (redesign-dashboard-visual-look
+     Decision 1), replacing the prior Fraunces/Inter pairing. Unlike that
+     prior change's Fraunces fix, --font-mono is loaded correctly from the
+     start (see frontend/index.html) rather than falling back silently. */
+  --font-display: 'IBM Plex Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'IBM Plex Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
 
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
@@ -49,8 +66,11 @@
   --space-xl: 2rem;
   --space-2xl: 3rem;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
+  /* Radius — tightened to a near-flat register (redesign-dashboard-visual-
+     look Decision 3). --radius-full is unchanged: it remains reserved for
+     the selected-ticker pill indicator, a real affordance, not decoration. */
+  --radius-sm: 2px;
+  --radius-md: 4px;
   --radius-full: 999px;
 
   /* Motion */
@@ -64,26 +84,26 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-paper: oklch(19% 0.008 260);
-    --color-paper-2: oklch(23% 0.01 260);
-    --color-paper-3: oklch(28% 0.012 260);
-    --color-ink: oklch(94% 0.006 260);
-    --color-ink-2: oklch(78% 0.008 260);
-    --color-ink-3: oklch(62% 0.01 260);
-    --color-border: oklch(32% 0.012 260);
-    --color-border-strong: oklch(42% 0.014 260);
+    --color-paper: oklch(18% 0.008 258);
+    --color-paper-2: oklch(22% 0.01 258);
+    --color-paper-3: oklch(27% 0.012 258);
+    --color-ink: oklch(95% 0.008 258);
+    --color-ink-2: oklch(80% 0.01 258);
+    --color-ink-3: oklch(64% 0.012 258);
+    --color-border: oklch(31% 0.012 258);
+    --color-border-strong: oklch(41% 0.014 258);
 
-    --color-accent: oklch(75% 0.12 250);
-    --color-accent-bg: oklch(28% 0.05 250);
-    --color-accent-border: oklch(52% 0.1 250);
-    --color-focus: oklch(78% 0.13 250);
+    --color-accent: oklch(72% 0.13 258);
+    --color-accent-bg: oklch(27% 0.055 258);
+    --color-accent-border: oklch(50% 0.11 258);
+    --color-focus: oklch(76% 0.14 258);
 
-    --color-positive: oklch(75% 0.15 155);
-    --color-positive-bg: oklch(28% 0.05 155);
-    --color-negative: oklch(72% 0.16 25);
-    --color-negative-bg: oklch(28% 0.06 25);
+    --color-positive: oklch(70% 0.11 170);
+    --color-positive-bg: oklch(26% 0.045 170);
+    --color-negative: oklch(68% 0.18 20);
+    --color-negative-bg: oklch(27% 0.065 20);
     --color-warning: oklch(78% 0.14 75);
     --color-warning-bg: oklch(30% 0.06 75);
-    --color-neutral-signal: oklch(65% 0.01 260);
+    --color-neutral-signal: oklch(65% 0.01 258);
   }
 }

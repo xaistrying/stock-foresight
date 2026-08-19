@@ -5,8 +5,8 @@
 
 .chart-panel {
   position: relative;
-  min-height: 22rem;
-  height: 22rem;
+  min-height: 26rem;
+  height: 26rem;
   background: var(--color-paper);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -68,6 +68,67 @@
   }
 }
 
+/* OHLCV legend (add-chart-ohlcv-legend) — fixed to the top-left corner,
+   mirroring .chart-panel__reset-zoom's own absolute-positioning/z-index
+   technique (lightweight-charts' own internal canvases paint at
+   z-index: 2, so this must clear that to render above them). Content
+   updates in place via the crosshair handler; the element itself never
+   moves — a legend, not a cursor-following tooltip. aria-hidden: it
+   duplicates data already on the canvas (which has no accessible
+   alternative of its own today, a separate pre-existing gap) and is
+   driven by mouse-only crosshair movement a screen-reader user can't
+   trigger (design.md Decision 5). */
+.chart-panel__legend {
+  position: absolute;
+  top: var(--space-sm);
+  left: var(--space-sm);
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-2xs) var(--space-xs);
+  background: color-mix(in oklch, var(--color-paper) 85%, transparent);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.chart-panel__legend-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+}
+
+.chart-panel__legend-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-ink-3);
+}
+
+.chart-panel__legend-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-3);
+}
+
+.chart-panel__legend[data-direction='up'] .chart-panel__legend-value {
+  color: var(--color-positive);
+}
+
+.chart-panel__legend[data-direction='down'] .chart-panel__legend-value {
+  color: var(--color-negative);
+}
+
+@media (max-width: 480px) {
+  .chart-panel__legend {
+    gap: var(--space-xs);
+    font-size: var(--text-xs);
+  }
+}
+
 .chart-panel__overlay {
   position: absolute;
   inset: 0;
@@ -117,6 +178,6 @@
 
 @media (max-width: 480px) {
   .chart-panel {
-    height: 16rem;
+    height: 18rem;
   }
 }
