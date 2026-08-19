@@ -140,5 +140,7 @@ otherwise it passes the exception through directly. `_classify_load_error`
 gained a third match, `"Không tìm thấy dữ liệu"` → `status: "no_data"`,
 alongside the existing `invalid_symbol` matches.
 
-**Status**: fixed, closed. Not yet covered by a test (see the
-`vite-react-dashboard-ticker-panel` change's tasks.md task 3.3).
+**Status**: fixed, closed, and now covered by a test —
+`test_well_formed_ticker_with_no_data_reports_status_no_data` in
+`backend/tests/test_ticker_ingestion.py`. (This entry previously said
+"not yet covered"; that's no longer accurate as of this check.)
