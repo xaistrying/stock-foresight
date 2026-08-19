@@ -68,8 +68,9 @@ export function TickerSearch({ knownTickers, onResolveKnown, onLoad, isLoading, 
             placeholder="Search ticker"
             value={value}
             onChange={(event) => {
-              setValue(event.target.value)
-              onFilterChange?.(event.target.value)
+              const nextValue = event.target.value.toUpperCase()
+              setValue(nextValue)
+              onFilterChange?.(nextValue)
             }}
             disabled={isLoading}
             autoComplete="off"
