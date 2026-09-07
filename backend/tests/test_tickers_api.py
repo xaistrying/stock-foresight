@@ -8,8 +8,16 @@ from fastapi.testclient import TestClient
 import app.api.tickers as tickers_api
 import app.main as main_module
 import app.ml.feature_engineering as feature_engineering
+import app.services.ohlcv_quality_gate as ohlcv_quality_gate
 import app.services.ticker_ingestion as ticker_ingestion
-from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+import app.services.ticker_universe as ticker_universe
+from app.db.schema import (
+    CREATE_FEATURES_TABLE,
+    CREATE_OHLCV_QUALITY_FLAGS_TABLE,
+    CREATE_OHLCV_TABLE,
+    CREATE_TICKER_UNIVERSE_TABLE,
+    CREATE_TICKERS_TABLE,
+)
 from app.main import app
 from app.ml.training import TRAINING_TICKERS
 
@@ -21,18 +29,23 @@ def client(monkeypatch, tmp_path):
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_TICKERS_TABLE)
     conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
+    conn.execute(CREATE_TICKER_UNIVERSE_TABLE)
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(
-        ticker_ingestion, "get_connection", lambda: sqlite3.connect(db_path)
-    )
-    monkeypatch.setattr(
-        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
-    )
-    monkeypatch.setattr(
-        tickers_api, "get_connection", lambda: sqlite3.connect(db_path)
-    )
+    # A load now also touches the quality-gate sidecar and the universe, each
+    # through its own module-level `get_connection`.
+    for module in (
+        ticker_ingestion,
+        feature_engineering,
+        tickers_api,
+        ohlcv_quality_gate,
+        ticker_universe,
+    ):
+        monkeypatch.setattr(
+            module, "get_connection", lambda: sqlite3.connect(db_path)
+        )
 
     df = pd.DataFrame(
         {
@@ -85,12 +98,159 @@ def test_startup_loads_model_and_reuses_it_across_requests(client):
     assert app.state.model is loaded_model
 
 
-def test_list_tickers_returns_exactly_training_tickers(client):
+def _seed_universe(db_path, rows):
+    """Universe rows as `(symbol, listing_status, ingestion_state, exchange,
+    icb_code2, fails_liquidity, below_minimum_history)`."""
+    conn = sqlite3.connect(db_path)
+    try:
+        for row in rows:
+            conn.execute(
+                "INSERT INTO ticker_universe (symbol, listing_status, "
+                "ingestion_state, exchange, icb_code2, fails_liquidity_filter, "
+                "below_minimum_history, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, '2026-09-07T00:00:00')",
+                row,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_list_tickers_derives_from_the_universe_not_training_tickers(client):
+    """`ticker-catalog` MODIFIED: the catalog is universe-derived, so a
+    symbol nobody trained on appears, and the two sets are no longer the
+    same list."""
+    _seed_universe(
+        client.db_path,
+        [
+            ("AAA", "listed", "ok", "HSX", "2300", 0, 0),
+            ("ZZZ", "delisted", "ok", None, None, 0, 0),
+        ],
+    )
+
     response = client.get("/tickers")
+
     assert response.status_code == 200
-    body = response.json()
-    returned = [entry["ticker"] for entry in body["tickers"]]
-    assert returned == TRAINING_TICKERS
+    returned = [entry["ticker"] for entry in response.json()["tickers"]]
+    # Training tickers first in declared order — the dashboard's fixed
+    # watchlist renders in response order — then the rest alphabetically.
+    assert returned == TRAINING_TICKERS + ["AAA", "ZZZ"]
+
+
+def test_list_tickers_marks_training_membership_exactly(client):
+    _seed_universe(client.db_path, [("AAA", "listed", "ok", "HSX", "2300", 0, 0)])
+
+    body = client.get("/tickers").json()
+
+    flagged = {e["ticker"] for e in body["tickers"] if e["in_training_set"]}
+    assert flagged == set(TRAINING_TICKERS)
+
+
+def test_list_tickers_carries_universe_metadata_with_null_not_omitted(client):
+    _seed_universe(
+        client.db_path,
+        [
+            ("AAA", "listed", "ok", "HSX", "2300", 0, 0),
+            ("NOICB", "listed", "ok", "HSX", None, 0, 0),
+        ],
+    )
+
+    entries = {e["ticker"]: e for e in client.get("/tickers").json()["tickers"]}
+
+    assert entries["AAA"]["exchange"] == "HSX"
+    assert entries["AAA"]["industry_code"] == "2300"
+    assert entries["AAA"]["listing_status"] == "listed"
+    # Null, not absent — a client should not have to tell "field missing"
+    # from "value unknown".
+    assert entries["NOICB"]["industry_code"] is None
+    assert "industry_code" in entries["NOICB"]
+
+
+def test_list_tickers_distinguishes_delisted_entries(client):
+    _seed_universe(
+        client.db_path,
+        [
+            ("LIVE", "listed", "ok", "HSX", "2300", 0, 0),
+            ("DEAD", "delisted", "ok", None, None, 0, 0),
+        ],
+    )
+
+    entries = {e["ticker"]: e for e in client.get("/tickers").json()["tickers"]}
+
+    assert entries["DEAD"]["listing_status"] == "delisted"
+    assert entries["LIVE"]["listing_status"] == "listed"
+
+
+def test_list_tickers_applies_the_universe_default_filters(client):
+    """Task 8.1: the endpoint serves the *filtered* universe, or it would
+    hand a frontend built for nine every illiquid and too-short symbol in
+    the set."""
+    _seed_universe(
+        client.db_path,
+        [
+            ("CLEAN", "listed", "ok", "HSX", "2300", 0, 0),
+            ("ILLIQUID", "listed", "ok", "HSX", "2300", 1, 0),
+            ("SHORT", "listed", "ok", "HSX", "2300", 0, 1),
+            ("PENDING", "listed", "pending", "HSX", "2300", 0, 0),
+        ],
+    )
+
+    returned = [e["ticker"] for e in client.get("/tickers").json()["tickers"]]
+
+    assert "CLEAN" in returned
+    for excluded in ("ILLIQUID", "SHORT", "PENDING"):
+        assert excluded not in returned
+
+
+def test_list_tickers_keeps_a_training_ticker_that_fails_a_filter(client):
+    """The model was trained on those nine, so the dashboard must be able to
+    show and predict them. Dropping one because a re-tuned liquidity
+    threshold (task 7.2) crossed its measured value would leave the UI
+    silently inconsistent with the model it serves."""
+    _seed_universe(
+        client.db_path, [("VIB", "listed", "ok", "HSX", "8300", 1, 1)]
+    )
+
+    entries = {e["ticker"]: e for e in client.get("/tickers").json()["tickers"]}
+
+    assert "VIB" in entries
+    assert entries["VIB"]["in_training_set"] is True
+    assert entries["VIB"]["exchange"] == "HSX"
+
+
+def test_list_tickers_includes_a_training_ticker_absent_from_the_universe(client):
+    """Universe construction could not place it, or has not run. The
+    watchlist still needs its nine chips, with the universe fields null
+    rather than the entry missing."""
+    body = client.get("/tickers").json()
+
+    entries = {e["ticker"]: e for e in body["tickers"]}
+    assert set(TRAINING_TICKERS) <= set(entries)
+    assert entries["VIB"]["exchange"] is None
+    assert entries["VIB"]["listing_status"] is None
+
+
+def test_list_tickers_serves_a_universe_sized_catalog_without_fetching(
+    client, monkeypatch
+):
+    """Task 8.3: hundreds of never-loaded symbols must not turn a catalog
+    request into an ingestion run."""
+    monkeypatch.setattr(
+        ticker_ingestion.mkt,
+        "equity",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("GET /tickers must not fetch")
+        ),
+    )
+    _seed_universe(
+        client.db_path,
+        [(f"S{i:03d}", "listed", "ok", "HSX", "2300", 0, 0) for i in range(600)],
+    )
+
+    body = client.get("/tickers").json()
+
+    assert len(body["tickers"]) == 600 + len(TRAINING_TICKERS)
+    assert all(entry["loaded"] is False for entry in body["tickers"])
 
 
 def test_list_tickers_never_loaded_ticker_has_not_loaded_status(client):

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 import xgboost as xgb
 
 from app.ml import training
@@ -70,10 +71,71 @@ def test_filter_clean_labeled_excludes_near_gap_and_null_target_rows():
     assert 10_000 <= len(clean) <= 20_000
 
 
+def test_filter_clean_labeled_does_not_rely_on_near_gap_for_null_indicators():
+    # ohlcv-quality-gate: "Exclusion does not depend on the calendar-gap
+    # flag." A hard-flag blackout (tasks.md 4.7) nulls indicator columns and
+    # deliberately leaves `near_gap` alone, so such a row arrives here with
+    # near_gap = 0 and a valid label — and XGBoost would fit it as an
+    # all-missing feature vector rather than erroring (tasks.md 5.4).
+    df = pd.DataFrame(
+        {
+            "ticker": ["VHM", "VHM"],
+            "date": ["2024-01-01", "2024-01-02"],
+            **{column: [1.0, np.nan] for column in FEATURE_COLUMNS},
+            "target": [0.01, 0.02],
+            "near_gap": [0, 0],
+        }
+    )
+
+    clean = filter_clean_labeled(df)
+
+    assert clean["date"].tolist() == ["2024-01-01"]
+
+
+def test_filter_clean_labeled_excludes_blackout_rows_in_the_real_database():
+    # tasks.md 5.5, against the current app.db like the test above, because
+    # the exact row set is the point. VHM's missed 2018-08-14 split
+    # adjustment (design.md Decision 9) blacks out the following 78 sessions;
+    # `near_gap` happens to cover all but the tail of that span, and those
+    # tail rows are the ones that used to reach training with all 14 features
+    # null.
+    raw = load_training_features()
+
+    blacked_out = raw[
+        (raw["near_gap"] == 0)
+        & raw["target"].notna()
+        & raw[FEATURE_COLUMNS].isna().any(axis=1)
+    ]
+
+    # The invariant, which holds whatever the database contains.
+    clean = filter_clean_labeled(raw)
+    assert not clean[FEATURE_COLUMNS].isna().any().any()
+    assert clean.merge(blacked_out[["ticker", "date"]], on=["ticker", "date"]).empty
+
+    # The known-answer part, asserted only while the database still holds the
+    # case it describes. Skipping rather than failing when VHM's flag is gone
+    # keeps this from reading as "stale expectation, bump the number" — the
+    # exact misreading that would hide the flag being deleted by a refresh
+    # (which `test_a_refresh_with_a_narrower_window_keeps_flags_outside_it`
+    # guards directly).
+    vhm_blackout = blacked_out[blacked_out["ticker"] == "VHM"]
+    if vhm_blackout.empty:
+        pytest.skip(
+            "VHM's 2018-08-14 blackout is not present in app.db — check that "
+            "its hard flag still exists before assuming this expectation is "
+            "merely out of date"
+        )
+    assert len(vhm_blackout) == 11
+    assert vhm_blackout["date"].min() == "2018-11-16"
+    assert vhm_blackout["date"].max() == "2018-11-30"
+
+
 def _make_full_df(n_dates_per_ticker: int) -> pd.DataFrame:
     # Two tickers, one calendar-date sequence each, every row clean+labeled
     # except the trailing TARGET_HORIZON rows (mirrors real `features`:
     # target is null once the horizon runs past the ticker's last row).
+    # Indicator columns are populated because `filter_clean_labeled` reads
+    # them — a real `features` frame always carries all of them.
     dates = pd.date_range("2024-01-01", periods=n_dates_per_ticker, freq="D").strftime("%Y-%m-%d")
     frames = []
     for ticker in ["AAA", "BBB"]:
@@ -82,6 +144,7 @@ def _make_full_df(n_dates_per_ticker: int) -> pd.DataFrame:
                 {
                     "ticker": ticker,
                     "date": dates,
+                    **{column: 1.0 for column in FEATURE_COLUMNS},
                     "near_gap": 0,
                     "target": [0.01] * (n_dates_per_ticker - TARGET_HORIZON) + [None] * TARGET_HORIZON,
                 }

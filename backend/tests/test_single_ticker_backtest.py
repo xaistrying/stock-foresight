@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import app.api.tickers as tickers_api
 import app.ml.backtest as backtest_module
-from app.db.schema import CREATE_BACKTEST_PREDICTIONS_TABLE, CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+from app.db.schema import CREATE_BACKTEST_PREDICTIONS_TABLE, CREATE_FEATURES_TABLE, CREATE_OHLCV_QUALITY_FLAGS_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
 from app.main import app
 from app.ml.backtest import SINGLE_TICKER_BACKTEST_MIN_ROWS, compute_rolling_hit_rate
 from app.ml.training import FEATURE_COLUMNS
@@ -27,6 +27,7 @@ def client(monkeypatch, tmp_path):
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_TICKERS_TABLE)
     conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
     conn.execute(CREATE_BACKTEST_PREDICTIONS_TABLE)
     conn.commit()
     conn.close()

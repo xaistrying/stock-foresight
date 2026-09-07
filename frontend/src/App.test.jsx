@@ -67,7 +67,7 @@ describe('App (dashboard assembly)', () => {
 
   it('selecting a ticker replaces the dash placeholders with per-panel states', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
@@ -109,7 +109,7 @@ describe('App (dashboard assembly)', () => {
 
   it('selecting an already-loaded chip drives the chart, prediction, and AI insight panel for that ticker', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
@@ -150,7 +150,7 @@ describe('App (dashboard assembly)', () => {
 
   it('clicking an unloaded chip loads it, then auto-predicts without a manual refresh or separate action', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'VIB', loaded: false, features_computed: null, last_loaded_at: null }],
+      tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
     })
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
@@ -226,7 +226,7 @@ describe('App (dashboard assembly)', () => {
 
   it('carries no leftover horizon-adjustment, advice-style, or disclaimer-visibility control anywhere on the page', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',

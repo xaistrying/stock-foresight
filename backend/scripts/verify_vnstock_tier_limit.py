@@ -32,9 +32,20 @@ have changed, and the design decisions in docs/DATA_DICTIONARY.md and the
 data-ingestion-vnstock proposal should be re-checked before trusting them.
 """
 
+import sys
 from datetime import date, timedelta
+from pathlib import Path
+
 from dateutil.relativedelta import relativedelta
-from vnstock.ui import Market
+
+# Resolved from this file rather than the cwd, since the Run line above invokes
+# the script from its own directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so `from app...` resolves
+from app.vnstock_guard import install as _install_vnstock_guard  # noqa: E402
+
+_install_vnstock_guard()  # must precede any vnstock import (docs/KNOWN_ISSUES.md)
+
+from vnstock.ui import Market  # noqa: E402
 
 mkt = Market()
 

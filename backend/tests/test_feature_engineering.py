@@ -7,15 +7,18 @@ import pytest
 import numpy as np
 
 import app.ml.feature_engineering as feature_engineering
-from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE
+from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_QUALITY_FLAGS_TABLE, CREATE_OHLCV_TABLE
 from app.ml.feature_engineering import (
     CHIKOU_PERIOD,
+    HARD_FLAG_BLACKOUT_SESSIONS,
+    INDICATOR_COLUMNS,
     LONGEST_LOOKBACK_END_OFFSET,
     LONGEST_LOOKBACK_WINDOW,
     TARGET_HORIZON,
     _wilder_smooth,
     compute_atr,
     compute_bollinger_bands,
+    compute_features_for_ticker,
     compute_ichimoku,
     compute_macd,
     compute_near_gap,
@@ -324,6 +327,7 @@ def _seed_ohlcv_db(tmp_path, ticker, dates):
     conn = sqlite3.connect(db_path)
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
     conn.executemany(
         "INSERT INTO ohlcv (ticker, date, open, high, low, close, volume) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -433,3 +437,456 @@ def test_recompute_features_updates_obv_for_all_rows_after_ticker_reload(
         "reload must recompute OBV for ALL existing rows, not just append "
         "new ones"
     )
+
+
+# --- hard-flagged return neutralisation (hose-universe-ingestion task 3.6) ---
+
+
+def _step_ohlcv(rows: int, jump_at: int, factor: float = 0.5) -> pd.DataFrame:
+    """A clean series with a single unadjusted-split-style step at `jump_at`,
+    modelled on VHM 2018-08-14 (60.30 -> 30.23 across all OHLC fields)."""
+    closes = []
+    price = 100.0
+    for index in range(rows):
+        if index == jump_at:
+            price *= factor
+        closes.append(price)
+        price *= 1.001
+    return pd.DataFrame(
+        {
+            "date": [f"2018-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(rows)],
+            "open": closes,
+            "high": [c * 1.001 for c in closes],
+            "low": [c * 0.999 for c in closes],
+            "close": closes,
+            "volume": [1000] * rows,
+        }
+    )
+
+
+def test_target_is_nulled_only_for_the_rows_whose_lookahead_spans_the_flagged_step():
+    """`target(t)` is contaminated exactly when the spurious step falls inside
+    its lookahead: `t < d <= t + TARGET_HORIZON`. `target(d)` itself spans
+    two closes on the far side of the step and stays valid."""
+    jump_at = 20
+    df = _step_ohlcv(40, jump_at)
+    flagged = {df["date"].iloc[jump_at]}
+
+    baseline = compute_target(df)
+    neutralised = compute_target(df, flagged)
+
+    expected_null = set(range(jump_at - TARGET_HORIZON, jump_at))
+    actual_null = {
+        i for i in range(len(df))
+        if pd.isna(neutralised.iloc[i]) and not pd.isna(baseline.iloc[i])
+    }
+    assert actual_null == expected_null
+    assert not pd.isna(neutralised.iloc[jump_at])
+    assert neutralised.iloc[jump_at] == pytest.approx(baseline.iloc[jump_at])
+
+
+def test_the_nulled_targets_are_exactly_the_ones_carrying_the_spurious_move():
+    """Sanity check on the claim above: every target nulled really did span
+    the step, and every retained target really did not."""
+    jump_at = 20
+    df = _step_ohlcv(40, jump_at)
+    baseline = compute_target(df)
+    step = abs(float(baseline.iloc[jump_at - 1]))
+    # A target spanning a 50% step is an order of magnitude larger than the
+    # 0.1%/session drift the rest of the series carries.
+    assert step > 0.5
+    assert abs(float(baseline.iloc[jump_at])) < 0.01
+
+
+def test_target_is_untouched_when_nothing_is_flagged():
+    df = _step_ohlcv(40, 20)
+    pd.testing.assert_series_equal(compute_target(df), compute_target(df, set()))
+    pd.testing.assert_series_equal(compute_target(df), compute_target(df, None))
+
+
+def test_a_flag_in_the_first_rows_does_not_index_before_the_start():
+    df = _step_ohlcv(20, 2)
+    target = compute_target(df, {df["date"].iloc[2]})
+    assert pd.isna(target.iloc[0])
+    assert pd.isna(target.iloc[1])
+    assert not pd.isna(target.iloc[2])
+
+
+def test_compute_features_for_ticker_passes_flags_through_to_target():
+    jump_at = 20
+    df = _step_ohlcv(40, jump_at)
+    features = compute_features_for_ticker(df, {df["date"].iloc[jump_at]})
+    assert pd.isna(features["target"].iloc[jump_at - 1])
+    assert not pd.isna(features["target"].iloc[jump_at])
+
+
+# --- indicator blackout after a hard flag (task 4.7, design Decision 9) ---
+
+# Long enough that the blackout ends well before the series does, so "beyond
+# the lookback" is actually observable.
+_BLACKOUT_ROWS = 200
+_BLACKOUT_JUMP_AT = 100
+
+
+def test_every_indicator_column_is_nulled_through_the_longest_lookback():
+    """A hard flag is a persistent level shift, so every window reaching
+    across it blends two price scales. The blackout starts at the flagged
+    session itself — a window ending there already spans both sides of the
+    step."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    features = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+
+    blacked_out = range(
+        _BLACKOUT_JUMP_AT, _BLACKOUT_JUMP_AT + HARD_FLAG_BLACKOUT_SESSIONS
+    )
+    for column in INDICATOR_COLUMNS:
+        assert features[column].iloc[blacked_out.start : blacked_out.stop].isna().all(), (
+            f"{column} must be null for {HARD_FLAG_BLACKOUT_SESSIONS} sessions "
+            "from the flagged one"
+        )
+
+
+def test_the_blackout_does_not_reach_backwards_past_the_flag():
+    """Rows before the flag keep the values they would have had — nothing
+    about the blackout reaches backwards."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    plain = compute_features_for_ticker(df)
+    flagged = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+
+    for column in INDICATOR_COLUMNS:
+        pd.testing.assert_series_equal(
+            plain[column].iloc[:_BLACKOUT_JUMP_AT],
+            flagged[column].iloc[:_BLACKOUT_JUMP_AT],
+            check_dtype=False,
+        )
+
+
+def test_past_the_blackout_indicators_match_the_post_flag_segment_alone():
+    """The correctness claim the spec actually makes — "sessions beyond the
+    lookback are unaffected" — measured against a *clean* reference rather
+    than against the same contaminated series.
+
+    An earlier version of this test compared the flagged run against
+    `compute_features_for_ticker(df)` with no flag, i.e. one equally
+    contaminated by the step. Both sides carried the same error, so it passed
+    while `macd_signal` was 54% wrong on the first clear row (design
+    Decision 11). The honest reference is the post-flag rows computed on
+    their own: that is the price scale those sessions actually belong to.
+    """
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    flagged = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+    segment_only = compute_features_for_ticker(
+        df.iloc[_BLACKOUT_JUMP_AT:].reset_index(drop=True)
+    )
+
+    first_clear = _BLACKOUT_JUMP_AT + HARD_FLAG_BLACKOUT_SESSIONS
+    assert first_clear < _BLACKOUT_ROWS
+    for column in INDICATOR_COLUMNS:
+        pd.testing.assert_series_equal(
+            flagged[column].iloc[first_clear:].reset_index(drop=True),
+            segment_only[column].iloc[HARD_FLAG_BLACKOUT_SESSIONS:].reset_index(drop=True),
+            check_dtype=False,
+            check_names=False,
+        )
+
+
+def test_the_recursive_indicators_carry_no_pre_flag_contamination():
+    """The specific defect: `rsi`/`atr` (Wilder), `macd_*` (EWM from series
+    start) and `obv` (cumsum) are not window-bounded, so before segmentation
+    a level shift survived the 78-session blackout — `macd_signal` 54.5%
+    wrong, `obv` still 12% off nine months later."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    contaminated = compute_features_for_ticker(df)
+    flagged = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+
+    first_clear = _BLACKOUT_JUMP_AT + HARD_FLAG_BLACKOUT_SESSIONS
+    for column in ("rsi", "macd_line", "macd_signal", "obv"):
+        assert flagged[column].iloc[first_clear] != pytest.approx(
+            contaminated[column].iloc[first_clear]
+        ), f"{column} still matches the whole-series value, so it was not reseeded"
+
+
+def test_the_first_session_past_the_lookback_is_computed_normally():
+    """The scenario the spec states explicitly: no window reaching that far
+    back can still span the step, so nothing is withheld."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    flagged = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+
+    first_clear = _BLACKOUT_JUMP_AT + HARD_FLAG_BLACKOUT_SESSIONS
+    assert not pd.isna(flagged["senkou_span_b"].iloc[first_clear])
+    assert pd.isna(flagged["senkou_span_b"].iloc[first_clear - 1])
+
+
+def test_target_nulling_is_unchanged_by_the_indicator_blackout():
+    """The two effects point in opposite directions along the series and must
+    not bleed into each other: targets null for the TARGET_HORIZON rows
+    *before* the flag, indicators for the lookback *at and after* it."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    baseline = compute_features_for_ticker(df)
+    flagged = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+
+    newly_null = {
+        i
+        for i in range(_BLACKOUT_ROWS)
+        if pd.isna(flagged["target"].iloc[i]) and not pd.isna(baseline["target"].iloc[i])
+    }
+    assert newly_null == set(
+        range(_BLACKOUT_JUMP_AT - TARGET_HORIZON, _BLACKOUT_JUMP_AT)
+    )
+    # The flagged session's own target, and the targets throughout the
+    # blackout, stay computed — they span closes on one side of the step only.
+    assert not pd.isna(flagged["target"].iloc[_BLACKOUT_JUMP_AT])
+    assert not pd.isna(flagged["target"].iloc[_BLACKOUT_JUMP_AT + 30])
+
+
+def test_near_gap_is_not_altered_by_the_blackout():
+    """`near_gap` describes calendar gaps, not price discontinuities. It is
+    the blackout's model, not its subject."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    plain = compute_features_for_ticker(df)
+    flagged = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+    pd.testing.assert_series_equal(plain["near_gap"], flagged["near_gap"])
+
+
+def test_a_flag_near_the_end_blacks_out_only_the_rows_that_exist():
+    df = _step_ohlcv(40, 35)
+    features = compute_features_for_ticker(df, {df["date"].iloc[35]})
+    assert len(features) == 40
+    assert features["bb_middle"].iloc[35:].isna().all()
+    assert not pd.isna(features["bb_middle"].iloc[34])
+
+
+def test_obv_widens_to_hold_the_null_rather_than_rejecting_it():
+    """`obv` is an integer cumulative sum; the blackout must not fail on it,
+    and its nulls have to survive the upsert to `features`."""
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    features = compute_features_for_ticker(df, {df["date"].iloc[_BLACKOUT_JUMP_AT]})
+    assert pd.isna(features["obv"].iloc[_BLACKOUT_JUMP_AT])
+    assert not pd.isna(features["obv"].iloc[0])
+
+
+def test_recompute_features_persists_the_indicator_blackout(monkeypatch, tmp_path):
+    """End to end: a hard flag in the sidecar has to reach the stored
+    indicator columns, not just the in-memory frame."""
+    ticker = "VHM"
+    df = _step_ohlcv(_BLACKOUT_ROWS, _BLACKOUT_JUMP_AT)
+    flagged_date = df["date"].iloc[_BLACKOUT_JUMP_AT]
+
+    db_path = tmp_path / "app.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(CREATE_OHLCV_TABLE)
+    conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
+    conn.executemany(
+        "INSERT INTO ohlcv (ticker, date, open, high, low, close, volume) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (ticker, r.date, r.open, r.high, r.low, r.close, r.volume)
+            for r in df.itertuples()
+        ],
+    )
+    conn.execute(
+        "INSERT INTO ohlcv_quality_flags (ticker, date, flag_tier, log_return, "
+        "limit_is_unverified_fallback, flagged_at) "
+        "VALUES (?, ?, 'hard', ?, 0, '2026-08-28T00:00:00')",
+        (ticker, flagged_date, -0.6931),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
+    )
+    assert recompute_features_for_ticker(ticker) == _BLACKOUT_ROWS
+
+    dates = df["date"].tolist()
+    first_clear = _BLACKOUT_JUMP_AT + HARD_FLAG_BLACKOUT_SESSIONS
+    conn = sqlite3.connect(db_path)
+    try:
+        stored = {
+            row[0]: row[1:]
+            for row in conn.execute(
+                "SELECT date, senkou_span_b, bb_middle, kijun_sen, macd_line, "
+                "rsi, atr, obv FROM features WHERE ticker = ?",
+                (ticker,),
+            )
+        }
+    finally:
+        conn.close()
+
+    for position in (_BLACKOUT_JUMP_AT, _BLACKOUT_JUMP_AT + 40, first_clear - 1):
+        assert all(value is None for value in stored[dates[position]]), (
+            f"row {position} is inside the blackout and must store nulls"
+        )
+    assert all(value is not None for value in stored[dates[first_clear]])
+
+
+def test_recompute_features_reads_persisted_hard_flags(monkeypatch, tmp_path):
+    """End to end: a flag written to the sidecar must reach the target column,
+    through the same connection the caller redirected."""
+    ticker = "VHM"
+    rows = 40
+    jump_at = 20
+    df = _step_ohlcv(rows, jump_at)
+    flagged_date = df["date"].iloc[jump_at]
+
+    db_path = tmp_path / "app.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(CREATE_OHLCV_TABLE)
+    conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
+    conn.executemany(
+        "INSERT INTO ohlcv (ticker, date, open, high, low, close, volume) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (ticker, r.date, r.open, r.high, r.low, r.close, r.volume)
+            for r in df.itertuples()
+        ],
+    )
+    conn.execute(
+        "INSERT INTO ohlcv_quality_flags (ticker, date, flag_tier, log_return, "
+        "limit_is_unverified_fallback, flagged_at) "
+        "VALUES (?, ?, 'hard', ?, 0, '2026-08-28T00:00:00')",
+        (ticker, flagged_date, -0.6931),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
+    )
+    assert recompute_features_for_ticker(ticker) == rows
+
+    conn = sqlite3.connect(db_path)
+    try:
+        targets = dict(
+            conn.execute(
+                "SELECT date, target FROM features WHERE ticker = ? ORDER BY date",
+                (ticker,),
+            )
+        )
+    finally:
+        conn.close()
+
+    dates = df["date"].tolist()
+    for offset in range(1, TARGET_HORIZON + 1):
+        assert targets[dates[jump_at - offset]] is None, (
+            f"target {offset} sessions before the flagged step should be null"
+        )
+    assert targets[dates[jump_at]] is not None
+    assert targets[dates[jump_at - TARGET_HORIZON - 1]] is not None
+
+
+# --- non-priced rows and invalid-close flags (task 9.1 follow-up) ---
+
+
+def test_non_priced_sessions_are_dropped_before_indicators_are_computed(
+    monkeypatch, tmp_path
+):
+    """Zero closes arrive in long runs on suspended and delisted symbols —
+    37 symbols and 1,122 rows in the first full ingest, `AUM` alone with 120
+    consecutive. A close of zero is not a price, so it cannot take part in an
+    indicator: the rows stay in `ohlcv` as a faithful record and never reach
+    `features`.
+    """
+    ticker = "SUSP"
+    dates = _dates(120)
+    db_path = _seed_ohlcv_db(tmp_path, ticker, dates)
+
+    # A 30-session run of zeros in the middle, as the real data has.
+    zeroed = dates[40:70]
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "UPDATE ohlcv SET open=0, high=0, low=0, close=0 WHERE ticker=? AND date=?",
+        [(ticker, d) for d in zeroed],
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
+    )
+
+    count = recompute_features_for_ticker(ticker)
+
+    assert count == len(dates) - len(zeroed)
+    conn = sqlite3.connect(db_path)
+    try:
+        feature_dates = {row[0] for row in conn.execute(
+            "SELECT date FROM features WHERE ticker = ?", (ticker,)
+        )}
+        stored = conn.execute(
+            "SELECT COUNT(*) FROM ohlcv WHERE ticker = ?", (ticker,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert feature_dates.isdisjoint(zeroed)
+    # `ohlcv` keeps every row the source returned.
+    assert stored == len(dates)
+
+    # The run leaves a 30-day hole, which is a calendar gap by any measure —
+    # so `near_gap` excludes the sessions whose lookback spans it, through
+    # machinery that already existed rather than a quality-gate blackout.
+    conn = sqlite3.connect(db_path)
+    try:
+        after_gap = conn.execute(
+            "SELECT near_gap FROM features WHERE ticker = ? AND date = ?",
+            (ticker, dates[75]),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert after_gap[0] == 1
+
+
+def test_an_invalid_close_flag_does_not_black_out_or_segment(monkeypatch, tmp_path):
+    """A hard flag has two consequences and only one of them applies here.
+    An invalid close is absent data, not a change of price scale, so it must
+    not trigger the 78-session blackout or a segment boundary — otherwise a
+    120-row run of zeros would shred the series into 120 one-row segments
+    and void 78 sessions apiece.
+    """
+    ticker = "SUSP"
+    dates = _dates(200)
+    db_path = _seed_ohlcv_db(tmp_path, ticker, dates)
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "UPDATE ohlcv SET open=0, high=0, low=0, close=0 WHERE ticker=? AND date=?",
+        (ticker, dates[100]),
+    )
+    # The gate records it as hard, with the reason that distinguishes it.
+    conn.execute(
+        "INSERT INTO ohlcv_quality_flags (ticker, date, flag_tier, flag_reason, "
+        "log_return, limit_is_unverified_fallback, flagged_at) "
+        "VALUES (?, ?, 'hard', 'invalid_close', 0.0, 0, '2026-09-07T00:00:00')",
+        (ticker, dates[100]),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        feature_engineering, "get_connection", lambda: sqlite3.connect(db_path)
+    )
+    recompute_features_for_ticker(ticker)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT date, senkou_span_b, near_gap FROM features "
+            "WHERE ticker = ? ORDER BY date", (ticker,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    by_date = {date_: (span_b, near_gap) for date_, span_b, near_gap in rows}
+    # The zero row itself is gone, not blacked out.
+    assert dates[100] not in by_date
+    # And the sessions after it are computed normally. Under the old
+    # treatment this flag blacked out the next 78 of them, so a non-null
+    # indicator here is the whole point.
+    assert by_date[dates[130]][0] is not None
+    assert by_date[dates[150]][0] is not None
+    # A single absent session is not a calendar gap — it is one day, well
+    # inside `GAP_THRESHOLD_DAYS`. A *run* of them is, which is what the
+    # test above covers.
+    assert by_date[dates[130]][1] == 0

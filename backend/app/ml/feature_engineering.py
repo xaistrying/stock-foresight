@@ -1,9 +1,13 @@
+import logging
 from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
 
 from app.db.connection import get_connection
+from app.services.ohlcv_quality_gate import level_shift_dates
+
+logger = logging.getLogger(__name__)
 
 FEATURE_COLUMNS = [
     "tenkan_sen", "kijun_sen", "senkou_span_a", "senkou_span_b",
@@ -39,6 +43,19 @@ ON CONFLICT(ticker, date) DO UPDATE SET
 """
 
 
+def _bindable(value):
+    """A feature value sqlite3 can bind, with every flavour of missing as None.
+
+    `_wilder_smooth` returns a nullable `Float64` series for a too-short
+    input, so its missing values are `pd.NA`, which sqlite3 refuses to bind
+    at all (`type 'NAType' is not supported`) — the whole ticker's upsert
+    then raises and `features` is left empty for it. That is the silent
+    failure `docs/KNOWN_ISSUES.md` records for short series, one layer
+    further down than the guard that was added there.
+    """
+    return None if value is None or pd.isna(value) else value
+
+
 def upsert_features(features: pd.DataFrame) -> None:
     """Upsert a `ticker`-labeled features DataFrame (as produced by
     `compute_all_features`/`compute_features_for_ticker` with a `ticker`
@@ -51,7 +68,7 @@ def upsert_features(features: pd.DataFrame) -> None:
     rows = [
         (
             row.ticker, row.date,
-            *(getattr(row, col) for col in FEATURE_COLUMNS),
+            *(_bindable(getattr(row, col)) for col in FEATURE_COLUMNS),
             computed_at,
         )
         for row in features.itertuples()
@@ -81,13 +98,33 @@ def recompute_features_for_ticker(ticker: str) -> int:
             conn,
             params=(ticker,),
         )
+        # Read through this module's own connection, so a caller that has
+        # redirected `get_connection` sees its own flags rather than the real
+        # database's. Only *level-shift* flags: an invalid close is absent
+        # data rather than a change of price scale, so it gets neither the
+        # blackout nor a segment boundary (see `level_shift_dates`).
+        flagged = level_shift_dates(ticker, conn)
     finally:
         conn.close()
+
+    # A close of zero is not a price, so those rows cannot take part in any
+    # indicator — and they arrive in long runs on suspended or delisted
+    # symbols (37 symbols, 1,122 rows in the first full ingest; `AUM` has 120
+    # consecutive). Dropping them leaves `ohlcv` a faithful record of what
+    # the source returned while turning the run into the calendar gap it
+    # really is, which `compute_near_gap` already excludes on its own terms.
+    priced = ohlcv[pd.to_numeric(ohlcv["close"], errors="coerce") > 0]
+    if len(priced) < len(ohlcv):
+        logger.info(
+            "Dropping %d non-priced session(s) for %s before computing features",
+            len(ohlcv) - len(priced), ticker,
+        )
+    ohlcv = priced.reset_index(drop=True)
 
     if ohlcv.empty:
         return 0
 
-    features = compute_features_for_ticker(ohlcv)
+    features = compute_features_for_ticker(ohlcv, flagged)
     features.insert(0, "ticker", ticker)
     upsert_features(features)
     return len(features)
@@ -354,18 +391,127 @@ def compute_obv(df: pd.DataFrame) -> pd.Series:
     return signed_volume.cumsum().rename("obv")
 
 
-def compute_target(df: pd.DataFrame) -> pd.Series:
+def compute_target(
+    df: pd.DataFrame, hard_flagged_dates: set[str] | None = None
+) -> pd.Series:
     """Prediction target for a single ticker's OHLCV rows sorted by date
     ascending, per Rule 1: `target(t) = ln(close[t+5] / close[t])`, where
     `t+5` is 5 TRADING SESSIONS ahead (row offset within this ticker's stored
     sequence), not a 5-calendar-day lookahead.
+
+    `hard_flagged_dates` names sessions whose own return the
+    `ohlcv-quality-gate` has hard-flagged as impossible under any Vietnamese
+    exchange's price limit. Rule 1's definition is unchanged; what changes is
+    that the target is left null where the data it would be computed from is
+    known corrupt — the same posture `near_gap` already takes toward
+    unreliable rows.
+
+    Which targets are affected is exact rather than approximate. A flagged
+    session `d` means the step from `close[d-1]` to `close[d]` is spurious,
+    so `target(t)` is contaminated precisely when that step falls inside its
+    lookahead window: `t < d <= t + TARGET_HORIZON`, i.e. the
+    TARGET_HORIZON rows before `d`. `target(d)` itself spans `close[d]` to
+    `close[d + 5]`, both on the far side of the step, and stays valid.
     """
     close = df["close"]
     future_close = close.shift(-TARGET_HORIZON)
-    return pd.Series(np.log(future_close / close), index=df.index).rename("target")
+    target = pd.Series(np.log(future_close / close), index=df.index).rename("target")
+
+    if not hard_flagged_dates:
+        return target
+
+    dates = df["date"].astype(str).tolist()
+    contaminated = [
+        position
+        for index, session in enumerate(dates)
+        if session in hard_flagged_dates
+        for position in range(max(index - TARGET_HORIZON, 0), index)
+    ]
+    if contaminated:
+        target.iloc[sorted(set(contaminated))] = np.nan
+    return target
 
 
-def compute_features_for_ticker(ohlcv: pd.DataFrame) -> pd.DataFrame:
+# The longest indicator lookback, in sessions. Senkou Span B's
+# SENKOU_B_PERIOD-row window is read LONGEST_LOOKBACK_END_OFFSET rows further
+# back (`compute_ichimoku`'s forward shift), so the furthest-reaching window
+# any indicator has spans 78 row positions — the same span `compute_near_gap`
+# uses for warm-up and calendar gaps.
+HARD_FLAG_BLACKOUT_SESSIONS = LONGEST_LOOKBACK_END_OFFSET + LONGEST_LOOKBACK_WINDOW
+
+# Every column a price level reaches. `target` is excluded because
+# `compute_target` already nulls exactly the rows a flag contaminates (the
+# TARGET_HORIZON rows *before* it), and `near_gap` because it describes
+# calendar gaps rather than price discontinuities and is an input to the
+# blackout's own justification, not a subject of it.
+INDICATOR_COLUMNS = [
+    column for column in FEATURE_COLUMNS if column not in ("target", "near_gap")
+]
+
+
+def blackout_indicators_after_hard_flags(
+    features: pd.DataFrame, hard_flagged_dates: set[str] | None
+) -> pd.DataFrame:
+    """Null every indicator column for HARD_FLAG_BLACKOUT_SESSIONS sessions
+    starting at each hard-flagged session (design Decision 9).
+
+    A hard-flagged session is a persistent level shift — the one measured in
+    this data, `VHM` 2018-08-14, is a missed 2:1 split, where the close halves
+    and *stays* halved. So unlike the flagged return, which
+    `neutralise_hard_flagged_returns` removes in one place, the level
+    discontinuity contaminates every rolling window reaching across it:
+    `bb_middle` (20 sessions), `kijun_sen` and `macd` (26), `senkou_span_b`
+    (78). Each such window blends two different price scales, so its value is
+    not a smoothed price at all.
+
+    The blackout starts at the flagged session itself, not after it: the
+    flagged return is the step from `close[d-1]` to `close[d]`, and a window
+    ending at `d` already contains both sides of it.
+
+    Blacking out the longest lookback uniformly, rather than each indicator's
+    own window length, mirrors what `compute_near_gap` does for warm-up and
+    is the option the design chose (Decision 9 option (a)); the alternative,
+    detecting and repairing the split, is deferred with task 9.1's measured
+    flag rate as the trigger to reopen it.
+
+    `obv` is blacked out with the rest for consistency, but note that its
+    contamination is *not* bounded by the window: it is a cumulative sum, so a
+    spurious direction at the step shifts every later value permanently. The
+    blackout hides the affected span; it does not repair `obv`.
+    """
+    if not hard_flagged_dates:
+        return features
+
+    sessions = features["date"].astype(str).tolist()
+    blacked_out = sorted(
+        {
+            position
+            for index, session in enumerate(sessions)
+            if session in hard_flagged_dates
+            for position in range(
+                index, min(index + HARD_FLAG_BLACKOUT_SESSIONS, len(sessions))
+            )
+        }
+    )
+    if not blacked_out:
+        return features
+
+    mask = pd.Series(False, index=features.index)
+    mask.iloc[blacked_out] = True
+    # A copy, so the caller's frame is not mutated as a side effect of a
+    # function that also returns one — the two behaviours together invite a
+    # caller to assume the original is still un-blacked-out.
+    blacked = features.copy()
+    for column in INDICATOR_COLUMNS:
+        # `Series.mask` rather than positional assignment so an integer column
+        # (`obv`) widens to float instead of rejecting the null.
+        blacked[column] = blacked[column].mask(mask)
+    return blacked
+
+
+def compute_features_for_ticker(
+    ohlcv: pd.DataFrame, hard_flagged_dates: set[str] | None = None
+) -> pd.DataFrame:
     """All six indicator families for a single ticker's OHLCV rows.
 
     `ohlcv` must already be filtered to one ticker and sorted by date
@@ -374,36 +520,118 @@ def compute_features_for_ticker(ohlcv: pd.DataFrame) -> pd.DataFrame:
     rolling/EWM/cumulative windows (Ichimoku, RSI, MACD, Bollinger, ATR, and
     OBV are all sequence-order-dependent). Use `compute_all_features` when
     starting from a raw `ohlcv` table spanning multiple tickers.
+
+    `hard_flagged_dates` has two distinct effects, and they point in opposite
+    directions along the series. `compute_target` nulls the targets *before*
+    each flag, whose lookahead spans the spurious step;
+    `blackout_indicators_after_hard_flags` nulls the indicators *at and after*
+    it, whose lookback spans the same step. See each for why.
     """
     ohlcv = ohlcv.reset_index(drop=True)
-    return pd.concat(
+    indicators = _compute_indicators_in_segments(ohlcv, hard_flagged_dates)
+    features = pd.concat(
         [
             ohlcv[["date"]],
+            indicators,
+            # Computed over the whole series, never per segment. `target`
+            # already nulls exactly the rows whose lookahead spans a flag,
+            # and `near_gap` describes calendar gaps, which segmentation
+            # would silently redefine.
+            compute_target(ohlcv, hard_flagged_dates),
+            compute_near_gap(ohlcv),
+        ],
+        axis=1,
+    )
+    return blackout_indicators_after_hard_flags(features, hard_flagged_dates)
+
+
+def _indicator_block(ohlcv: pd.DataFrame) -> pd.DataFrame:
+    """Every indicator family for one contiguous run of sessions."""
+    return pd.concat(
+        [
             compute_ichimoku(ohlcv),
             compute_rsi(ohlcv),
             compute_macd(ohlcv),
             compute_bollinger_bands(ohlcv),
             compute_atr(ohlcv),
             compute_obv(ohlcv),
-            compute_target(ohlcv),
-            compute_near_gap(ohlcv),
         ],
         axis=1,
     )
 
 
-def compute_all_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
+def _compute_indicators_in_segments(
+    ohlcv: pd.DataFrame, hard_flagged_dates: set[str] | None
+) -> pd.DataFrame:
+    """Indicators computed independently on each side of a hard flag.
+
+    The 78-session blackout is sufficient only for the window-bounded
+    indicators — `bb_middle` (20), `kijun_sen` (26), `senkou_span_b` (78).
+    The rest are recursive and unbounded: `rsi` and `atr` use Wilder
+    smoothing, `macd_*` an EWM from the series start, `obv` a cumulative
+    sum. A hard flag is a persistent level shift, so those carry it past any
+    fixed span. Measured against a split-repaired reference on `VHM`, at the
+    first row past the blackout: `macd_signal` 54.5% error, `macd_line`
+    19.5%, `obv` 20.4% — and `obv` still 12% off nine months later.
+
+    Treating the flagged session as the start of a new series is what the
+    data actually is: two price scales, spliced. Each segment pays its own
+    warm-up nulls once, which the blackout already covers, and beyond that
+    every indicator is computed from one scale only — which is what makes
+    the `ohlcv-quality-gate` scenario "sessions beyond the lookback are
+    unaffected" true rather than aspirational.
+
+    Chosen over detect-and-repair (design Decision 11 option b), which would
+    keep the history continuous but means writing corrected prices into
+    `ohlcv`.
+    """
+    if not hard_flagged_dates:
+        return _indicator_block(ohlcv)
+
+    sessions = ohlcv["date"].astype(str)
+    # Each flagged session opens a segment; `cumsum` over that indicator
+    # labels every row with the segment it belongs to.
+    segment_ids = sessions.isin(hard_flagged_dates).cumsum()
+    if segment_ids.nunique() == 1:
+        return _indicator_block(ohlcv)
+
+    blocks = []
+    for _, group in ohlcv.groupby(segment_ids, sort=True):
+        block = _indicator_block(group.reset_index(drop=True))
+        block.index = group.index
+        # Cast before concatenating: a segment too short to seed an indicator
+        # yields an all-null column, and pandas otherwise infers the combined
+        # dtype from whichever blocks are not all-null (a deprecation warning
+        # today, a behaviour change later). Every indicator is real-valued,
+        # and `obv` widening from int is the same widening the blackout does.
+        blocks.append(block.astype("float64"))
+    return pd.concat(blocks).sort_index()
+
+
+def compute_all_features(
+    ohlcv: pd.DataFrame, hard_flagged_by_ticker: dict[str, set[str]] | None = None
+) -> pd.DataFrame:
     """All six indicator families for every ticker in a multi-ticker `ohlcv`
     frame, computed independently per ticker (no cross-ticker leakage).
 
     Groups by `ticker`, sorts each group by `date` ascending, and computes
     indicators within that group only — rolling windows, EWMs, and OBV's
     cumulative sum never span a ticker boundary.
+
+    `hard_flagged_by_ticker` threads each ticker's flagged sessions through
+    to `compute_features_for_ticker`. Without it this function silently
+    produces features with no blackout and no target nulling — the entire
+    design Decision 9 mechanism bypassed — which is why it is a parameter
+    rather than something a caller can simply forget: prefer
+    `recompute_features_for_ticker`, which reads the flags itself.
     """
+    flagged_by_ticker = hard_flagged_by_ticker or {}
     results = []
     for ticker, group in ohlcv.groupby("ticker", sort=False):
         sorted_group = group.sort_values("date").reset_index(drop=True)
-        features = compute_features_for_ticker(sorted_group)
+        features = compute_features_for_ticker(
+            sorted_group, flagged_by_ticker.get(ticker)
+        )
         features.insert(0, "ticker", ticker)
         results.append(features)
 

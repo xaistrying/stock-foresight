@@ -4,7 +4,10 @@ from pathlib import Path
 from app.db.schema import (
     CREATE_BACKTEST_PREDICTIONS_TABLE,
     CREATE_FEATURES_TABLE,
+    CREATE_OHLCV_QUALITY_FLAGS_TABLE,
+    CREATE_OHLCV_QUALITY_FLAGS_TIER_INDEX,
     CREATE_OHLCV_TABLE,
+    CREATE_TICKER_UNIVERSE_TABLE,
     CREATE_TICKERS_TABLE,
 )
 
@@ -24,6 +27,20 @@ def _migrate_tickers_features_computed(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tickers ADD COLUMN features_computed INTEGER")
 
 
+def _migrate_quality_flags_reason(conn: sqlite3.Connection) -> None:
+    """Add `flag_reason` to a sidecar created before it existed.
+
+    Existing rows are all price-limit breaches — the only kind the gate could
+    record at the time — so the column's default describes them correctly.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(ohlcv_quality_flags)")}
+    if "flag_reason" not in columns:
+        conn.execute(
+            "ALTER TABLE ohlcv_quality_flags "
+            "ADD COLUMN flag_reason TEXT NOT NULL DEFAULT 'price_limit'"
+        )
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
@@ -31,7 +48,11 @@ def init_db() -> None:
         conn.execute(CREATE_TICKERS_TABLE)
         conn.execute(CREATE_FEATURES_TABLE)
         conn.execute(CREATE_BACKTEST_PREDICTIONS_TABLE)
+        conn.execute(CREATE_TICKER_UNIVERSE_TABLE)
+        conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
+        conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TIER_INDEX)
         _migrate_tickers_features_computed(conn)
+        _migrate_quality_flags_reason(conn)
         conn.commit()
     finally:
         conn.close()

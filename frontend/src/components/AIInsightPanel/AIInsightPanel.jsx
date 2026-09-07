@@ -238,10 +238,28 @@ export function AIInsightPanel({ ticker }) {
             hardcoded copy of it), never behind a tooltip/hover. */}
         <div className="ai-insight-panel__item" data-item="sentiment">
           <h3 className="ai-insight-panel__label">Technical Signal</h3>
-          <p className="ai-insight-panel__value">{sentimentLabel}</p>
-          <p className="ai-insight-panel__subtext">
-            {(insight.sentiment_inputs ?? []).join(', ')} — not news or market sentiment
-          </p>
+          {/* A null proxy means none of RSI/MACD/Ichimoku was available for
+              this session — a quality-gate blackout or a warm-up row. Shown
+              as an explicit N/A with the reason, the same posture Confidence
+              takes: Rule 5 says the signal must name its technical basis,
+              and asserting one it does not have would be worse than saying
+              nothing. */}
+          {insight.sentiment_proxy != null ? (
+            <>
+              <p className="ai-insight-panel__value">{sentimentLabel}</p>
+              <p className="ai-insight-panel__subtext">
+                {(insight.sentiment_inputs ?? []).join(', ')} — not news or market sentiment
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="ai-insight-panel__value ai-insight-panel__value--na">N/A</p>
+              <p className="ai-insight-panel__subtext">
+                RSI, MACD and Ichimoku are unavailable for this session — no
+                technical signal can be computed
+              </p>
+            </>
+          )}
         </div>
 
         {/* Advice — Rules 3/6: volatility-relative, directional wording only,

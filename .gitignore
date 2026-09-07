@@ -1,0 +1,3 @@
+# PIDs/logs written by `make up` / `make down` (see Makefile) — runtime
+# artifacts, not source.
+.run/

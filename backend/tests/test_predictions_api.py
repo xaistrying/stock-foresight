@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 import app.api.predictions as predictions_module
 import app.services.ticker_ingestion as ticker_ingestion_module
-from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+from app.db.schema import CREATE_FEATURES_TABLE, CREATE_OHLCV_QUALITY_FLAGS_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
 from app.main import app
 from app.ml.training import FEATURE_COLUMNS
 
@@ -25,6 +25,7 @@ def client(monkeypatch, tmp_path):
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_TICKERS_TABLE)
     conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
     conn.commit()
     conn.close()
 
@@ -36,9 +37,15 @@ def client(monkeypatch, tmp_path):
         yield test_client, db_path
 
 
-def seed_features_row(db_path, ticker, date, near_gap):
+def seed_features_row(db_path, ticker, date, near_gap, null_indicators=()):
+    """Seed one `features` row. `null_indicators` names indicator columns to
+    store as NULL, standing in for a hard-flag blackout (tasks.md 4.7/5.4),
+    which nulls them while leaving `near_gap` alone.
+    """
     conn = sqlite3.connect(db_path)
-    feature_values = [1.0 for _ in FEATURE_COLUMNS]
+    feature_values = [
+        None if column in null_indicators else 1.0 for column in FEATURE_COLUMNS
+    ]
     conn.execute(
         INSERT_FEATURES_ROW,
         (ticker, date, *feature_values, 0.01, near_gap, "2024-01-01T00:00:00"),
@@ -139,6 +146,41 @@ def test_prediction_endpoint_does_not_walk_back_to_older_clean_row(client):
     body = response.json()
     assert body["status"] == "near_gap"
     assert "predicted_log_return" not in body
+
+
+def test_prediction_endpoint_serves_no_number_when_latest_indicators_are_null(client):
+    """ohlcv-quality-gate: "A prediction is never served from missing
+    features." A hard-flag blackout (tasks.md 4.7) nulls indicator columns
+    without setting `near_gap`, so gating on that flag alone would build a
+    feature matrix of NULLs and return a confident-looking percentage
+    (tasks.md 5.4).
+    """
+    test_client, db_path = client
+    seed_features_row(
+        db_path, "VIB", "2024-01-05", near_gap=0, null_indicators=FEATURE_COLUMNS
+    )
+
+    response = test_client.get("/tickers/VIB/prediction")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "indicators_unavailable"
+    assert body["as_of"] == "2024-01-05"
+    assert "predicted_log_return" not in body
+
+
+def test_prediction_endpoint_serves_no_number_when_one_indicator_is_null(client):
+    """One missing indicator is enough — XGBoost treats it as missing rather
+    than refusing, so the endpoint has to be the one that refuses."""
+    test_client, db_path = client
+    seed_features_row(
+        db_path, "VIB", "2024-01-05", near_gap=0, null_indicators=("senkou_span_b",)
+    )
+
+    response = test_client.get("/tickers/VIB/prediction")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "indicators_unavailable"
 
 
 def test_prediction_endpoint_returns_near_gap_when_features_computed_is_null(client):

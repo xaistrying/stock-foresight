@@ -319,4 +319,31 @@ describe('AIInsightPanel', () => {
     // Disclaimer still renders even when Advice itself is unavailable.
     expect(screen.getByText(/not a forecast, not investment advice/i)).toBeInTheDocument()
   })
+
+  it('shows Technical Signal as N/A with a reason when no indicator was available', async () => {
+    // A quality-gate blackout nulls exactly the columns Sentiment reads, so
+    // the backend returns a null proxy and an empty basis list rather than a
+    // tied-vote "neutral" (Rule 5: the signal must name a real basis).
+    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'indicators_unavailable',
+      confidence_score: 0.7,
+      confidence_basis: 'Hit-rate over recent predictions.',
+      sentiment_proxy: null,
+      sentiment_inputs: [],
+      advice_text: null,
+      note: 'A data-quality flag on recent sessions prevents a current prediction, so Advice is unavailable.',
+    })
+
+    renderPanel('TCB')
+
+    expect(await screen.findByText(/advice is unavailable/i)).toBeInTheDocument()
+    expect(screen.getByText(/no technical signal can be computed/i)).toBeInTheDocument()
+    // Never the bare basis line with nothing in front of it, and never a
+    // label implying a reading exists.
+    expect(screen.queryByText(/^ — not news or market sentiment$/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Neutral')).not.toBeInTheDocument()
+    expect(screen.getByText(/not a forecast, not investment advice/i)).toBeInTheDocument()
+  })
 })

@@ -5,7 +5,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.insight as insight_module
-from app.db.schema import CREATE_BACKTEST_PREDICTIONS_TABLE, CREATE_FEATURES_TABLE, CREATE_OHLCV_TABLE, CREATE_TICKERS_TABLE
+from app.db.schema import (
+    CREATE_BACKTEST_PREDICTIONS_TABLE,
+    CREATE_FEATURES_TABLE,
+    CREATE_OHLCV_QUALITY_FLAGS_TABLE,
+    CREATE_OHLCV_TABLE,
+    CREATE_TICKERS_TABLE,
+)
 from app.main import app
 from app.ml.training import FEATURE_COLUMNS
 
@@ -25,6 +31,7 @@ def client(monkeypatch, tmp_path):
     conn.execute(CREATE_OHLCV_TABLE)
     conn.execute(CREATE_TICKERS_TABLE)
     conn.execute(CREATE_FEATURES_TABLE)
+    conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
     conn.execute(CREATE_BACKTEST_PREDICTIONS_TABLE)
     conn.commit()
     conn.close()
@@ -228,3 +235,54 @@ def test_insight_returns_near_gap_status_with_no_advice(client):
     body = response.json()
     assert body["status"] == "near_gap"
     assert body["advice_text"] is None
+
+
+def test_insight_serves_no_advice_when_latest_indicators_are_null(client):
+    """tasks.md 5.9: a hard-flag blackout nulls indicator columns without
+    setting `near_gap`, and Advice is derived from the model's output — so
+    serving it here would mean Rule 3 wording computed from missing values.
+    """
+    test_client, db_path = client
+    seed_features_row(
+        db_path,
+        "VIB",
+        "2024-01-05",
+        near_gap=0,
+        feature_values=[None for _ in FEATURE_COLUMNS],
+    )
+    seed_ohlcv_rows(db_path, "VIB", [10.0 + 0.1 * i for i in range(70)])
+
+    response = test_client.get("/tickers/VIB/insight")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "indicators_unavailable"
+    assert body["advice_text"] is None
+    assert body["note"]
+    # Confidence reads `backtest_predictions`, not this row, so it still
+    # reports.
+    assert "confidence_basis" in body
+    # Sentiment reads exactly the columns that are null, so it must report
+    # nothing rather than a tied-vote "neutral" (Rule 5: the proxy has to
+    # name a real technical basis). Asserting membership in the label set —
+    # as this test first did — would have passed on the bug.
+    assert body["sentiment_proxy"] is None
+    assert body["sentiment_inputs"] == []
+
+
+def test_sentiment_names_only_the_indicators_it_actually_used(client):
+    """A partially-null row refuses Advice — the model cannot be fed a null —
+    but Sentiment still reports from what is there, with its stated basis
+    shrunk to match."""
+    test_client, db_path = client
+    values = [1.0 for _ in FEATURE_COLUMNS]
+    values[FEATURE_COLUMNS.index("rsi")] = None
+    seed_features_row(db_path, "VIB", "2024-01-05", feature_values=values)
+    seed_ohlcv_rows(db_path, "VIB", [10.0 + 0.1 * i for i in range(70)])
+
+    body = test_client.get("/tickers/VIB/insight").json()
+
+    assert body["status"] == "indicators_unavailable"
+    assert body["advice_text"] is None
+    assert body["sentiment_inputs"] == ["MACD", "Ichimoku position"]
+    assert body["sentiment_proxy"] is not None

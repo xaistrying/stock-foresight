@@ -238,5 +238,23 @@ adds real complexity not attempted here.
   investment performance (Rule 6).
 - All 9 tickers are large-cap, liquid VN30 constituents — this model and
   backtest are unvalidated on small/mid-cap or recently-listed tickers.
+
+  **Updated after `hose-universe-ingestion` (task 9.2).** That limitation
+  now describes the *training set*, not the data available. The database
+  holds the full HOSE universe plus delisted symbols, so small-caps,
+  illiquid names and delisted history are all present and queryable — and
+  the model has still never been trained or backtested on any of them.
+  The gap between "what the system knows about" and "what the model was
+  validated on" is now real and wide, which is why `GET /tickers` marks
+  training membership per entry (`ticker-catalog`): a prediction served for
+  a searched-in small-cap is an extrapolation, exactly as unvalidated as it
+  was before, and now much easier to request by accident.
+
+  Two measured properties of the wider universe bear directly on any future
+  retrain: a large fraction of it fails the liquidity filter at the
+  inherited 0.15 stale-close threshold (task 7.2 re-examines that number),
+  and low-priced symbols move on a price grid coarse enough that a single
+  tick exceeds the daily limit (design Decision 10). Neither is a problem
+  for the nine; both would be for a universe-wide model.
 - No FastAPI prediction endpoints or UI — this change stops at a persisted
   model, persisted backtest results, and this document.

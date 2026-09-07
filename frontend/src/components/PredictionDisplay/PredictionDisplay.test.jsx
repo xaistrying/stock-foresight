@@ -92,6 +92,22 @@ describe('PredictionDisplay', () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument()
   })
 
+  it('shows a distinct indicators_unavailable message with no percentage figure', async () => {
+    // tasks.md 5.8: without its own branch this status left the card blank —
+    // the title over an empty body.
+    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'indicators_unavailable',
+    })
+
+    renderDisplay('TCB')
+
+    expect(await screen.findByText(/data-quality flag/i)).toBeInTheDocument()
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/data gap/i)).not.toBeInTheDocument()
+  })
+
   it('shows a distinct not-loaded message for a 404 response', async () => {
     vi.spyOn(tickersApi, 'fetchTickerPrediction').mockRejectedValue(
       new ApiError('Ticker has not been loaded', { status: 404 }),
@@ -114,11 +130,16 @@ describe('PredictionDisplay', () => {
     expect(screen.queryByText(/hasn't been loaded yet/i)).not.toBeInTheDocument()
   })
 
-  it('keeps the 404, 5xx, and near_gap states visually distinct from one another', async () => {
+  it('keeps the 404, 5xx, near_gap, and indicators_unavailable states visually distinct from one another', async () => {
     const cases = [
       { setup: () => new ApiError('not found', { status: 404 }), rejects: true, text: /hasn't been loaded yet/i },
       { setup: () => new ApiError('failed', { status: 503 }), rejects: true, text: /feature computation failed/i },
       { setup: () => ({ ticker: 'TCB', as_of: '2026-08-10', status: 'near_gap' }), rejects: false, text: /data gap/i },
+      {
+        setup: () => ({ ticker: 'TCB', as_of: '2026-08-10', status: 'indicators_unavailable' }),
+        rejects: false,
+        text: /data-quality flag/i,
+      },
     ]
 
     for (const testCase of cases) {

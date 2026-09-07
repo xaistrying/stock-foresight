@@ -7,7 +7,17 @@ import { get, post } from './client'
 
 /**
  * GET /tickers
- * @returns {Promise<{tickers: Array<{ticker: string, loaded: boolean, features_computed: boolean|null, last_loaded_at: string|null}>}>}
+ *
+ * Universe-derived since hose-universe-ingestion task 8.1: this returns
+ * every ingested symbol passing the universe's default filters (hundreds),
+ * not the nine training tickers. `in_training_set` marks the set the model
+ * was actually trained and backtested on — the dashboard's Watchlist
+ * selects on it, and the rest of the catalog feeds search.
+ *
+ * Universe fields are null (never omitted) for a symbol the universe has no
+ * value for; `features_computed` and `last_loaded_at` are null when the
+ * symbol has never been loaded.
+ * @returns {Promise<{tickers: Array<{ticker: string, in_training_set: boolean, exchange: string|null, industry_code: string|null, listing_status: string|null, loaded: boolean, features_computed: boolean|null, last_loaded_at: string|null}>}>}
  */
 export function fetchTickers() {
   return get('/tickers')

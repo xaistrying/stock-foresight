@@ -23,6 +23,15 @@ import './ticker-panel.css'
  * bound on how many entries a session can accumulate. `TickerSearch`'s
  * input live-filters this second group only (`filterValue`); the
  * Watchlist is never affected by it.
+ *
+ * hose-universe-ingestion task 8.5: `GET /tickers` now returns the whole
+ * ingested universe rather than the nine training tickers, so the
+ * Watchlist selects on each entry's `in_training_set` flag instead of
+ * rendering every catalog entry. Without that filter this group would grow
+ * to hundreds of chips in a wrapping row — the same unbounded-list problem
+ * Decision 4 moved searched tickers out for. The full catalog still feeds
+ * `knownTickers`, so searching a universe symbol resolves it instead of
+ * re-loading it.
  */
 export function TickerPanel({ selectedTicker, onSelectTicker }) {
   const { data, isLoading, isError } = useTickers()
@@ -31,6 +40,13 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
   const [filterValue, setFilterValue] = useState('')
 
   const catalogTickers = data?.tickers ?? []
+  // The catalog is now the whole ingested universe (hundreds of symbols),
+  // not the nine it used to be. The Watchlist keeps its meaning — the set
+  // the model was actually trained and backtested on — by rendering only
+  // the entries the backend flags as such, rather than one chip per
+  // universe member. Everything else in the catalog is reachable through
+  // search, which is what the rest of the universe is for.
+  const watchlistTickers = catalogTickers.filter((entry) => entry.in_training_set)
   const knownTickers = [...catalogTickers.map((entry) => entry.ticker), ...searchedTickers]
 
   const visibleSearchedTickers = filterValue.trim()
@@ -91,7 +107,7 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
             <span className="ticker-chip ticker-chip--skeleton" aria-hidden="true" />
           </>
         )}
-        {catalogTickers.map((entry) => (
+        {watchlistTickers.map((entry) => (
           <TickerChip
             key={entry.ticker}
             ticker={entry.ticker}

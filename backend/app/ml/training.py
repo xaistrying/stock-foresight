@@ -71,10 +71,22 @@ def load_training_features() -> pd.DataFrame:
 
 def filter_clean_labeled(df: pd.DataFrame) -> pd.DataFrame:
     """Keep only "clean+labeled" rows per design.md Decision 2: exclude
-    `near_gap = 1` (unknown-quality indicator lookback) and rows with a
-    null `target` (insufficient future data per M2).
+    `near_gap = 1` (unknown-quality indicator lookback), rows with a
+    null `target` (insufficient future data per M2), and rows with any null
+    indicator column.
+
+    The last condition catches a hard-flag blackout
+    (`blackout_indicators_after_hard_flags` in feature_engineering.py,
+    tasks.md 4.7/5.4) whose tail can fall outside the `near_gap` window that
+    happened to cover the rest of it — `near_gap` describes calendar gaps,
+    not price discontinuities, so it must not be the only gate. Checked
+    directly against `FEATURE_COLUMNS` rather than a separate flag column,
+    so it can't drift out of sync with the actual nulls.
     """
-    return df[(df["near_gap"] == 0) & (df["target"].notna())].reset_index(drop=True)
+    indicators_present = df[FEATURE_COLUMNS].notna().all(axis=1)
+    return df[
+        (df["near_gap"] == 0) & (df["target"].notna()) & indicators_present
+    ].reset_index(drop=True)
 
 
 def assemble_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:

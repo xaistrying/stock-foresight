@@ -1,5 +1,6 @@
 /* Hallmark · component: prediction-display · genre: modern-minimal (data-dense financial dashboard)
- * states: empty · loading · ok(up/down) · near-gap · not-loaded · failed · error
+ * states: empty · loading · ok(up/down) · near-gap · indicators-unavailable ·
+ * not-loaded · failed · error
  * contrast: pass (46-50)
  */
 
@@ -85,6 +86,13 @@
 }
 
 .prediction-display__state[data-kind='near-gap'] .prediction-display__message {
+  color: var(--color-warning);
+}
+
+/* Same warning weight as near-gap — both are data-availability refusals
+   rather than faults — but its own message text keeps the two distinct
+   (dashboard-ui: no shared treatment across outcomes). */
+.prediction-display__state[data-kind='indicators-unavailable'] .prediction-display__message {
   color: var(--color-warning);
 }
 

@@ -41,6 +41,14 @@ decisions were.
 and `test_wilder_smooth_seed_at_exact_boundary_still_works` in
 `backend/tests/test_feature_engineering.py`.
 
+**Downstream follow-up** (`hose-universe-ingestion` task 5.4): the null
+column this fix produces used to flow onwards unchecked — both
+`filter_clean_labeled` and `GET /tickers/{ticker}/prediction` gated on
+`near_gap` alone, which a short series does not necessarily set. Both now
+require the indicator columns themselves to be non-null, so an all-NaN
+indicator row is excluded from training and never serves a prediction,
+whatever nulled it.
+
 **Status**: fixed, closed.
 
 ---
@@ -92,14 +100,65 @@ only the automatic self-invocation on import is disabled. Verified: full
 test suite still passes (34/34) and none of the six home-directory files
 or either `AGENTS.md` regenerate after the patch.
 
-**Important limitation**: this patch lives inside `.venv`, which is
-gitignored and not shared between environments. It will be **silently
-lost** the next time `backend/requirements.txt` is reinstalled into a
-fresh virtualenv, or if `vnstock` is upgraded/reinstalled — nothing in the
-repo currently reapplies it automatically. Whoever rebuilds the venv next
-needs to either reapply this patch manually or land a durable fix (a
-`sitecustomize.py`/post-install hook, a vendored/patched fork, or pinning
-to a pre-`vnai` `vnstock` release if one exists).
+**Limitation of that first patch (now superseded)**: it lived inside
+`.venv`, which is gitignored and not shared between environments, so it was
+**silently lost** on any reinstall or `vnstock` upgrade. That regression
+actually happened: on **2026-08-11** all six home-directory files reappeared,
+byte-identical at 3,641 bytes each, having been removed during the M3
+investigation above.
+
+**Durable fix landed** (`hose-universe-ingestion`, task 0.1): the `.venv`
+edit is gone — the installed `vnstock/__init__.py` is back to upstream — and
+the fix now lives in tracked source as `backend/app/vnstock_guard.py`. Its
+`install()` replaces `vnai.beam.agents.setup_agent_environment` and
+`async_setup_agent_environment` (and `vnai`'s re-exports of both, which is
+the surface `vnstock.core.utils.agents.init_agent_environment` resolves at
+call time) with a no-op that writes nothing and returns `False` — a value
+vnstock's own wrapper already handles. `import vnai` itself has no
+top-level side effects, so importing it to patch it is safe.
+
+Every module in this repo that imports `vnstock` calls `install()` above that
+import: `backend/app/services/ticker_universe.py`,
+`backend/app/services/ticker_ingestion.py`, and
+`backend/scripts/verify_vnstock_tier_limit.py`. For tests,
+`backend/tests/conftest.py` installs it once per session — earlier than
+`test_ticker_ingestion.py`'s own top-level vnstock import, which is what
+originally triggered the writes during collection.
+
+Why a guard module rather than the four options this entry previously listed
+(post-install hook, `sitecustomize.py`, vendored fork, version pin): all four
+are install-time, so all four can be skipped by a venv built any other way,
+which is the exact failure mode that produced the 2026-08-11 regression. A
+tracked module on the import path cannot be lost by rebuilding the venv.
+
+**Chosen ordering caveat**: the guard only protects import paths that go
+through it, so a *new* module importing `vnstock` without it would silently
+reintroduce the writes.
+`test_every_vnstock_importer_installs_the_guard_first` scans every non-test
+Python file under `backend/` and fails if any imports `vnstock` without
+importing `app.vnstock_guard` first, so that regression fails a test rather
+than being noticed by `AGENTS.md` reappearing.
+
+**Verified** (task 0.2), against a genuinely fresh venv built from
+`backend/requirements.txt` with **unpatched** upstream `vnstock` 4.0.5 /
+`vnai` 2.5.5:
+
+- Control, guard *not* installed, `HOME` and cwd redirected into a sandbox:
+  all seven files were written (project `AGENTS.md` plus the six home paths),
+  confirming the fix is doing real work rather than testing an already-safe
+  vendor.
+- With the guard installed: none of the seven appear.
+- `pytest backend/tests` in the fresh venv: **84 passed**, no `AGENTS.md`
+  anywhere in the repo, no files in the sandboxed `HOME`.
+- `pip install -r backend/requirements.txt` alone writes none of them —
+  the writes require an `import vnstock`, not the install.
+
+Regression tests: `backend/tests/test_vnstock_guard.py` (6 tests), including
+an end-to-end subprocess check that imports the real installed `vnstock` and
+calls `setup_agent(async_mode=False)` with `HOME` and cwd redirected into
+`tmp_path`. The synchronous path is used deliberately: vnstock's import-time
+call is a daemon thread that a short-lived process can exit before finishing,
+which would make an async-only test pass for the wrong reason.
 
 **Also removed this session** (already-injected files found across the
 machine, not just this project): the six home-directory config files
@@ -111,9 +170,27 @@ different project's own real rules), and `~/vnstock-agent-guide/` (the
 actual upstream repo this injection content originated from — legitimate
 there).
 
-**Status**: mitigated locally (this `.venv` only), not durably fixed.
-Needs a decision: patch-on-install script, vendored fork, version pin, or
-report upstream to the `vnstock`/`vnai` maintainers.
+**Status**: durably fixed in tracked source
+(`backend/app/vnstock_guard.py`), verified against a fresh venv with
+unpatched upstream `vnstock`, and covered by regression tests.
+
+**Still open, deliberately not folded into the fix:**
+
+1. **The six home-directory files re-injected on 2026-08-11 are still on
+   disk** and still contain the prompt-injection content. They are outside
+   this repo, in the user's global AI-tool config, so removing them is the
+   user's call rather than something this change did unilaterally. All six
+   are 3,641 bytes and byte-identical — pure `vnai`-generated content with
+   nothing of the user's own appended, the same condition under which the M3
+   investigation deleted them outright.
+2. **Not reported upstream.** The guard makes this repo safe; it does nothing
+   for anyone else installing `vnstock`.
+3. **No version pin.** `backend/requirements.txt` still lists `vnstock`
+   unpinned. The guard warns (rather than silently succeeding) if a future
+   version renames or drops the writer functions it patches, but an upgrade
+   that moves the write to a new code path would not be caught. A pin would
+   bound that; it also freezes data-source fixes, so it is a trade-off worth
+   deciding rather than assuming.
 
 ## Uncaught `tenacity.RetryError` for a well-formed ticker with no real data
 

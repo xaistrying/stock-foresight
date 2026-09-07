@@ -61,6 +61,18 @@ def get_prediction(ticker: str, request: Request):
             "status": "near_gap",
         }
 
+    if any(row[column] is None for column in FEATURE_COLUMNS):
+        # A hard-flag blackout (ohlcv-quality-gate spec, tasks.md 4.7/5.4)
+        # can null indicator columns on a row whose near_gap is still 0 —
+        # near_gap describes calendar gaps, not price discontinuities, so
+        # it is checked separately here rather than folded into it. Never
+        # serve a prediction computed from missing feature values.
+        return {
+            "ticker": ticker,
+            "as_of": row["date"],
+            "status": "indicators_unavailable",
+        }
+
     feature_matrix = pd.DataFrame([{col: row[col] for col in FEATURE_COLUMNS}])
     model: xgb.Booster = request.app.state.model
     predicted_log_return = float(model.predict(xgb.DMatrix(feature_matrix))[0])

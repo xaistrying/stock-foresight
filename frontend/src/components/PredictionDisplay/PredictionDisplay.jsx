@@ -6,9 +6,10 @@ import './prediction-display.css'
 /**
  * Prediction display (tasks.md section 9): consumes `GET
  * /tickers/{ticker}/prediction` for the selected ticker and renders four
- * visually distinct states — `status: "ok"`, `status: "near_gap"`, 404
- * (not-loaded), 5xx (feature computation failed) — sharing no generic/blank
- * treatment across more than one of them (dashboard-ui spec, 9.3).
+ * visually distinct states — `status: "ok"`, `status: "near_gap"`,
+ * `status: "indicators_unavailable"`, 404 (not-loaded), 5xx (feature
+ * computation failed) — sharing no generic/blank treatment across more than
+ * one of them (dashboard-ui spec, 9.3).
  *
  * The raw `predicted_log_return` never reaches this render path — it's
  * converted via the shared `logReturnToPercent` utility (9.2, Rule 2)
@@ -57,6 +58,16 @@ export function PredictionDisplay({ ticker }) {
     state = {
       kind: 'near-gap',
       message: `A data gap near ${ticker}'s most recent sessions prevents a current prediction.`,
+    }
+  } else if (predictionQuery.data?.status === 'indicators_unavailable') {
+    // Fifth state (tasks.md 5.8): the backend refuses a prediction when the
+    // latest features row has null indicators — a quality-gate blackout over
+    // a price discontinuity, distinct from near_gap's calendar gap. Its own
+    // message rather than a shared or blank treatment, per the dashboard-ui
+    // requirement that no two prediction outcomes look alike.
+    state = {
+      kind: 'indicators-unavailable',
+      message: `A data-quality flag on ${ticker}'s recent sessions prevents a current prediction.`,
     }
   } else if (predictionQuery.data?.status === 'ok') {
     const percent = logReturnToPercent(predictionQuery.data.predicted_log_return)
