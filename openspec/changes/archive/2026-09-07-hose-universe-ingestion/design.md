@@ -388,11 +388,11 @@ becomes the calendar gap it actually is — which `compute_near_gap` already
 excludes on its own terms, with no new mechanism. A single absent session
 is correctly *not* a gap; a 30-session run is.
 
-### Decision 13 (open): 587 hard flags are bad prints, not missed splits
+### Decision 13 (resolved 2026-09-11): 587 hard flags are bad prints, not missed splits
 
-Decision 9's reopening trigger has fired. The measured flagged-row rate is
-**0.57%, about 7x** the 0.08% baseline over the original 15, and the hard
-flags divide into three shapes rather than one:
+Decision 9's reopening trigger fired during ingestion. The flagged-row rate
+measured **0.57%, about 7x** the 0.08% baseline over the original 15, and
+the hard flags divide into three shapes rather than one:
 
 | shape | count | what it is |
 | --- | --- | --- |
@@ -400,31 +400,72 @@ flags divide into three shapes rather than one:
 | `missed_split` | 706 | a persistent level step, like `VHM` 2018-08-14 |
 | `bad_print` | 587 | a spike that reverts |
 
-(Counts at 485 of 634 symbols ingested; `backend/scripts/report_ingest_outcomes.py`
-recomputes them.)
+(Counts at 485 of 634 symbols ingested, taken mid-run;
+`backend/scripts/report_ingest_outcomes.py` recomputes them and the final
+run — 599 of 634 ingested — settled at 864 `missed_split` and 770
+`bad_print`, in the same proportion.)
 
-The 587 bad prints are the open question. A reverting spike is *one wrong
-price*, not a change of scale, so the two sides of it are the same series —
-yet it currently gets the full level-shift treatment: 78 blacked-out
+The 587 (later 770) bad prints were the open question. A reverting spike is
+*one wrong price*, not a change of scale, so the two sides of it are the
+same series — yet it gets the full level-shift treatment: 78 blacked-out
 sessions and a segmentation boundary that reseeds every recursive
-indicator. That is a large amount of valid history discarded for a defect
-that neutralising a single return already handles.
+indicator. Framed at the time as "a large amount of valid history
+discarded for a defect that neutralising a single return already handles."
 
-Options:
+**That framing turned out to be wrong, and it was wrong because it looked
+at the flags in isolation from the liquidity filter (Decision 5) that
+already runs beside them.** Measured against the actual modelling universe
+(`fails_liquidity_filter = 0 AND below_minimum_history = 0`, 208 of 599
+ingested symbols at the shipped 0.15 threshold):
 
-- **(a) Treat bad prints as their own reason.** Classify at gate time —
-  the step-vs-spike test is already implemented — and give a spike only
-  the return-neutralisation and target-nulling, not the blackout or the
-  segment boundary. Recovers most of the discarded history.
-- **(b) Repair the print.** Replace the single close by interpolation. The
-  smallest data loss, but it writes prices the source never returned, which
-  Decision 9 rejected for splits on the same grounds.
-- **(c) Leave it.** Simple and conservative; discards ~78 sessions per
-  event across 587 events.
+| shape | total | inside modelling universe | % inside |
+| --- | --- | --- | --- |
+| `invalid_close` | 1,127 | 0 | 0.0% |
+| `missed_split` | 864 | 19 | 2.2% |
+| `bad_print` | 770 | 16 | 2.1% |
 
-Not blocking the ingest — the data is flagged and inspectable either way —
-but it should be settled before anything trains on this universe, since it
-decides how much of it survives filtering.
+Bad prints are overwhelmingly a symptom of thin trading — confirmed
+separately by `stale_close_fraction`'s correlation with average volume
+(−0.84 across 573 symbols with enough history to measure it, decile 1
+medians at 0.972, essentially never trading). The liquidity filter was
+already excluding almost every symbol where a bad print would occur, for a
+reason unrelated to the print itself. **16 events across 7 symbols**
+remain inside the modelling universe — at 78 sessions each, at most 1,248
+session-rows (less with overlap) against 255,467 usable modelling rows:
+well under 0.5%. The "large amount of valid history" the original framing
+worried about was never inside the set anything will train on.
+
+**Decided: option (c), leave it**, on the strength of that measurement
+rather than as a default. Options (a) (classify bad prints as their own
+reason, giving them only return-neutralisation, not the blackout) and (b)
+(repair by interpolation, rejected on the same grounds Decision 9 rejected
+it for splits) remain available if the scope changes — see below — but
+building either now would spend real work narrowing a defect that already
+touches under 0.5% of what matters.
+
+**This resolution is coupled to the liquidity threshold, not independent
+of it.** Decision 13's scope is a direct function of where that threshold
+sits, and it is not flat:
+
+| liquidity threshold | symbols in universe | `bad_print` events | `missed_split` events |
+| --- | --- | --- | --- |
+| 0.15 (shipped) | 208 | 16 | 19 |
+| 0.20 | 269 | 19 | 24 |
+| 0.25 | 310 | 32 | 36 |
+| 0.35 | 368 | 62 | 56 |
+| 0.50 | 417 | 205 | 164 |
+| 0.70 | 455 | 384 | 315 |
+| disabled | 573 | 755 | 861 |
+
+Past roughly 0.35–0.50 the counts climb sharply and this decision comes
+back into play. **Loosening the liquidity threshold (Decision 5) must
+reopen this decision, not be treated as independent of it** — the two were
+resolved together by the same measurement, and revisiting one without the
+other would silently reintroduce the discarded-history cost this
+resolution just measured away. If the threshold is loosened, re-run
+`report_ingest_outcomes.py`'s classification against the new modelling
+universe *before* retraining on it, so that a change in results can be
+attributed to one change at a time rather than two landing together.
 
 ## Risks / Trade-offs
 
