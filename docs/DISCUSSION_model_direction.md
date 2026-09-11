@@ -355,6 +355,116 @@ than advisory — its own docstring warns that a thinly-traded ticker "may
 look like a calm, easy-to-predict series while actually just being
 thinly traded," which at 405 names stops being a footnote.
 
+## Finding 9: cross-sectional momentum at scale — does not hold as characterized (2026-09-11)
+
+`cross-sectional-momentum-evaluation` change. Answers the question Finding
+8 raised and left open: with the 208-symbol modelling universe
+`hose-universe-ingestion` (archived 2026-09-07) unlocked — a top decile of
+roughly 21 rather than 1.5 — does Finding 4's cross-sectional momentum
+effect (+0.025 at 5 sessions, growing to +0.056 at 63, measured on 15
+tickers) actually work at a workable scale? Measured by
+`backend/scripts/evaluate_cross_sectional_momentum.py`: the same signal
+definition (`ret_h = ln(close[t]/close[t-h])`, cross-sectionally demeaned,
+forward target `ln(close[t+h]/close[t])`, also demeaned), the same
+walk-forward protocol (`compute_fold_boundaries` from `training.py`,
+reused unmodified, `N_FOLDS=5` -> 4 evaluation folds), read-only,
+reproducible (bit-identical output across two consecutive runs against an
+unchanged database on 2026-09-11, no randomness used or seeded).
+
+**Verdict: no, not as originally characterized.** A small, sign-stable
+effect survives at the two shortest horizons; the effect is not usable at
+the scale or in the shape Finding 8 anticipated, for three compounding
+reasons below.
+
+**Universe and coverage.** All 208 modelling-universe symbols
+(`ingestion_state='ok'`, `fails_liquidity_filter=0`,
+`below_minimum_history=0`) have enough stored history (>=127 sessions) to
+produce at least one valid signal/target pair at the longest horizon
+tested (63 sessions) — no evaluation-side exclusions were needed beyond
+the universe filters already in place.
+
+**Effective breadth barely moved (task 7.4).** ρ̄, recomputed directly on
+the 208-symbol universe's own daily log returns (203 symbols with
+sufficient shared history to measure pairwise correlation): **0.310**
+(min −0.12, max 0.91) — materially lower than the 15-ticker figure of
+**0.411** measured in Finding 7. That drop did not translate into the
+breadth gain Finding 8 anticipated, though: effective breadth
+(`n / (1 + (n-1)ρ̄)`) is **3.2 of 203 nominal symbols**, against **2.2 of
+15** on the original universe. Nominal breadth grew ~13.5x (15 -> 203);
+effective breadth grew only ~1.5x (2.2 -> 3.2). Whatever market-wide
+factor dominates HOSE names swallows almost all of the nominal
+diversification a 208-symbol universe appears to offer.
+
+**Per-horizon results** (pooled and per-fold; same 4-fold walk-forward
+structure as Finding 1/4's tables):
+
+| horizon (sessions) | pooled corr | corr sign-stable? | pooled decile spread | spread sign-stable? |
+| --- | --- | --- | --- | --- |
+| 5 | +0.0302 | yes (4/4 folds +) | +0.0058 | yes (4/4 folds +) |
+| 10 | +0.0439 | yes (4/4 folds +) | +0.0129 | yes (4/4 folds +) |
+| 21 | +0.0044 | **no** (2/4 folds negative) | +0.0077 | yes (4/4 folds +, barely) |
+| 63 | +0.0040 | **no** (2/4 folds negative, incl. most recent) | +0.0115 | **no** (most recent fold −0.0101) |
+
+Per-fold correlation, chronological (fold 0 earliest):
+
+| horizon | fold 0 | fold 1 | fold 2 | fold 3 |
+| --- | --- | --- | --- | --- |
+| 5 | +0.0305 | +0.0379 | +0.0247 | +0.0224 |
+| 10 | +0.0415 | +0.0644 | +0.0408 | +0.0136 |
+| 21 | +0.0190 | −0.0004 | −0.0122 | +0.0159 |
+| 63 | +0.0444 | +0.0029 | −0.0017 | −0.0311 |
+
+**This reverses Finding 4's shape, not just its scale.** The original
+15-ticker measurement grew *with* horizon — weakest at 5 sessions,
+strongest at 63 (+0.025 -> +0.056). At 208 symbols it is the opposite: the
+short horizons (5, 10) are the ones with a small, sign-stable positive
+effect; the long horizons (21, 63) — where the original measurement
+looked strongest, and which motivated "it needs a much larger universe to
+exploit" — are the ones that fail to replicate, going sign-unstable in
+both correlation and, at 63 sessions, decile spread too.
+
+**Why "no" rather than a qualified yes at 5/10 sessions.** Three
+compounding reasons, matching the multiple-comparisons and breadth risks
+design.md's Risks section named in advance of running this:
+1. Of 8 cells (4 horizons x 2 metrics), only 4 — the 5- and 10-session
+   correlation and decile-spread cells — are both positive and
+   sign-stable. Four-of-eight is not the ratio a real, broad-based effect
+   should produce, and is within reach of chance alone across this many
+   noisy measurements.
+2. Even the surviving cells are economically tiny once effective breadth
+   is applied: IC ≈ 0.03-0.04 with effective breadth ≈ 3.2 gives an
+   information ratio (IC x sqrt(breadth)) of roughly 0.05-0.07 — far below
+   what a usable cross-sectional strategy needs, and nowhere near
+   "exploitable," the word Finding 8 used based on nominal breadth alone.
+3. The 63-session horizon, which the original 15-ticker figure (+0.056)
+   made the strongest case for pursuing at scale, is the one result here
+   with both metrics sign-unstable and its most recent fold negative on
+   both — the opposite of what Finding 8's extrapolation implied.
+
+**What this confirms/updates about `docs/MODEL_CARD.md` (task 7.3).**
+Nothing already published in `MODEL_CARD.md` is contradicted — it does not
+report cross-sectional momentum. This finding forecloses one candidate
+follow-up to that card (a cross-sectional ranking feature built on
+Finding 4's 15-ticker figures, per Finding 8's "becomes exploitable"
+framing) rather than revising anything already there.
+
+**If the 5/10-session result were pursued anyway** (task 7.2) — stating
+its caveats up front, not implied away: a ranking/screening surface does
+not exist today and would need to be built from scratch; portfolio
+construction guidance (position sizing, rebalancing cadence, transaction
+costs, all against an effective breadth of ~3 independent bets rather than
+208 nominal names) is entirely unaddressed by this evaluation; and
+holdings data is not collected anywhere in this system. None of this is a
+recommendation to build any of it — it is what a later, separate proposal
+would have to answer before doing so, per this change's explicit
+out-of-scope list.
+
+**Reproducing this finding**: `backend/scripts/evaluate_cross_sectional_momentum.py`,
+read-only against `backend/data/app.db`, no writes, no randomness, no
+touch of `backend/data/models/pooled_xgb_model.json`. Verified to
+reproduce bit-identical output across two consecutive runs against an
+unchanged database on 2026-09-11.
+
 ---
 
 ## Consequences for the non-negotiable domain rules
@@ -454,6 +564,12 @@ Preserving these as a durable script under `backend/scripts/` (alongside
 `screen_ticker_volatility.py`) is worth doing before any of the options
 above is actioned, so the baseline is reproducible rather than
 remembered. — **Done**, see the top of this section.
+
+**Finding 9** (cross-sectional momentum at scale) is reproducible via
+`backend/scripts/evaluate_cross_sectional_momentum.py`, preserved from the
+start rather than ad hoc, per the same discipline this section documents
+for the earlier findings. Read-only; verified bit-identical across two
+consecutive runs on 2026-09-11.
 
 **Status**: open, undecided. Nothing here has been implemented. The
 directional model as shipped is unchanged and still serving predictions.

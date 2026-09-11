@@ -77,6 +77,16 @@ context: |
     [x] M6 - AI insight panel — delivered as part of M5 above, not as a
         separate milestone. Confidence/Sentiment/Advice/disclaimer are
         real (rules 3-6 in effect), not the stubbed contract below.
+    [x] Post-M6 hardening - HOSE universe ingestion (shipped 2026-09-07 via
+        the hose-universe-ingestion change): point-in-time universe
+        construction (405 listed + 194 delisted HOSE stocks ingested, no
+        survivorship bias), an OHLCV quality gate (price-limit violations,
+        missed-split detection, stale-close/liquidity filtering), and
+        GET /tickers now derived from the universe instead of hard-coded to
+        TRAINING_TICKERS. 208 of 599 ingested symbols currently pass the
+        modelling-universe filters. See
+        openspec/changes/archive/2026-09-07-hose-universe-ingestion/ and
+        docs/DISCUSSION_model_direction.md for why this was undertaken.
 
   Current focus: no active milestone. Priority is hardening and polishing
   what M0-M6 already shipped, not starting M7/M8 — see Known gaps below and
@@ -84,21 +94,46 @@ context: |
   proposal through this lens first: does it improve/fix the existing
   dashboard, model, or pipeline, before considering new-milestone scope.
 
+  The single most consequential open item: the served model
+  (backend/data/models/pooled_xgb_model.json) is still the original M3
+  artifact — trained on data through 2026-07-30, on only the original 9
+  TRAINING_TICKERS — and was never retrained after the universe expansion
+  above. Its own pooled out-of-fold hit-rate (47.8%) is documented in
+  docs/MODEL_CARD.md as statistically indistinguishable from a coin flip.
+  A live consequence of this gap, measured 2026-09-11: 198 of the 208
+  tickers in the modelling universe show Confidence as N/A, because
+  compute_rolling_hit_rate has no backtest history for anything outside
+  the original 9. See docs/DISCUSSION_model_direction.md in full — it
+  found the flat-prediction result is not a tuning problem (fixing the
+  model's non-stationary features does not rescue directional accuracy at
+  any horizon from 5 to 252 sessions), that volatility forecasting works
+  well on the same data (corr ~0.48, stable across folds and tickers), and
+  that cross-sectional momentum — the one directional effect that
+  survived testing — specifically needed a universe larger than 9-15
+  tickers to be exploitable, which now exists and is as yet untested. Any
+  of that doc's five options (do nothing / fix features only / pivot to
+  volatility / add portfolio risk via holdings / pursue cross-sectional
+  signal) requires deciding Rule 4's definition, since Confidence as
+  currently defined cannot survive a volatility pivot unchanged. Treat
+  this as the natural next explore/propose session, not a bug to patch.
+
   Known gaps in the shipped M5/M6 surface (each already has a doc, not
   freshly discovered — fold into a proposal or explicitly defer again,
   don't rediscover):
     - Fresh/Stale is internal-consistency-only, never calendar-aware — a
-      ticker can sit unloaded for weeks and still show Fresh. See
+      ticker can sit unloaded for weeks and still show Fresh. Reframed by
+      measurement (2026-08-28): the dot is provably constant, not just
+      rarely Stale — every loaded ticker's prediction and stored history
+      move in lockstep by construction, so Stale is unreachable. Open
+      question is now "repoint it at a reference that varies (e.g. the
+      max session date across all loaded tickers), or remove it" rather
+      than "should a second signal be added." See
       docs/DISCUSSION_calendar_staleness.md (open, undecided).
     - No mechanism logs live predictions or scores them against realized
       outcomes later — Confidence (rule 4) is backtest-only, live drift is
       invisible. See docs/DISCUSSION_prediction_outcome_tracking.md (open,
       undecided; flagged as a likely prerequisite for real continuous
       retraining, whenever that's picked up).
-    - vnstock/vnai's prompt-injection auto-write (setup_agent on import) is
-      only patched inside the gitignored backend/.venv — will silently
-      regress on next fresh install/upgrade. See docs/KNOWN_ISSUES.md
-      (mitigated locally, not durably fixed).
 
   Future, deliberately not scoped yet (vague on purpose — do not start
   designing against these without a dedicated explore/propose session
