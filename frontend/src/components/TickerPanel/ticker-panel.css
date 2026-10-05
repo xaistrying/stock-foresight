@@ -54,10 +54,19 @@
   color: var(--color-negative);
 }
 
+/* Capped like the Searched list below: the Watchlist is every loaded ticker
+   (208 today), and left unbounded it pushed the chart and prediction well
+   below the fold. 14rem shows ~3 rows plus a peek of the 4th as the scroll
+   cue. The padding/negative-margin pair keeps edge chips' focus rings from
+   being clipped by the scroll container without shifting the layout. */
 .ticker-panel__chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
+  max-height: 14rem;
+  overflow-y: auto;
+  padding: var(--space-2xs);
+  margin: calc(-1 * var(--space-2xs));
 }
 
 /* --- Searched tickers (redesign-dashboard-visual-look Decision 4) ---

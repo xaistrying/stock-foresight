@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TickerPanel } from './TickerPanel'
 import * as tickersApi from '../../api/tickers'
@@ -50,11 +50,11 @@ beforeEach(() => {
 })
 
 describe('TickerPanel', () => {
-  it('renders one chip per ticker from GET /tickers, always visible', async () => {
+  it('renders one chip per loaded ticker from GET /tickers', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [
         { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
-        { ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null },
+        { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-11' },
       ],
     })
     mockFreshData()
@@ -65,11 +65,9 @@ describe('TickerPanel', () => {
     expect(screen.getByRole('button', { name: /^VIB/ })).toBeInTheDocument()
   })
 
-  it('keeps the Watchlist to the training set when the catalog is universe-sized', async () => {
-    // hose-universe-ingestion task 8.5: GET /tickers now returns the whole
-    // ingested universe. Rendering one chip per entry would put hundreds in
-    // a wrapping row; the Watchlist selects on in_training_set instead, and
-    // the rest of the universe stays reachable through search.
+  it('shows only loaded tickers in the Watchlist when the catalog is universe-sized', async () => {
+    // The Watchlist now shows loaded:true tickers only. Unloaded universe
+    // symbols (loaded:false) are reachable via search, not shown as chips.
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [
         { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
@@ -86,22 +84,25 @@ describe('TickerPanel', () => {
 
     renderPanel()
 
-    // Wait for the chip itself, not just the group — the group div renders
-    // immediately, chips only once the catalog query resolves.
+    // Only TCB (loaded:true) should appear as a chip; the 300 unloaded
+    // universe symbols should not.
     expect(await screen.findByRole('button', { name: /^TCB/ })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /^[A-Z]{2,}[0-9]*/ })).toHaveLength(1)
     expect(screen.queryByRole('button', { name: /^S000/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^S299/ })).not.toBeInTheDocument()
   })
 
-  it('shows "Not loaded" for a never-loaded catalog ticker', async () => {
+  it('unloaded tickers do not appear as Watchlist chips', async () => {
+    // Unloaded tickers are reachable only via search, not as chips.
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
     })
 
     renderPanel()
 
-    expect(await screen.findByText('Not loaded')).toBeInTheDocument()
+    // Wait for the panel to settle (no chips should appear)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByRole('button', { name: /VIB/ })).not.toBeInTheDocument()
   })
 
   it('clicking an already-loaded chip selects it directly, without a /load call', async () => {
@@ -119,28 +120,38 @@ describe('TickerPanel', () => {
     expect(loadSpy).not.toHaveBeenCalled()
   })
 
-  it('clicking an unloaded chip triggers /load and selects on success', async () => {
+  it('searching and loading a new ticker triggers /load and selects on success', async () => {
+    // Unloaded tickers are loaded via search, not via chip click.
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
+    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
 
     const { onSelectTicker } = renderPanel()
-    const chip = await screen.findByRole('button', { name: /VIB/ })
-    await userEvent.click(chip)
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    const input = screen.getByLabelText(/search ticker/i)
+    await userEvent.type(input, 'VIB')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
 
     await waitFor(() => expect(onSelectTicker).toHaveBeenCalledWith('VIB'))
   })
 
   it('shows a distinct message per load-failure status, not a generic one', async () => {
+    // Load failures are surfaced via the search flow.
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
+    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'rate_limited' })
 
     const { onSelectTicker } = renderPanel()
-    const chip = await screen.findByRole('button', { name: /VIB/ })
-    await userEvent.click(chip)
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    const input = screen.getByLabelText(/search ticker/i)
+    await userEvent.type(input, 'VIB')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
 
     expect(await screen.findByText(/try again in a moment/i)).toBeInTheDocument()
     expect(onSelectTicker).not.toHaveBeenCalled()
@@ -162,6 +173,23 @@ describe('TickerPanel', () => {
 
     expect(onSelectTicker).toHaveBeenCalledWith('TCB')
     expect(loadSpy).not.toHaveBeenCalled()
+  })
+
+  it('searching a symbol the catalog lists but has not loaded triggers /load, then selects it', async () => {
+    // Unloaded catalog entries have no chip, so search is the only way to
+    // load them — it must not treat them as already-known and skip /load.
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
+    })
+    const loadSpy = vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
+
+    const { onSelectTicker } = renderPanel()
+    const input = screen.getByLabelText(/search ticker/i)
+    await userEvent.type(input, 'VIB')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
+
+    await waitFor(() => expect(loadSpy).toHaveBeenCalledWith('VIB'))
+    await waitFor(() => expect(onSelectTicker).toHaveBeenCalledWith('VIB'))
   })
 
   it('searching a new ticker triggers /load and adds it to the selectable list on success', async () => {
@@ -253,11 +281,90 @@ describe('TickerPanel', () => {
   })
 })
 
-// redesign-dashboard-visual-look: the Watchlist (fixed set) and every
-// searched-in ticker beyond it render as two separately-labeled groups,
-// and the search input live-filters the searched-in group only (tasks.md
-// 6.1, dashboard-ui spec's "Filter narrows the searched-in list only" and
-// "Fixed Watchlist remains visible regardless of filter input" scenarios).
+// The Watchlist is a fixed-height scroll region (ticker-panel.css), so a
+// ticker selected via search could otherwise sit in an out-of-view row. The
+// selected chip scrolls itself into view. jsdom doesn't implement
+// scrollIntoView, so each test installs a spy and removes it afterwards.
+describe('TickerPanel selected-chip visibility', () => {
+  afterEach(() => {
+    delete HTMLElement.prototype.scrollIntoView
+  })
+
+  function installScrollSpy() {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: scrollIntoView,
+    })
+    return scrollIntoView
+  }
+
+  const twoTickers = {
+    tickers: [
+      { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+      { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+    ],
+  }
+
+  it('scrolls the selected chip into view, nearest edge only', async () => {
+    const scrollIntoView = installScrollSpy()
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue(twoTickers)
+    mockFreshData()
+
+    renderPanel({ selectedTicker: 'VIB' })
+    await screen.findByRole('button', { name: /^VIB/ })
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    // Called on the selected chip's own container, not on the other one.
+    const target = scrollIntoView.mock.contexts[0]
+    expect(within(target).getByRole('button', { name: /^VIB/ })).toBeInTheDocument()
+  })
+
+  it('does not scroll for a Searched-list row, only for Watchlist chips', async () => {
+    // A searched-in ticker also becomes a Watchlist chip once /tickers
+    // refetches it as loaded; only the Watchlist is a scroll region, and
+    // scrollIntoView would otherwise also scroll the page for the row.
+    const scrollIntoView = installScrollSpy()
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
+
+    // FPT is selected from the start; it only exists as a Searched row
+    // (the catalog mock never lists it) once the search-load succeeds.
+    renderPanel({ selectedTicker: 'FPT' })
+    await screen.findByRole('button', { name: /^TCB/ })
+    await userEvent.type(screen.getByLabelText(/search ticker/i), 'FPT')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
+
+    const searched = await screen.findByRole('group', { name: 'Searched tickers' })
+    expect(within(searched).getByRole('button', { name: /^FPT/ })).toBeInTheDocument()
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('does not scroll anything when no ticker is selected', async () => {
+    const scrollIntoView = installScrollSpy()
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue(twoTickers)
+    mockFreshData()
+
+    renderPanel({ selectedTicker: null })
+    await screen.findByRole('button', { name: /^VIB/ })
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+})
+
+// redesign-dashboard-visual-look: the Watchlist and every searched-in
+// ticker beyond it render as two separately-labeled groups. The search
+// input live-filters BOTH: the Watchlist is now every loaded ticker (208 in
+// the real universe), so a filter that left it untouched would make the
+// input useless as navigation. This supersedes the dashboard-ui spec's
+// "Filter narrows the searched-in list only" / "Fixed Watchlist remains
+// visible regardless of filter input" scenarios, which assumed a fixed
+// 9-ticker Watchlist.
 describe('TickerPanel Watchlist / searched-tickers split', () => {
   it('splits the Watchlist from a separately-labeled Searched tickers group', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
@@ -292,7 +399,7 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     expect(screen.queryByRole('group', { name: 'Searched tickers' })).not.toBeInTheDocument()
   })
 
-  it('filtering the search input narrows only the Searched tickers group, never the Watchlist', async () => {
+  it('filtering the search input narrows both the Searched tickers group and the Watchlist', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
@@ -315,16 +422,126 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     await userEvent.click(loadButton)
     await waitFor(() => expect(screen.getByRole('button', { name: /^ABC/ })).toBeInTheDocument())
 
-    // Filter without submitting — narrows the searched-in list only.
+    // Filter without submitting — narrows both groups.
     await userEvent.clear(input)
     await userEvent.type(input, 'FP')
 
     const searched = screen.getByRole('group', { name: 'Searched tickers' })
     expect(within(searched).getByRole('button', { name: /^FPT/ })).toBeInTheDocument()
     expect(within(searched).queryByRole('button', { name: /^ABC/ })).not.toBeInTheDocument()
-    // The fixed Watchlist is unaffected by the filter, even though "TCB"
-    // doesn't match the typed substring either.
-    expect(screen.getByRole('button', { name: /^TCB/ })).toBeInTheDocument()
+    // "TCB" doesn't contain the typed substring, so the Watchlist drops it.
+    const watchlist = screen.getByRole('group', { name: 'Watchlist' })
+    expect(within(watchlist).queryByRole('button', { name: /^TCB/ })).not.toBeInTheDocument()
+
+    // Clearing the filter brings the Watchlist back.
+    await userEvent.clear(input)
+    expect(within(watchlist).getByRole('button', { name: /^TCB/ })).toBeInTheDocument()
+  })
+
+  it('filtering keeps only the Watchlist chips whose symbol contains the typed text', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [
+        { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        { ticker: 'HPG', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+      ],
+    })
+    mockFreshData()
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    await userEvent.type(screen.getByLabelText(/search ticker/i), 'ib')
+
+    const watchlist = screen.getByRole('group', { name: 'Watchlist' })
+    expect(within(watchlist).getByRole('button', { name: /^VIB/ })).toBeInTheDocument()
+    expect(within(watchlist).queryByRole('button', { name: /^TCB/ })).not.toBeInTheDocument()
+    expect(within(watchlist).queryByRole('button', { name: /^HPG/ })).not.toBeInTheDocument()
+  })
+
+  it('explains an empty result and points at Load when the filter matches no loaded ticker', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    await userEvent.type(screen.getByLabelText(/search ticker/i), 'ZZZ')
+
+    expect(screen.getByText(/no loaded tickers match "ZZZ"/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^TCB/ })).not.toBeInTheDocument()
+  })
+
+  it('announces the combined filtered count across the Watchlist even with nothing searched in', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [
+        { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        { ticker: 'HPG', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+      ],
+    })
+    mockFreshData()
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+
+    await userEvent.type(screen.getByLabelText(/search ticker/i), 'T')
+
+    expect(await screen.findByText('1 of 3 tickers')).toBeInTheDocument()
+  })
+
+  it('does not say "no loaded tickers match" when only the Searched group has a match', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+    const input = screen.getByLabelText(/search ticker/i)
+    await userEvent.type(input, 'FPT')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
+    await screen.findByRole('group', { name: 'Searched tickers' })
+
+    // "FP" matches the searched-in FPT but nothing in the Watchlist (TCB).
+    await userEvent.type(input, 'FP')
+
+    const searched = screen.getByRole('group', { name: 'Searched tickers' })
+    expect(within(searched).getByRole('button', { name: /^FPT/ })).toBeInTheDocument()
+    expect(screen.queryByText(/no loaded tickers match/i)).not.toBeInTheDocument()
+  })
+
+  it('counts a ticker shown in both groups once in the announced total', async () => {
+    // Once /tickers refetches a searched-in ticker as loaded it appears in
+    // the Watchlist AND the Searched list; without dedupe this would read
+    // "2 of 3 tickers".
+    vi.spyOn(tickersApi, 'fetchTickers')
+      .mockResolvedValueOnce({
+        tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+      })
+      .mockResolvedValue({
+        tickers: [
+          { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+          { ticker: 'FPT', in_training_set: false, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
+        ],
+      })
+    mockFreshData()
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
+
+    renderPanel()
+    await screen.findByRole('button', { name: /^TCB/ })
+    const input = screen.getByLabelText(/search ticker/i)
+    await userEvent.type(input, 'FPT')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
+    const watchlist = await screen.findByRole('group', { name: 'Watchlist' })
+    await waitFor(() => expect(within(watchlist).getByRole('button', { name: /^FPT/ })).toBeInTheDocument())
+
+    await userEvent.type(input, 'FP')
+
+    expect(await screen.findByText('1 of 2 tickers')).toBeInTheDocument()
   })
 
   it('announces the filtered count for screen readers as the user types', async () => {
@@ -377,14 +594,18 @@ describe('TickerPanel insight prefetch', () => {
     })
   })
 
-  it('does not prefetch insight for an unloaded (not-yet-loaded) ticker', async () => {
+  it('does not prefetch insight for a ticker that is not loaded', async () => {
+    // An unloaded ticker does not appear as a chip, so it is never selected
+    // and no prefetch is triggered. Verify by rendering with only an unloaded
+    // entry and asserting the insight API is not called.
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
     })
     const insightSpy = vi.spyOn(tickersApi, 'fetchTickerInsight')
 
     renderPanel()
-    await screen.findByRole('button', { name: /VIB/ })
+    // Allow any async work to settle
+    await new Promise((r) => setTimeout(r, 50))
 
     expect(insightSpy).not.toHaveBeenCalled()
   })
@@ -519,11 +740,10 @@ describe('TickerPanel refresh action', () => {
     })
   })
 
-  it('shows a relative last-loaded time for a loaded ticker, and none for a never-loaded one', async () => {
+  it('shows a relative last-loaded time for a loaded ticker', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [
         { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: new Date().toISOString() },
-        { ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null },
       ],
     })
     mockFreshData()
@@ -531,6 +751,5 @@ describe('TickerPanel refresh action', () => {
     renderPanel()
 
     expect(await screen.findByText(/^Loaded /)).toBeInTheDocument()
-    expect(screen.getByText('Not loaded')).toBeInTheDocument()
   })
 })

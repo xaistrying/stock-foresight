@@ -82,3 +82,13 @@ export function loadTicker(ticker) {
 export function backtestTicker(ticker) {
   return post(`/tickers/${encodeURIComponent(ticker)}/backtest`)
 }
+
+/**
+ * POST /tickers/{ticker}/debate
+ * Runs the multi-agent debate analysis for a loaded ticker.
+ * Returns a DebateResult with verdict, agreement_level, round1, round2, synthesis.
+ * @returns {Promise<import('./types').DebateResult>}
+ */
+export function runDebateAnalysis(ticker) {
+  return post(`/tickers/${encodeURIComponent(ticker)}/debate`)
+}

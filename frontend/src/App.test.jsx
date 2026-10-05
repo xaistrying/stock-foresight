@@ -65,6 +65,44 @@ describe('App (dashboard assembly)', () => {
     expect(screen.getAllByText('N/A').length).toBeGreaterThan(0)
   })
 
+  it('names the selected ticker in a heading above the panels, and says so when none is selected', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'ok',
+      predicted_log_return: 0.02,
+    })
+    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
+      ticker: 'TCB',
+      as_of: '2026-08-10',
+      status: 'ok',
+      confidence_score: 0.75,
+      confidence_basis: '60-prediction backtested hit-rate.',
+      sentiment_proxy: 'bullish',
+      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
+      advice_text: 'up',
+      note: null,
+    })
+
+    renderApp()
+
+    // Always rendered (same layout-stability rule as the panels' own
+    // placeholders), so selecting a ticker never shifts the page.
+    expect(await screen.findByRole('heading', { name: 'No ticker selected' })).toBeInTheDocument()
+
+    await userEvent.click(await screen.findByRole('button', { name: /^TCB/ }))
+
+    expect(await screen.findByRole('heading', { name: 'TCB' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'No ticker selected' })).not.toBeInTheDocument()
+  })
+
   it('selecting a ticker replaces the dash placeholders with per-panel states', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
@@ -148,11 +186,13 @@ describe('App (dashboard assembly)', () => {
     expect(screen.queryByText(/select a ticker to see its chart/i)).not.toBeInTheDocument()
   })
 
-  it('clicking an unloaded chip loads it, then auto-predicts without a manual refresh or separate action', async () => {
+  it('searching and loading an unloaded ticker auto-predicts without a manual refresh or separate action', async () => {
+    // Unloaded tickers are now reached via search (not chip click).
+    // Once loaded via search, prediction/insight should fire automatically.
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
     })
-    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
+    const loadSpy = vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'VIB',
       rows: [{ date: '2026-08-10', open: 20, high: 21, low: 19, close: 20.5, volume: 200 }],
@@ -177,11 +217,17 @@ describe('App (dashboard assembly)', () => {
 
     renderApp()
 
-    const chip = await screen.findByRole('button', { name: /VIB/ })
-    await userEvent.click(chip)
+    // Load via search — same end state as the old chip-click flow.
+    const input = await screen.findByLabelText(/search ticker/i)
+    await userEvent.type(input, 'VIB')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
 
-    // No separate user action requests the prediction/insight — clicking
-    // the unloaded chip alone is enough for both to fetch and render.
+    // The catalog lists VIB as unloaded, so search must actually call /load
+    // — selecting it without loading would still fire the prediction query.
+    await waitFor(() => expect(loadSpy).toHaveBeenCalledWith('VIB'))
+
+    // No separate user action requests the prediction/insight — loading
+    // via search alone is enough for both to fetch and render.
     await waitFor(() => expect(predictionSpy).toHaveBeenCalledWith('VIB'))
     await waitFor(() => expect(insightSpy).toHaveBeenCalledWith('VIB'))
     expect(await screen.findByText('N/A')).toBeInTheDocument()

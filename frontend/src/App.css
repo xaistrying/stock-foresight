@@ -17,6 +17,24 @@
   align-items: start;
 }
 
+/* Spans both columns; the negative bottom margin offsets part of the grid
+   gap so the heading sits closer to the panels it names than to the ticker
+   panel above. */
+.app-shell__ticker {
+  grid-column: 1 / -1;
+  margin: 0 0 calc(-1 * var(--space-sm));
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+.app-shell__ticker[data-empty] {
+  font-weight: 500;
+  color: var(--color-ink-3);
+}
+
 .app-shell__side {
   display: flex;
   flex-direction: column;

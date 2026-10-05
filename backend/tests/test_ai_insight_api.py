@@ -286,3 +286,16 @@ def test_sentiment_names_only_the_indicators_it_actually_used(client):
     assert body["advice_text"] is None
     assert body["sentiment_inputs"] == ["MACD", "Ichimoku position"]
     assert body["sentiment_proxy"] is not None
+
+
+def test_insight_response_has_deprecated_field_and_header(client):
+    """9.4: GET /insight returns deprecated:true in body and Deprecation header."""
+    test_client, db_path = client
+    seed_features_row(db_path, "VIB", "2024-01-05", near_gap=0)
+    seed_ohlcv_rows(db_path, "VIB", [10.0 + 0.1 * i for i in range(70)])
+
+    response = test_client.get("/tickers/VIB/insight")
+
+    assert response.status_code == 200
+    assert response.json().get("deprecated") is True
+    assert response.headers.get("deprecation") == "true"

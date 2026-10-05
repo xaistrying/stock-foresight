@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.db.connection import get_connection
 from app.ml.training import FEATURE_COLUMNS
+from app.ml.volatility import predict_volatility_range
 
 router = APIRouter()
 
@@ -59,18 +60,15 @@ def get_prediction(ticker: str, request: Request):
             "ticker": ticker,
             "as_of": row["date"],
             "status": "near_gap",
+            "volatility_range_pct": predict_volatility_range(ticker),
         }
 
     if any(row[column] is None for column in FEATURE_COLUMNS):
-        # A hard-flag blackout (ohlcv-quality-gate spec, tasks.md 4.7/5.4)
-        # can null indicator columns on a row whose near_gap is still 0 —
-        # near_gap describes calendar gaps, not price discontinuities, so
-        # it is checked separately here rather than folded into it. Never
-        # serve a prediction computed from missing feature values.
         return {
             "ticker": ticker,
             "as_of": row["date"],
             "status": "indicators_unavailable",
+            "volatility_range_pct": predict_volatility_range(ticker),
         }
 
     feature_matrix = pd.DataFrame([{col: row[col] for col in FEATURE_COLUMNS}])
@@ -82,4 +80,6 @@ def get_prediction(ticker: str, request: Request):
         "as_of": row["date"],
         "status": "ok",
         "predicted_log_return": predicted_log_return,
+        "deprecated": True,  # directional prediction retired; use POST /debate
+        "volatility_range_pct": predict_volatility_range(ticker),
     }

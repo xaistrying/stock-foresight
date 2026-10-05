@@ -9,29 +9,18 @@ import { TickerSearch } from './TickerSearch'
 import './ticker-panel.css'
 
 /**
- * Ticker panel (tasks.md section 7): the 9 TRAINING_TICKERS chips, always
- * visible, plus a search box that resolves and loads any real ticker
- * (dashboard-ui spec: "Ticker panel shows the fixed set plus search for
- * any real ticker"). Selecting a ticker (chip or search) is reported via
- * `onSelectTicker` for the rest of the dashboard (chart/prediction/insight
- * panels, task 11) to consume.
+ * Ticker panel: loaded tickers as the Watchlist chips, plus a search box
+ * that resolves and loads any real ticker from the 208-symbol universe.
+ * Selecting a ticker (chip or search) is reported via `onSelectTicker` for
+ * the rest of the dashboard to consume.
  *
- * redesign-dashboard-visual-look Decision 4/5: the fixed 9 tickers render
- * as the "Watchlist" group, unchanged in behavior. Every other,
- * searched-in ticker renders in a separate "Searched tickers" group — a
- * scrollable list rather than a wrapping chip row, since this list has no
- * bound on how many entries a session can accumulate. `TickerSearch`'s
- * input live-filters this second group only (`filterValue`); the
- * Watchlist is never affected by it.
+ * Watchlist now shows every ticker that has been loaded (loaded: true)
+ * rather than only the original 9 TRAINING_TICKERS. This makes all 208
+ * modelling-universe tickers accessible as chips once loaded, matching
+ * the multi-agent debate panel's broader ticker coverage.
  *
- * hose-universe-ingestion task 8.5: `GET /tickers` now returns the whole
- * ingested universe rather than the nine training tickers, so the
- * Watchlist selects on each entry's `in_training_set` flag instead of
- * rendering every catalog entry. Without that filter this group would grow
- * to hundreds of chips in a wrapping row — the same unbounded-list problem
- * Decision 4 moved searched tickers out for. The full catalog still feeds
- * `knownTickers`, so searching a universe symbol resolves it instead of
- * re-loading it.
+ * Tickers not yet loaded are reachable via the search box, which resolves
+ * against the full catalog and loads on demand.
  */
 export function TickerPanel({ selectedTicker, onSelectTicker }) {
   const { data, isLoading, isError } = useTickers()
@@ -40,18 +29,34 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
   const [filterValue, setFilterValue] = useState('')
 
   const catalogTickers = data?.tickers ?? []
-  // The catalog is now the whole ingested universe (hundreds of symbols),
-  // not the nine it used to be. The Watchlist keeps its meaning — the set
-  // the model was actually trained and backtested on — by rendering only
-  // the entries the backend flags as such, rather than one chip per
-  // universe member. Everything else in the catalog is reachable through
-  // search, which is what the rest of the universe is for.
-  const watchlistTickers = catalogTickers.filter((entry) => entry.in_training_set)
-  const knownTickers = [...catalogTickers.map((entry) => entry.ticker), ...searchedTickers]
+  // Show every ticker that has been loaded as a Watchlist chip.
+  // Unloaded universe symbols are reachable via search.
+  const watchlistTickers = catalogTickers.filter((entry) => entry.loaded)
+  // "Known" = already loaded, i.e. selectable without a /load. A catalog
+  // entry that hasn't been loaded has no chip, so search is the only way to
+  // load it; counting it as known made search select it without loading.
+  const knownTickers = [...watchlistTickers.map((entry) => entry.ticker), ...searchedTickers]
 
-  const visibleSearchedTickers = filterValue.trim()
-    ? searchedTickers.filter((ticker) => ticker.toLowerCase().includes(filterValue.trim().toLowerCase()))
-    : searchedTickers
+  // The search input live-filters BOTH groups: the Watchlist is every loaded
+  // ticker (208 in the real universe), so leaving it unfiltered made the
+  // input useless for finding one.
+  const query = filterValue.trim().toLowerCase()
+  const matchesFilter = (symbol) => !query || symbol.toLowerCase().includes(query)
+  const visibleWatchlistTickers = watchlistTickers.filter((entry) => matchesFilter(entry.ticker))
+  const visibleSearchedTickers = searchedTickers.filter(matchesFilter)
+
+  // A searched-in ticker also appears in the Watchlist once /tickers
+  // refetches it as loaded, so counts are over unique symbols.
+  const totalSymbols = new Set([...watchlistTickers.map((entry) => entry.ticker), ...searchedTickers])
+  const visibleSymbols = new Set([
+    ...visibleWatchlistTickers.map((entry) => entry.ticker),
+    ...visibleSearchedTickers,
+  ])
+  const liveRegionText = query
+    ? `${visibleSymbols.size} of ${totalSymbols.size} tickers`
+    : searchedTickers.length > 0
+      ? `${searchedTickers.length} searched ${searchedTickers.length === 1 ? 'ticker' : 'tickers'}`
+      : ''
 
   // Search-triggered loads target an arbitrary, not-yet-known symbol, so
   // they can't go through a ticker-scoped useLoadTicker() hook instance
@@ -95,10 +100,9 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
         </p>
       )}
 
-      {/* Watchlist — the fixed 9 TRAINING_TICKERS, always visible
-          regardless of the search input's filter state (dashboard-ui
-          spec: "Fixed Watchlist remains visible regardless of filter
-          input"). */}
+      {/* Watchlist — every loaded ticker as a chip. Unloaded tickers
+          are reachable via the search box. The chip count grows as
+          more tickers are loaded across sessions. */}
       <div className="ticker-panel__chips" role="group" aria-label="Watchlist">
         {isLoading && (
           <>
@@ -107,7 +111,7 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
             <span className="ticker-chip ticker-chip--skeleton" aria-hidden="true" />
           </>
         )}
-        {watchlistTickers.map((entry) => (
+        {visibleWatchlistTickers.map((entry) => (
           <TickerChip
             key={entry.ticker}
             ticker={entry.ticker}
@@ -116,6 +120,14 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
             onSelect={onSelectTicker}
           />
         ))}
+        {/* Reuses the searched list's empty-state style. Only when both
+            groups are empty, so a match in "Searched tickers" never gets a
+            contradictory "no matches" line above it. */}
+        {query && !isLoading && visibleSymbols.size === 0 && (
+          <p className="ticker-panel__searched-empty">
+            No loaded tickers match "{filterValue.trim()}" — press Load to fetch it.
+          </p>
+        )}
       </div>
 
       {/* Searched tickers — every symbol searched-and-loaded beyond the
@@ -142,17 +154,17 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
               <p className="ticker-panel__searched-empty">No searched tickers match "{filterValue.trim()}".</p>
             )}
           </div>
-          {/* Announces the filtered count to screen readers — the visible
-              row count changing as the user types would otherwise be
-              silent (dashboard-ui spec: "Filter narrows the searched-in
-              list only"). */}
-          <p className="ticker-panel__sr-only" aria-live="polite">
-            {filterValue.trim()
-              ? `${visibleSearchedTickers.length} of ${searchedTickers.length} tickers`
-              : `${searchedTickers.length} searched ${searchedTickers.length === 1 ? 'ticker' : 'tickers'}`}
-          </p>
         </div>
       )}
+
+      {/* Announces the filtered count to screen readers — the visible chip
+          count changing as the user types would otherwise be silent. Always
+          mounted (even when empty) so a polite live region exists before
+          its first update, and so it covers the Watchlist when nothing has
+          been searched in yet. */}
+      <p className="ticker-panel__sr-only" aria-live="polite">
+        {liveRegionText}
+      </p>
 
       {/* Freshness legend (post-ship revision) — chips show a color dot
           instead of a "Fresh"/"Stale"/"Loading" text label; this spells out

@@ -78,6 +78,8 @@ def test_prediction_endpoint_returns_ok_for_clean_latest_row(client):
     assert "confidence_score" not in body
     assert "sentiment_proxy" not in body
     assert "advice_text" not in body
+    # 9.3: volatility_range_pct field present (may be None if model not trained)
+    assert "volatility_range_pct" in body
 
 
 def test_prediction_endpoint_returns_404_when_ticker_never_loaded(client, monkeypatch):

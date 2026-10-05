@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { FRESHNESS, useTickerFreshness } from '../../hooks/useTickerFreshness'
 import { useTickerInsight } from '../../hooks/useTickerInsight'
 import { describeLoadStatus, useLoadTicker, useIsTickerLoading } from '../../hooks/useLoadTicker'
@@ -57,6 +57,17 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
   const loadMutation = useLoadTicker(ticker)
   const isTickerLoading = useIsTickerLoading(ticker)
   const wasRefreshRef = useRef(false)
+  const rootRef = useRef(null)
+
+  // The Watchlist is a fixed-height scroll region, so a ticker selected
+  // from elsewhere (search) can sit in an out-of-view row. 'nearest' makes
+  // this a no-op when the chip is already visible (the normal click case).
+  // Watchlist chips only: a searched-in ticker also has a row in the
+  // Searched list, and scrollIntoView would scroll the page for that
+  // duplicate too. Optional call: jsdom has no scrollIntoView.
+  useEffect(() => {
+    if (isSelected && variant === 'chip') rootRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [isSelected, variant])
 
   const { freshness } = useTickerFreshness(ticker, {
     enabled: isLoaded && !featuresFailed,
@@ -150,6 +161,7 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
 
   return (
     <div
+      ref={rootRef}
       className="ticker-chip"
       data-variant={variant}
       data-selected={isSelected || undefined}

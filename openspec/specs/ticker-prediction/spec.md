@@ -163,3 +163,14 @@ Sentiment SHALL still be reported, as neither reads the model's output.
   whose most recent `features` row has null indicator columns
 - **THEN** the response carries `advice_text: null` with a note naming the
   reason, alongside the ticker's Confidence and Sentiment values
+
+### Requirement: Prediction endpoint returns volatility range in addition to model output
+`GET /tickers/{ticker}/prediction` SHALL include a `volatility_range_pct` field in its response — the HAR-RV predicted ±% range for the next 5 trading sessions (Rule 1, Rule 2: shown as percentage, not log return). The existing `predicted_log_return` field is retained for backwards compatibility but marked `deprecated: true` in the response. The endpoint MUST NOT remove `predicted_log_return` in this change.
+
+#### Scenario: Prediction response includes volatility range
+- **WHEN** `GET /tickers/{ticker}/prediction` is called for a loaded ticker with sufficient history
+- **THEN** response includes `volatility_range_pct: <float>` alongside the existing fields
+
+#### Scenario: Insufficient history for volatility range
+- **WHEN** the ticker has fewer than 60 OHLCV sessions
+- **THEN** `volatility_range_pct: null` is returned; `predicted_log_return` is still returned as before

@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.api.predictions import get_features_computed, get_latest_features_row
 from app.db.connection import get_connection
@@ -159,6 +160,12 @@ def get_insight(ticker: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Ticker has not been loaded")
 
+    # Deprecation headers — this endpoint is superseded by POST /tickers/{ticker}/debate
+    _DEPRECATION_HEADERS = {
+        "Deprecation": "true",
+        "Link": '</tickers/{ticker}/debate>; rel="successor-version"',
+    }
+
     confidence_score = compute_rolling_hit_rate(ticker)
     confidence_basis = (
         f"{ROLLING_HIT_RATE_WINDOW}-prediction backtested hit-rate."
@@ -169,41 +176,40 @@ def get_insight(ticker: str, request: Request):
 
     if row["near_gap"]:
         sentiment_proxy, sentiment_inputs = _compute_sentiment(row)
-        return {
-            "ticker": ticker,
-            "as_of": row["date"],
-            "status": "near_gap",
-            "confidence_score": confidence_score,
-            "confidence_basis": confidence_basis,
-            "sentiment_proxy": sentiment_proxy,
-            "sentiment_inputs": sentiment_inputs,
-            "advice_text": None,
-            "note": "A data gap prevents a current prediction, so Advice is unavailable.",
-        }
+        return JSONResponse(
+            content={
+                "ticker": ticker,
+                "as_of": row["date"],
+                "status": "near_gap",
+                "confidence_score": confidence_score,
+                "confidence_basis": confidence_basis,
+                "sentiment_proxy": sentiment_proxy,
+                "sentiment_inputs": sentiment_inputs,
+                "advice_text": None,
+                "note": "A data gap prevents a current prediction, so Advice is unavailable.",
+                "deprecated": True,
+            },
+            headers=_DEPRECATION_HEADERS,
+        )
 
     if any(row[column] is None for column in FEATURE_COLUMNS):
-        # Same gap as the prediction endpoint's (ohlcv-quality-gate spec,
-        # tasks.md 5.4/5.9): a hard-flag blackout nulls indicator columns
-        # without setting `near_gap`. Advice is derived from the model's
-        # output, so serving it here would mean Rule 3 wording computed from
-        # missing values. Confidence still reports — it reads
-        # `backtest_predictions`, not this row — while Sentiment comes back
-        # None from `_compute_sentiment`, because the very columns it reads
-        # are the ones that are null (Rule 5: the proxy must name a real
-        # technical basis, and here there is none).
         sentiment_proxy, sentiment_inputs = _compute_sentiment(row)
-        return {
-            "ticker": ticker,
-            "as_of": row["date"],
-            "status": "indicators_unavailable",
-            "confidence_score": confidence_score,
-            "confidence_basis": confidence_basis,
-            "sentiment_proxy": sentiment_proxy,
-            "sentiment_inputs": sentiment_inputs,
-            "advice_text": None,
-            "note": "A data-quality flag on recent sessions prevents a current "
-            "prediction, so Advice is unavailable.",
-        }
+        return JSONResponse(
+            content={
+                "ticker": ticker,
+                "as_of": row["date"],
+                "status": "indicators_unavailable",
+                "confidence_score": confidence_score,
+                "confidence_basis": confidence_basis,
+                "sentiment_proxy": sentiment_proxy,
+                "sentiment_inputs": sentiment_inputs,
+                "advice_text": None,
+                "note": "A data-quality flag on recent sessions prevents a current "
+                "prediction, so Advice is unavailable.",
+                "deprecated": True,
+            },
+            headers=_DEPRECATION_HEADERS,
+        )
 
     feature_matrix = pd.DataFrame([{col: row[col] for col in FEATURE_COLUMNS}])
     model: xgb.Booster = request.app.state.model
@@ -215,14 +221,18 @@ def get_insight(ticker: str, request: Request):
         predicted_log_return, recent, _load_hard_flagged(ticker)
     )
 
-    return {
-        "ticker": ticker,
-        "as_of": row["date"],
-        "status": "ok",
-        "confidence_score": confidence_score,
-        "confidence_basis": confidence_basis,
-        "sentiment_proxy": sentiment_proxy,
-        "sentiment_inputs": sentiment_inputs,
-        "advice_text": advice_text,
-        "note": None,
-    }
+    return JSONResponse(
+        content={
+            "ticker": ticker,
+            "as_of": row["date"],
+            "status": "ok",
+            "confidence_score": confidence_score,
+            "confidence_basis": confidence_basis,
+            "sentiment_proxy": sentiment_proxy,
+            "sentiment_inputs": sentiment_inputs,
+            "advice_text": advice_text,
+            "note": None,
+            "deprecated": True,
+        },
+        headers=_DEPRECATION_HEADERS,
+    )

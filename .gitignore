@@ -1,3 +1,11 @@
 # PIDs/logs written by `make up` / `make down` (see Makefile) — runtime
 # artifacts, not source.
 .run/
+
+# Debate analysis reports — user-local, not committed.
+reports/*.md
+
+# Backend secrets — never commit the real .env, only .env.example
+backend/.env
+
+.playwright-mcp
