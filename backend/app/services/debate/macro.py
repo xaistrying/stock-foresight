@@ -8,7 +8,8 @@ Signals:
 2. Ticker's own 20-session return relative to VN-Index (no sector index is
    available, so this is not a sector comparison)
 3. USD/VND 5-session change
-4. Market-wide foreign net buy/sell value, latest session (summed over 30 large caps)
+4. Market-wide foreign net buy/sell value, latest session (summed over 30 large caps);
+   counted in the stance vote only once the board has settled after the close
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from app.vnstock_guard import install as _install_vnstock_guard
 
@@ -31,6 +32,7 @@ from app.db.connection import get_connection
 from app.services.bulk_ingestion import _is_rate_limit_exit  # one definition of vnai's exit
 from app.services.debate.engine import AgentPosition, Stance
 from app.services.debate.llm_client import LLMClient
+from app.services.debate.news_feeds import ICT
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,29 @@ FOREIGN_FLOW_SAMPLE = (
 # Rule 3's 0.5: set from judgement, not backtested.
 FOREIGN_FLOW_RATIO_THRESHOLD = 0.10
 
+# HOSE trades Mon-Fri 09:00-14:45 Vietnam time (matching, then ATC), with
+# put-through until 15:00. Until the board settles its foreign values are
+# cumulative-so-far and still moving: the same market read -9.2% of foreign
+# turnover at 13:35, -18.4% at 14:48 and -24.5% from 15:12 on (identical at 15:12,
+# 15:16, 15:17, 15:19 and 15:20, all Vietnam time) — enough to flip a verdict across
+# the 10% threshold. So until then the figure informs the reasoning but does not
+# vote. Where it settles inside 15:00-15:12 was not measured, so the margin runs to
+# 15:15. Exchange holidays are not known here: on a weekday holiday this treats
+# 09:00-15:15 as settling, which only withholds the vote from a final figure — the
+# safe direction.
+FOREIGN_FLOW_OPEN = time(9, 0)
+FOREIGN_FLOW_SETTLED = time(15, 15)
+
+
+def _foreign_flow_is_settling(now: datetime | None = None) -> bool:
+    """True from the open until the board has settled after the close (see above).
+    `now` must be timezone-aware: a naive value would be read in the server's own
+    zone, which is not Vietnam's."""
+    if now is not None and now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now = (now or datetime.now(ICT)).astimezone(ICT)
+    return now.weekday() < 5 and FOREIGN_FLOW_OPEN <= now.time() < FOREIGN_FLOW_SETTLED
+
 
 def _board_column(board: pd.DataFrame, name: str) -> pd.Series | None:
     """A price-board column by leaf name (VCI's columns are ('match', name))."""
@@ -231,6 +256,8 @@ You are a macro analysis assistant for Vietnamese stocks. Given these computed
 macro signals, produce 3-4 plain-language bullet points (each starting with "- ")
 explaining the macro environment. Translate the numbers into readable insights.
 Do NOT add any macro context beyond the provided values.
+A signal marked "not counted in the stance vote" is provisional: mention it as
+context, but do not infer a direction from it.
 
 Ticker: {ticker}
 Overall macro stance: {stance}
@@ -254,6 +281,9 @@ class MacroAgent:
 
         # The market-data fetches are blocking network calls: off the event loop
         # (they froze the whole server for seconds per debate), and in parallel.
+        # Read the clock BEFORE the fetches: each can take up to 20 s, and a board
+        # read just before the settle time must not be labelled settled.
+        settling = _foreign_flow_is_settling()
         vnindex, usdvnd, flow = await asyncio.gather(
             _bounded(_get_vnindex_closes, 22),
             _bounded(_get_usd_vnd_change, 5),
@@ -287,16 +317,22 @@ class MacroAgent:
         else:
             signals["usdvnd_change"] = "unavailable"
 
-        # Signal 4: market-wide foreign flow (latest session)
+        # Signal 4: market-wide foreign flow (latest session). Mid-session it is a
+        # partial, moving figure: shown for context, but only a final one votes.
         if flow is not None:
             net, gross = flow
             share = net / gross if gross else 0.0
-            signals["foreign_flow"] = (
-                f"{net / 1e9:+.0f}B VND net foreign out of {gross / 1e9:.0f}B gross turnover "
-                "(partial if the market is open)"
+            note = (
+                "provisional: session in progress or just closed, not counted in the stance vote"
+                if settling
+                else "latest session, final"
             )
-            threshold = FOREIGN_FLOW_RATIO_THRESHOLD
-            votes.append(1 if share > threshold else (-1 if share < -threshold else 0))
+            signals["foreign_flow"] = (
+                f"{net / 1e9:+.0f}B VND net foreign out of {gross / 1e9:.0f}B gross turnover ({note})"
+            )
+            if not settling:
+                threshold = FOREIGN_FLOW_RATIO_THRESHOLD
+                votes.append(1 if share > threshold else (-1 if share < -threshold else 0))
         else:
             signals["foreign_flow"] = "unavailable"
 
@@ -326,7 +362,9 @@ Other agents' positions:
 {other_lines}
 
 Maintain your stance unless a specific counter-argument from the other agents
-is compelling. Respond: first line = bull/bear/neutral, then 3-4 bullet points.
+is compelling. A position resting on provisional or partial data must not move it
+(and must not move yours). Respond: first line = bull/bear/neutral, then 3-4
+bullet points.
 """
         response = await self._llm.chat([
             {"role": "system", "content": "You are a disciplined macro analyst."},

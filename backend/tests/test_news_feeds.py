@@ -474,3 +474,138 @@ async def test_foreign_investor_property_and_regulation_news_is_not_market_news(
     feed = _rss(("Nhà đầu tư nước ngoài được mua nhà tại Việt Nam", _hours_ago(1), "x"))
 
     assert await _fetch({FEEDS[0]: feed}) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Loạt ngân hàng Hàn Quốc liên tiếp bị tấn công mạng",  # foreign banks
+        "Ngân hàng hạ giá rao bán 50% nhà máy nông sản liên quan bà Trương Mỹ Lan",  # one bank's asset sale
+    ],
+)
+async def test_a_bare_mention_of_a_bank_is_not_banking_sector_news(title):
+    feed = _rss((title, _hours_ago(1), "x"))
+
+    assert await _fetch({FEEDS[0]: feed}, sector="banking") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Tín dụng tăng gần 11,6% sau 9 tháng",
+        "Ngân hàng nào thêm room tín dụng khi đổi cách tính tỷ lệ cho vay trên huy động",
+        "Cổ phiếu ngân hàng dẫn dắt thị trường",
+        "Ngành ngân hàng báo lãi quý 3 tăng mạnh",
+        "Các ngân hàng đồng loạt tăng lãi suất huy động",
+        "Nợ xấu của hệ thống ngân hàng tăng nhẹ",
+    ],
+)
+async def test_real_banking_sector_news_is_still_matched(title):
+    feed = _rss((title, _hours_ago(1), "x"))
+
+    [headline] = await _fetch({FEEDS[0]: feed}, sector="banking")
+
+    assert headline.startswith("[sector]")
+
+
+@pytest.mark.asyncio
+async def test_capital_raising_stories_are_not_banking_news_just_for_the_word_huy_dong():
+    feed = _rss(("Việt Nam cần huy động 10 triệu tỷ đồng qua thị trường vốn", _hours_ago(1), "x"))
+
+    assert await _fetch({FEEDS[0]: feed}, sector="banking") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sector", ["food and beverage", "basic resources", "technology", "utilities"])
+async def test_a_story_whose_subject_is_a_bank_is_not_news_about_a_non_financial_sector(sector):
+    # "nhà máy nông sản" in a bank's asset-sale story matched food & beverage.
+    feed = _rss(("Ngân hàng hạ giá rao bán 50% nhà máy nông sản và thép", _hours_ago(1), "x"))
+
+    assert await _fetch({FEEDS[0]: feed}, sector=sector) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sector", ["real estate", "financial services", "insurance"])
+async def test_financial_sectors_keep_stories_that_mention_banks(sector):
+    keyword = {"real estate": "bất động sản", "financial services": "margin", "insurance": "bảo hiểm"}[sector]
+    feed = _rss((f"Ngân hàng siết cho vay {keyword}", _hours_ago(1), "x"))
+
+    [headline] = await _fetch({FEEDS[0]: feed}, sector=sector)
+
+    assert headline.startswith("[sector]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Techcombank, MB, ACB công bố lợi nhuận quý III",  # brand names
+        "Ngân hàng VPBank phát hành trái phiếu",
+        "Ngân hàng X báo lãi quý 3 tăng 30%",  # generic subject + earnings
+        "Ngân hàng nhỏ tăng vốn điều lệ lên 10.000 tỷ",
+    ],
+)
+async def test_peer_bank_results_and_funding_news_still_reach_a_banking_ticker(title):
+    # Dropping bare "ngân hàng" lost these; [ticker] only matches the symbol, so a
+    # "VPBank" headline would otherwise get no tag at all for VPB.
+    feed = _rss((title, _hours_ago(1), "x"))
+
+    [headline] = await _fetch({FEEDS[0]: feed}, sector="banking")
+
+    assert headline.startswith("[sector]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Các ngân hàng Hàn Quốc bị tấn công mạng",
+        "5 ngân hàng lớn ở Hàn Quốc liên tiếp bị tấn công",
+        "Cổ phiếu ngân hàng Mỹ giảm mạnh sau báo cáo lợi nhuận",
+    ],
+)
+async def test_foreign_bank_stories_are_not_banking_sector_news(title):
+    feed = _rss((title, _hours_ago(1), "x"))
+
+    assert await _fetch({FEEDS[0]: feed}, sector="banking") == []
+
+
+@pytest.mark.asyncio
+async def test_the_word_anh_does_not_make_a_vietnamese_bank_story_foreign():
+    # "Anh" (Britain) is also "anh" (brother) in Vietnamese: country names are matched
+    # case-sensitively and Britain is left out.
+    feed = _rss(("Các ngân hàng tăng lãi suất huy động, anh em nhà đầu tư chú ý", _hours_ago(1), "x"))
+
+    [headline] = await _fetch({FEEDS[0]: feed}, sector="banking")
+
+    assert headline.startswith("[sector]")
+
+
+@pytest.mark.asyncio
+async def test_world_bank_and_adb_outlooks_still_reach_non_financial_sectors():
+    feed = _rss(
+        ("Ngân hàng Thế giới dự báo giá dầu giảm trong năm tới", _hours_ago(1), "x"),
+        ("Ngân hàng Phát triển châu Á dự báo giá dầu ổn định", _hours_ago(2), "x"),
+    )
+
+    result = await _fetch({FEEDS[0]: feed}, sector="oil and gas")
+
+    assert len(result) == 2 and all(h.startswith("[sector]") for h in result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "title",
+    [
+        "BSC: PNJ, FPT và MSB có nguy cơ bị loại khỏi rổ Diamond",  # a basket story listing symbols
+        "Nhóm cổ phiếu nổi bật: ACB, VIB, SHB, OCB tăng điểm",
+    ],
+)
+async def test_a_list_of_stock_symbols_is_not_banking_sector_news(title):
+    # Short bank tickers (ACB, VIB, OCB, SHB, MSB) also appear as bare symbols in
+    # stock-list stories; only full brand names mark a story as about banks.
+    feed = _rss((title, _hours_ago(1), "x"))
+
+    assert await _fetch({FEEDS[0]: feed}, sector="banking") == []

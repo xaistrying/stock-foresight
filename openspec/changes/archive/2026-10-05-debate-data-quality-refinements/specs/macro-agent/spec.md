@@ -1,10 +1,4 @@
-# macro-agent
-
-## Purpose
-
-TBD
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Macro Agent computes quantitative macro signals from vnstock data
 The MacroAgent SHALL compute four signals entirely from vnstock API data (the 4.x `Market` API) or the existing OHLCV table — no scraping, no LLM data fetching:
@@ -22,17 +16,6 @@ Each signal maps to a partial stance contribution. The overall stance is majorit
 #### Scenario: Mixed macro signals
 - **WHEN** VN-Index is flat but market-wide foreign flow is a net outflow and USD is strengthening
 - **THEN** stance is `neutral` or `bear` depending on majority; reasoning cites which signals conflict
-
-### Requirement: Macro Agent falls back gracefully when VN-Index is not in OHLCV
-The MacroAgent SHALL check whether `VNINDEX` is present in the `ohlcv` table. If not, it SHALL fetch VN-Index data via the vnstock market API before computing the trend signal. If the fetch also fails, VN-Index trend is excluded from the stance vote and the reasoning notes its absence.
-
-#### Scenario: VNINDEX not in local OHLCV
-- **WHEN** `VNINDEX` has no rows in the `ohlcv` table
-- **THEN** the agent fetches VN-Index data via vnstock market API and proceeds normally
-
-#### Scenario: VN-Index data completely unavailable
-- **WHEN** local OHLCV has no VNINDEX rows and the vnstock API call also fails
-- **THEN** VN-Index trend is omitted from the stance calculation; stance is derived from the remaining 3 signals; reasoning notes "VN-Index data unavailable"
 
 ### Requirement: Macro Agent foreign flow is market-wide, latest-session, and degrades to unavailable
 The free vnstock API provides no foreign-flow history and no per-ticker foreign-trade series, so the MacroAgent SHALL derive signal 4 from one price-board request for the sample of large caps and describe it as market-wide, latest session. The price board's foreign values are cumulative-so-far during the session and still move after the close, so the signal SHALL be shown to the LLM at all times but SHALL cast a vote only once the board has settled: on a weekday, not before 15:15 Vietnam time (UTC+7); on a weekend the last session's figure counts. Until then it SHALL be labelled provisional ("session in progress or just closed, not counted in the stance vote"); once settled, "latest session, final". The MacroAgent SHALL read the clock before starting the fetch, and the clock value MUST be timezone-aware. When the signal is unavailable it SHALL cast no vote and the reasoning SHALL say it is unavailable; failures SHALL log a warning once per process and thereafter at debug level.
@@ -64,17 +47,6 @@ The free vnstock API provides no foreign-flow history and no per-ticker foreign-
 #### Scenario: No foreign turnover or no data
 - **WHEN** the price board has no foreign turnover (pre-open, a holiday), lacks the foreign value columns, or the request fails
 - **THEN** signal 4 is unavailable and casts no vote; a missing-column or request failure is logged
-
-### Requirement: Macro Agent market-data fetches are non-blocking and bounded
-The MacroAgent SHALL run its market-data fetches off the event loop, in parallel, each with a deadline (20 seconds); a fetch that exceeds it or fails SHALL degrade that signal to unavailable. vnai's rate limiter ends the process with `sys.exit()`; the fetchers SHALL catch that exit (as bulk ingestion does) and SHALL re-raise any other exit request.
-
-#### Scenario: Source hangs
-- **WHEN** a market-data source does not respond within the deadline
-- **THEN** that signal is unavailable and the other signals and the debate proceed
-
-#### Scenario: Rate limit exit
-- **WHEN** vnai's rate limiter calls `sys.exit()` during a fetch
-- **THEN** the fetch returns unavailable and the server keeps running
 
 ### Requirement: Macro Agent uses LLM only to translate computed signals into readable reasoning
 The MacroAgent SHALL pass the four computed signal values to an LLM with a prompt instructing it to produce plain-language bullet reasoning from those values. The LLM MUST NOT be used to fetch or independently assess macro conditions — it translates already-computed numbers into readable bullets only. The prompt MUST describe signal 2 as the ticker's own return and signal 4 as market-wide and latest-session. The prompt MUST tell the model that a signal marked "not counted in the stance vote" is provisional context and that it MUST NOT infer a direction from it, and the Round 2 prompt MUST tell the model that a position resting on provisional or partial data must not move a stance.

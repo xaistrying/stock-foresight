@@ -132,12 +132,44 @@ SECTOR_KEYWORDS = {
     "media": "truyền thông|quảng cáo|báo chí",
     "travel and leisure": "hàng không|du lịch|khách sạn|lưu trú",
     "utilities": "giá điện|điện lực|thủy điện|nhiệt điện|điện gió|điện mặt trời|năng lượng|khí đốt|nước sạch",
-    "banking": "ngân hàng|tín dụng|nợ xấu|huy động",
+    # Not bare "ngân hàng": any story about one bank matched (foreign banks hacked,
+    # one lender's asset sale), and "huy động" matched every capital-raising story.
+    "banking": (
+        "tín dụng|nợ xấu|lãi suất huy động|tiền gửi|ngành ngân hàng|nhóm ngân hàng"
+        "|cổ phiếu ngân hàng|các ngân hàng|hệ thống ngân hàng|ngân hàng thương mại"
+        "|lợi nhuận ngân hàng|ldr|nim"
+        # Peer bank names: [ticker] only matches the symbol ("VPB" never matches
+        # "VPBank"), so without these a bank's own results/funding news is untagged.
+        # Full names only: bare symbols (ACB, VIB, OCB, SHB, MSB) also turn up in stock lists.
+        "|vietcombank|vietinbank|bidv|agribank|techcombank|vpbank|mbbank|mb bank"
+        "|sacombank|tpbank|hdbank|lpbank|seabank|eximbank|abbank|nam a bank|bac a bank"
+        # A generic bank as the subject of results or capital-raising news.
+        r"|ngân hàng\s.{0,40}?(?:báo lãi|lợi nhuận|lãi quý|tăng vốn|chia cổ tức|phát hành trái phiếu)"
+    ),
     "insurance": "bảo hiểm",
     "real estate": "bất động sản|địa ốc|nhà ở|căn hộ|đất nền",
     "financial services": "công ty chứng khoán|môi giới|margin|tự doanh",
     "technology": "công nghệ|chuyển đổi số|bán dẫn|phần mềm",
 }
+
+# A story whose subject is a bank is not news about a non-financial sector, whatever
+# its collateral is ("nhà máy nông sản" in a lender's asset sale matched food &
+# beverage). Financial sectors keep them. Bank-wide macro stories ("Ngân hàng Nhà
+# nước", rates) are still tagged [market] by MARKET.
+FINANCIAL_SECTORS = frozenset({"banking", "insurance", "financial services", "real estate"})
+# ...except institutions that are not a lender in the sector's own market: the World
+# Bank/ADB (commodity and infrastructure outlooks), the State Bank and central banks
+# (policy, tagged [market]).
+BANK = re.compile(
+    r"\bngân hàng\b(?!\s+(?:thế giới|phát triển châu á|nhà nước|trung ương))", re.IGNORECASE
+)
+# Foreign banks are not banking-sector news for a Vietnamese bank. Country names are
+# case-sensitive on purpose ("Anh" the country vs "anh" the pronoun; Britain is left
+# out for that reason).
+FOREIGN_BANKS = re.compile(
+    r"(?i:\bngân hàng\b|\bnhà băng\b)[^.:;]{0,25}?"
+    r"\b(?:Mỹ|Hàn Quốc|Trung Quốc|Nhật Bản|châu Âu|Đức|Thụy Sĩ|Ấn Độ|Thái Lan|Singapore|Indonesia)\b"
+)
 
 # (published, title, snippet)
 _Item = tuple[datetime, str, str]
@@ -194,6 +226,8 @@ def _select(items: list[_Item], ticker: str, sector: str | None, now: datetime) 
     ticker_re = _ticker_pattern(ticker)
     keywords = SECTOR_KEYWORDS.get(sector or "")
     sector_re = re.compile(rf"\b(?:{keywords})\b", re.IGNORECASE) if keywords else None
+    skip_bank_stories = sector not in FINANCIAL_SECTORS
+    skip_foreign_banks = sector == "banking"
 
     buckets: dict[str, list[str]] = {"ticker": [], "sector": [], "market": []}
     index_lines: list[str] = []  # market headlines about the index, newest first
@@ -206,7 +240,12 @@ def _select(items: list[_Item], ticker: str, sector: str | None, now: datetime) 
         seen.add(title.casefold())
         if ticker_re.search(title) or ticker_re.search(snippet):
             tag = "ticker"
-        elif sector_re and sector_re.search(title):
+        elif (
+            sector_re
+            and sector_re.search(title)
+            and not (skip_bank_stories and BANK.search(title))
+            and not (skip_foreign_banks and FOREIGN_BANKS.search(title))
+        ):
             tag = "sector"
         elif MARKET.search(title):
             tag = "market"

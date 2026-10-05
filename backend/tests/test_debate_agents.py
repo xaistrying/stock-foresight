@@ -89,6 +89,7 @@ async def test_macro_agent_bull_four_bullish_signals(monkeypatch):
 
     # Foreign net buyer across the market: (net, gross) in VND, net/gross = +15%
     monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: (15_000_000_000, 100_000_000_000))
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: False)  # flow is final: it votes
 
     async def fake_chat(messages):
         return "- VN-Index trending up over 20 sessions\n- Ticker outperforming market\n- VND stable\n- Foreign buying pressure"
@@ -112,6 +113,7 @@ async def test_macro_agent_vnindex_unavailable_uses_remaining_signals(monkeypatc
     monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([]))
     monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: -0.2)   # VND stable → neutral
     monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: (-5_000_000_000, 40_000_000_000))  # net sell → bear
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: False)  # flow is final: it votes
 
     async def fake_chat(messages):
         return "- VN-Index data unavailable\n- VND stable\n- Net foreign selling"

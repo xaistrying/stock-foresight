@@ -82,11 +82,15 @@ def export_debate_report(result: DebateResult) -> Path:
     # ------------------------------------------------------------------ #
     lines.append("## Summary\n")
     lines.append(f"**Verdict**: {VERDICT_DESCRIPTIONS.get(result.verdict, result.verdict)}")
-    n_agree = sum(
-        1 for pos in result.round2.values()
-        if pos.stance == _majority_stance(result.round2)
-    ) if result.agreement_level != "split" else 0
-    lines.append(f"**Agreement**: {result.agreement_level.capitalize()} ({n_agree} of 3 agents)")
+    if result.agreement_level == "split":
+        # Three different stances: there is no group of agreeing agents to count
+        # ("Split (0 of 3 agents)" read as if nobody agreed). Same wording as the panel.
+        agreement = "Split (3 different positions)"
+    else:
+        majority = _majority_stance(result.round2)
+        n_agree = sum(1 for pos in result.round2.values() if pos.stance == majority)
+        agreement = f"{result.agreement_level.capitalize()} ({n_agree} of 3 agents)"
+    lines.append(f"**Agreement**: {agreement}")
 
     stance_row = " · ".join(
         f"{_agent_label(aid)} {_stance_icon(pos.stance)}"

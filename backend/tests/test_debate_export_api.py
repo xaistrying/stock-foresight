@@ -161,3 +161,51 @@ async def test_debate_endpoint_200_with_valid_shape(monkeypatch):
     data = resp.json()
     for key in ("verdict", "agreement_level", "round1", "round2", "synthesis"):
         assert key in data, f"Missing key: {key}"
+
+
+def _result_with(agreement_level, stances):
+    """A DebateResult whose Round 2 stances are `stances` (technical, news, macro)."""
+    from app.services.debate.engine import AgentPosition, DebateResult, SynthesisResult
+
+    r2 = {
+        agent: AgentPosition(agent, stance, [f"{agent} reasoning"])
+        for agent, stance in zip(("technical", "news", "macro"), stances)
+    }
+    return DebateResult(
+        ticker="VPB",
+        as_of="2026-10-05",
+        verdict="SPLIT" if agreement_level == "split" else "OBSERVE",
+        agreement_level=agreement_level,
+        round1=r2,
+        round2=r2,
+        synthesis=SynthesisResult("SPLIT", agreement_level, "a tension", "a summary"),
+        volatility_range_pct=1.31,
+        duration_ms=1000,
+    )
+
+
+def _agreement_line(tmp_path, monkeypatch, result):
+    from app.services.debate import export as export_mod
+
+    monkeypatch.setattr(export_mod, "REPORTS_DIR", tmp_path)
+    content = export_mod.export_debate_report(result).read_text()
+    return next(line for line in content.splitlines() if line.startswith("**Agreement**"))
+
+
+def test_split_agreement_names_the_three_positions_not_zero_agreeing_agents(tmp_path, monkeypatch):
+    # "Split (0 of 3 agents)" read as if nobody agreed with the verdict; the panel
+    # already says "Split — 3 different positions".
+    line = _agreement_line(tmp_path, monkeypatch, _result_with("split", ("bull", "neutral", "bear")))
+
+    assert line == "**Agreement**: Split (3 different positions)"
+
+
+@pytest.mark.parametrize(
+    "level, stances, expected",
+    [
+        ("majority", ("bear", "neutral", "bear"), "**Agreement**: Majority (2 of 3 agents)"),
+        ("unanimous", ("neutral", "neutral", "neutral"), "**Agreement**: Unanimous (3 of 3 agents)"),
+    ],
+)
+def test_other_agreement_levels_still_count_the_agreeing_agents(tmp_path, monkeypatch, level, stances, expected):
+    assert _agreement_line(tmp_path, monkeypatch, _result_with(level, stances)) == expected

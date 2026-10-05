@@ -346,7 +346,8 @@ def test_foreign_flow_swallows_vnais_rate_limit_exit(monkeypatch):
     assert macro_mod._get_market_foreign_flow() is None
 
 
-async def _macro_prompt(monkeypatch, flow):
+async def _macro_prompt(monkeypatch, flow, *, in_session=False):
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: in_session)
     monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: None)
     monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([], dtype="float64"))
     monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: None)
@@ -391,11 +392,10 @@ async def test_unavailable_foreign_flow_casts_no_vote(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_foreign_flow_signal_shows_its_scale_and_that_it_may_be_partial(monkeypatch):
+async def test_a_closed_session_foreign_flow_shows_its_scale_and_is_marked_final(monkeypatch):
     _, prompt = await _macro_prompt(monkeypatch, (-90.6e9, 637.6e9))
 
-    assert "-91B VND net foreign out of 638B gross turnover" in prompt
-    assert "partial if the market is open" in prompt
+    assert "-91B VND net foreign out of 638B gross turnover (latest session, final)" in prompt
 
 
 @pytest.mark.asyncio
@@ -425,3 +425,102 @@ async def test_a_market_data_source_that_hangs_cannot_stall_the_agent(monkeypatc
 
     assert time.monotonic() - started < 0.8  # not the 1 s the fetch takes
     assert "VN-Index 20-session trend: unavailable" in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_foreign_flow_during_the_session_is_shown_but_casts_no_vote(monkeypatch):
+    # -15% of foreign turnover would vote bearish, but mid-session the figure keeps
+    # moving: the same debate re-run an hour later flipped a verdict (-9.2% at
+    # 14:35, -18.4% at 15:48, -24.5% at the close). Partial data is context, not a vote.
+    position, prompt = await _macro_prompt(monkeypatch, (-90e9, 600e9), in_session=True)
+
+    assert position.stance == "neutral"  # no other signal votes in this scenario
+    assert "-90B VND net foreign out of 600B gross turnover" in prompt
+    assert "session in progress" in prompt and "not counted in the stance vote" in prompt
+
+
+@pytest.mark.asyncio
+async def test_the_same_flow_votes_once_the_session_has_closed(monkeypatch):
+    position, _ = await _macro_prompt(monkeypatch, (-90e9, 600e9), in_session=False)
+
+    assert position.stance == "bear"
+
+
+@pytest.mark.parametrize(
+    "when, expected",
+    [
+        ("2026-10-05T09:00:00+07:00", True),   # Monday, opening
+        ("2026-10-05T14:59:00+07:00", True),   # Monday, last minute of the session
+        ("2026-10-05T15:00:00+07:00", True),   # closed, but the board is still settling
+        ("2026-10-05T15:14:00+07:00", True),
+        ("2026-10-05T15:15:00+07:00", False),  # settled: stable at 15:12-15:20 when measured
+        ("2026-10-05T08:59:00+07:00", False),  # before the open: the board holds the last final session
+        ("2026-10-05T03:00:00+00:00", True),   # 10:00 in Vietnam, given in UTC
+        ("2026-10-03T11:00:00+07:00", False),  # Saturday
+        ("2026-10-04T11:00:00+07:00", False),  # Sunday
+    ],
+)
+def test_foreign_flow_is_settling_follows_weekday_trading_hours_in_vietnam_time(when, expected):
+    from datetime import datetime
+
+    assert macro_mod._foreign_flow_is_settling(datetime.fromisoformat(when)) is expected
+
+
+def test_a_naive_datetime_is_rejected_rather_than_read_in_the_servers_own_timezone():
+    from datetime import datetime
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        macro_mod._foreign_flow_is_settling(datetime(2026, 10, 5, 10, 0))
+
+
+@pytest.mark.asyncio
+async def test_the_clock_is_read_before_the_fetch_not_after(monkeypatch):
+    # A fetch can take up to 20 s: a board read at 14:59:50 must not be labelled
+    # settled because the clock was checked at 15:15:05 afterwards.
+    order = []
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: order.append("clock") or True)
+
+    def fetch():
+        order.append("fetch")
+        return (-90e9, 600e9)
+
+    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", fetch)
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: None)
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: None)
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([], dtype="float64"))
+    agent = macro_mod.MacroAgent()
+
+    async def llm_stub(messages):
+        return "- stub"
+
+    monkeypatch.setattr(agent._llm, "chat", llm_stub)
+
+    await agent.run("SAB")
+
+    assert order == ["clock", "fetch"]
+
+
+def test_the_reasoning_prompt_forbids_inferring_a_direction_from_a_provisional_signal():
+    # The withheld vote only binds the stance; the LLM's bullets feed Round 2 and
+    # the verdict, so it must not lean on a signal marked "not counted" either.
+    assert "not counted in the stance vote" in macro_mod._REASONING_PROMPT
+    assert "do not infer a direction" in macro_mod._REASONING_PROMPT.lower()
+
+
+@pytest.mark.asyncio
+async def test_the_round_two_prompt_says_provisional_data_must_not_move_the_stance(monkeypatch):
+    from app.services.debate.engine import AgentPosition
+
+    agent = macro_mod.MacroAgent()
+    seen = []
+
+    async def llm_stub(messages):
+        seen.append(messages[-1]["content"])
+        return "neutral\n- stub"
+
+    monkeypatch.setattr(agent._llm, "chat", llm_stub)
+    round1 = {a: AgentPosition(a, "neutral", ["x"]) for a in ("technical", "news", "macro")}
+
+    await agent.respond("SAB", round1)
+
+    assert "provisional" in seen[0].lower() and "not" in seen[0].lower()

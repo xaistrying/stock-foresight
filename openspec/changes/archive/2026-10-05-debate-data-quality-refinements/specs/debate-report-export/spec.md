@@ -1,21 +1,4 @@
-# debate-report-export
-
-## Purpose
-
-TBD
-
-## Requirements
-
-### Requirement: Export service writes a structured markdown file per analysis
-The export service SHALL write `reports/YYYY-MM-DD_<TICKER>.md` at the repo root after every completed debate. If a report for the same ticker and date already exists, it SHALL be overwritten (re-running the analysis on the same day replaces the previous result). The file uses the schema defined in design.md Decision 10.
-
-#### Scenario: Successful export
-- **WHEN** a `DebateResult` is returned by the debate engine
-- **THEN** a file is written at `reports/<date>_<ticker>.md` with Summary, Agent Positions table, Key Tension, and Full Debate sections
-
-#### Scenario: Re-analysis on same day
-- **WHEN** `POST /tickers/{ticker}/debate` is called twice on the same calendar day for the same ticker
-- **THEN** the second result overwrites the first `.md` file; the backend returns the new result
+## MODIFIED Requirements
 
 ### Requirement: Markdown export structure is NotebookLM-optimised
 The exported `.md` file SHALL use the following structure so that NotebookLM can answer both summary-level and detail-level queries from the same document. The Agreement line counts the agents holding the majority stance, except for a three-way split, where it reads `Split (3 different positions)`:
@@ -77,10 +60,3 @@ The exported `.md` file SHALL use the following structure so that NotebookLM can
 #### Scenario: Majority and unanimous count the agreeing agents
 - **WHEN** the agreement level is `majority` or `unanimous`
 - **THEN** the Agreement line reads `Majority (2 of 3 agents)` or `Unanimous (3 of 3 agents)` respectively
-
-### Requirement: Disclaimer appears at the bottom of every exported report (Rule 6)
-Every exported `.md` file SHALL end with the disclaimer line: `*Technical observation — not investment advice. See docs/DISCLAIMER.md.*` (Rule 6). This line MUST be present regardless of verdict.
-
-#### Scenario: Disclaimer in export
-- **WHEN** any `.md` report is generated
-- **THEN** the last non-empty line is the disclaimer, unconditionally
