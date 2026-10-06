@@ -14,6 +14,7 @@ Rule 2: volatility_range_pct is a percentage, never a raw log return.
 from __future__ import annotations
 
 import logging
+import re
 
 from app.api.predictions import get_latest_features_row
 from app.ml.volatility import predict_volatility_range
@@ -199,11 +200,7 @@ bull, bear, or neutral. Then list your updated reasoning bullets.
                 {"role": "system", "content": "You are a concise technical analysis assistant."},
                 {"role": "user", "content": prompt},
             ])
-            bullets = [
-                line.strip().lstrip("- ").strip()
-                for line in response.splitlines()
-                if line.strip().startswith("-")
-            ]
+            bullets = _extract_bullets(response)
             if bullets:
                 return bullets[:5]
         except Exception as exc:
@@ -211,17 +208,52 @@ bull, bear, or neutral. Then list your updated reasoning bullets.
         return _FALLBACK_REASONING
 
 
-def _parse_stance_and_bullets(response: str, fallback: AgentPosition | None) -> tuple[Stance, list[str]]:
-    """Parse LLM response: first word is stance, rest are bullet lines."""
-    lines = [l.strip() for l in response.strip().splitlines() if l.strip()]
-    stance: Stance = "neutral"
-    if lines:
-        first = lines[0].lower().strip(".,:")
-        if first in ("bull", "bear", "neutral"):
-            stance = first  # type: ignore[assignment]
-            lines = lines[1:]
+_BULLET = re.compile(r"^[-*•]\s+(.*)$")  # marker + whitespace: "-2.5%" is not a bullet
+# A line that STARTS with the stance word, tolerating markdown, a "Stance:" label
+# (even "Stance (Round 2):"), "bullish"/"bearish", and a trailing annotation after a
+# separator ("Bear — shifting because ...", "bear (shifted from bull)"). A sentence
+# such as "Bear market weighs on ..." is not a stance line.
+_STANCE_LINE = re.compile(
+    r"^[\W_]*(?:(?:my|final|updated)\s+)*(?:stance(?:\s*\([^)]*\))?[\W_]*)?"
+    r"(bull|bear|neutral)(?:ish)?(?![A-Za-z])(?=[\W_]*$|\s*[—–:(,;.\-])",
+    re.IGNORECASE,
+)
+_STANCE_SCAN_LINES = 3  # the stance may follow a short preamble or heading
 
-    bullets = [l.lstrip("- ").strip() for l in lines if l.startswith("-")]
+
+def _extract_bullets(text: str) -> list[str]:
+    """Bullet lines with ONE leading marker removed (never `lstrip`, which would
+    eat the minus of a bullet that starts with a negative number)."""
+    matches = (_BULLET.match(raw.strip()) for raw in text.splitlines())
+    return [m.group(1).strip() for m in matches if m and re.search(r"\w", m.group(1))]
+
+
+def _parse_stance_and_bullets(response: str, fallback: AgentPosition | None) -> tuple[Stance, list[str]]:
+    """Parse LLM response: a stance line near the top, then bullet lines.
+
+    An unrecognised stance keeps the agent's Round 1 stance (`fallback`), or
+    neutral when there is none, and is logged: a formatting slip must not
+    silently flip a stance toward OBSERVE. A blank response raises, so the
+    caller's own error handling runs instead of a silent "success".
+    """
+    lines = [l.strip() for l in response.strip().splitlines() if l.strip()]
+    if not lines:
+        raise ValueError("empty LLM response")
+
+    stance: Stance = fallback.stance if fallback else "neutral"
+    found = False
+    for index, line in enumerate(lines[:_STANCE_SCAN_LINES]):
+        if _BULLET.match(line):
+            break  # past the header: "- Bear case: ..." is reasoning, not the stance
+        match = _STANCE_LINE.match(line)
+        if match:
+            stance, found = match.group(1).lower(), True  # type: ignore[assignment]
+            lines = lines[index + 1:]
+            break
+    if not found:
+        logger.warning("Unrecognised stance line, keeping %s: %.80r", stance, lines[0])
+
+    bullets = _extract_bullets("\n".join(lines))
     if not bullets:
         bullets = [l for l in lines[:5] if l]
     if not bullets and fallback:

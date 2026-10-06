@@ -391,11 +391,8 @@ bullet points.
                 {"role": "system", "content": "You are a concise macro analysis assistant."},
                 {"role": "user", "content": prompt},
             ])
-            bullets = [
-                line.strip().lstrip("- ").strip()
-                for line in response.splitlines()
-                if line.strip().startswith("-")
-            ]
+            from app.services.debate.technical import _extract_bullets
+            bullets = _extract_bullets(response)
             if bullets:
                 return bullets[:4]
         except Exception as exc:

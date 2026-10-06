@@ -200,7 +200,7 @@ async def test_synthesiser_degrades_instead_of_crashing_when_the_llm_is_down(mon
         "macro": AgentPosition(agent_id="macro", stance="bear", reasoning=["x"]),
     }
 
-    result = await synth.run(round2, round2)
+    result = await synth.run("VCB", round2, round2)
 
     assert result.verdict == "SPLIT"
     assert result.key_tension == "Unable to generate key tension analysis."
@@ -231,12 +231,22 @@ async def test_engine_all_agents_succeed(monkeypatch):
 
     engine._technical.run = fake_run
     engine._technical.respond = fake_respond
-    engine._news.run = lambda t: AgentPosition(agent_id="news", stance="bull", reasoning=["Good news"])
-    engine._news.respond = lambda t, r: AgentPosition(agent_id="news", stance="bull", reasoning=["Held"])
-    engine._macro.run = lambda t: AgentPosition(agent_id="macro", stance="neutral", reasoning=["Mixed macro"])
-    engine._macro.respond = lambda t, r: AgentPosition(agent_id="macro", stance="neutral", reasoning=["Held"])
+    async def news_run(t):
+        return AgentPosition(agent_id="news", stance="bull", reasoning=["Good news"])
 
-    async def fake_synth_run(r1, r2):
+    async def news_respond(t, r):
+        return AgentPosition(agent_id="news", stance="bull", reasoning=["Held"])
+
+    async def macro_run(t):
+        return AgentPosition(agent_id="macro", stance="neutral", reasoning=["Mixed macro"])
+
+    async def macro_respond(t, r):
+        return AgentPosition(agent_id="macro", stance="neutral", reasoning=["Held"])
+
+    engine._news.run, engine._news.respond = news_run, news_respond
+    engine._macro.run, engine._macro.respond = macro_run, macro_respond
+
+    async def fake_synth_run(ticker, r1, r2):
         from app.services.debate.engine import SynthesisResult
         return SynthesisResult(
             verdict="BUY_SIGNAL",
@@ -254,6 +264,10 @@ async def test_engine_all_agents_succeed(monkeypatch):
     assert "technical" in result.round1
     assert "news" in result.round2
     assert result.duration_ms >= 0
+    # Every agent really ran both rounds (a fake that raised would show as neutral/"unavailable").
+    assert result.round1["news"].reasoning == ["Good news"]
+    assert result.round2["news"].reasoning == ["Held"]
+    assert result.round2["macro"].reasoning == ["Held"]
 
 
 @pytest.mark.asyncio
@@ -268,12 +282,22 @@ async def test_engine_one_agent_fails_debate_proceeds(monkeypatch):
 
     engine._news.run = failing_run
     engine._news.respond = failing_run
-    engine._technical.run = lambda t: AgentPosition("technical", "bear", ["RSI low"])
-    engine._technical.respond = lambda t, r: AgentPosition("technical", "bear", ["Held"])
-    engine._macro.run = lambda t: AgentPosition("macro", "bear", ["Macro weak"])
-    engine._macro.respond = lambda t, r: AgentPosition("macro", "bear", ["Held"])
+    async def tech_run(t):
+        return AgentPosition("technical", "bear", ["RSI low"])
 
-    async def fake_synth(r1, r2):
+    async def tech_respond(t, r):
+        return AgentPosition("technical", "bear", ["Held"])
+
+    async def macro_run(t):
+        return AgentPosition("macro", "bear", ["Macro weak"])
+
+    async def macro_respond(t, r):
+        return AgentPosition("macro", "bear", ["Held"])
+
+    engine._technical.run, engine._technical.respond = tech_run, tech_respond
+    engine._macro.run, engine._macro.respond = macro_run, macro_respond
+
+    async def fake_synth(ticker, r1, r2):
         from app.services.debate.engine import SynthesisResult
         return SynthesisResult("CAUTION_SIGNAL", "majority", "Tension.", "Bear majority.")
 
@@ -284,3 +308,178 @@ async def test_engine_one_agent_fails_debate_proceeds(monkeypatch):
     # News agent fell back to neutral
     assert result.round1["news"].stance == "neutral"
     assert "Agent unavailable" in result.round1["news"].reasoning[0]
+    assert result.round2["news"].stance == "neutral"
+    assert result.round2["technical"].reasoning == ["Held"]
+    assert result.round2["macro"].stance == "bear"
+
+
+# ===========================================================================
+# Response parsing, synthesis context, Round 2 fallback
+# ===========================================================================
+
+@pytest.mark.parametrize("first_line", [
+    "bull", "Bull.", "**bull**", "Stance: bull", "**Final stance:** bull", "_bull_", "Bullish",
+])
+def test_parse_stance_accepts_common_llm_formats(first_line):
+    from app.services.debate.technical import _parse_stance_and_bullets
+
+    stance, bullets = _parse_stance_and_bullets(f"{first_line}\n- RSI is 60", None)
+
+    assert stance == "bull"
+    assert bullets == ["RSI is 60"]
+
+
+def test_parse_stance_unrecognised_keeps_round1_stance_not_neutral():
+    from app.services.debate.engine import AgentPosition
+    from app.services.debate.technical import _parse_stance_and_bullets
+
+    r1 = AgentPosition(agent_id="technical", stance="bull", reasoning=["r1"])
+
+    stance, _ = _parse_stance_and_bullets("I think things look fine.\n- point", r1)
+
+    assert stance == "bull"
+    assert _parse_stance_and_bullets("no stance here\n- point", None)[0] == "neutral"
+
+
+def test_parse_bullets_keeps_negative_sign_and_other_markers():
+    from app.services.debate.technical import _parse_stance_and_bullets
+
+    _, bullets = _parse_stance_and_bullets("bear\n- -2.5% vs VN-Index\n* star bullet\n• dot bullet", None)
+
+    assert bullets == ["-2.5% vs VN-Index", "star bullet", "dot bullet"]
+
+
+@pytest.mark.asyncio
+async def test_technical_reasoning_keeps_negative_sign(monkeypatch):
+    from app.services.debate.technical import TechnicalAgent
+
+    agent = TechnicalAgent()
+
+    async def fake_chat(messages):
+        return "- -0.15 MACD histogram"
+
+    monkeypatch.setattr(agent._llm, "chat", fake_chat)
+
+    out = await agent._generate_reasoning("VCB", "2026-10-05", "bear", {"macd_histogram": -0.15}, 1.0)
+
+    assert out == ["-0.15 MACD histogram"]
+
+
+@pytest.mark.asyncio
+async def test_macro_reasoning_keeps_negative_sign(monkeypatch):
+    from app.services.debate.macro import MacroAgent
+
+    agent = MacroAgent()
+
+    async def fake_chat(messages):
+        return "- -0.8% relative to VN-Index"
+
+    monkeypatch.setattr(agent._llm, "chat", fake_chat)
+
+    out = await agent._generate_reasoning("VCB", "bear", {})
+
+    assert out == ["-0.8% relative to VN-Index"]
+
+
+@pytest.mark.asyncio
+async def test_synthesiser_prompts_carry_ticker_and_every_bullet(monkeypatch):
+    from app.services.debate.engine import AgentPosition
+    from app.services.debate.synthesiser import Synthesiser
+
+    synth = Synthesiser()
+    prompts: list[str] = []
+
+    async def capture(messages):
+        prompts.append(messages[-1]["content"])
+        return "ok"
+
+    monkeypatch.setattr(synth._llm, "chat", capture)
+    bullets = [f"bullet {i}" for i in range(5)]
+    round2 = {
+        a: AgentPosition(agent_id=a, stance="bear", reasoning=bullets)
+        for a in ("technical", "news", "macro")
+    }
+
+    await synth.run("VPB", round2, round2)
+
+    assert len(prompts) == 2
+    for prompt in prompts:
+        assert "VPB" in prompt and "unknown" not in prompt
+        assert "bullet 4" in prompt  # the 5th bullet used to be dropped
+
+
+@pytest.mark.asyncio
+async def test_engine_round2_failure_keeps_round1_stance():
+    from app.services.debate.engine import AgentPosition, DebateEngine, SynthesisResult
+
+    engine = DebateEngine()
+
+    async def r1_bull(ticker):
+        return AgentPosition("technical", "bull", ["RSI high"], volatility_range_pct=1.2)
+
+    async def r2_boom(ticker, round1):
+        raise RuntimeError("llm timeout")
+
+    async def neutral(ticker, *a):
+        return AgentPosition("x", "neutral", ["n"])
+
+    engine._technical.run = r1_bull
+    engine._technical.respond = r2_boom
+    engine._news.run = engine._news.respond = neutral
+    engine._macro.run = engine._macro.respond = neutral
+
+    async def synth(ticker, r1, r2):
+        return SynthesisResult("OBSERVE", "majority", "t", "r")
+
+    engine._synthesiser.run = synth
+
+    result = await engine.run("VCB")
+
+    assert result.round2["technical"].stance == "bull"
+    assert result.round2["technical"].reasoning[0] == "RSI high"
+    assert "Round 2 unavailable" in result.round2["technical"].reasoning[-1]
+
+
+@pytest.mark.parametrize("response", [
+    "Bear — shifting because macro is weak\n- a",
+    "bear (shifted from bull)\n- a",
+    "Stance (Round 2): bear\n- a",
+    "My stance: bear\n- a",
+    "Here is my update:\nbear\n- a",
+    "```\nbear\n```\n- a",
+    "## Final Stance\nbear\n- a",
+])
+def test_parse_stance_honours_a_deliberate_shift_when_annotated(response):
+    from app.services.debate.engine import AgentPosition
+    from app.services.debate.technical import _parse_stance_and_bullets
+
+    r1 = AgentPosition(agent_id="technical", stance="bull", reasoning=["r1"])
+
+    stance, bullets = _parse_stance_and_bullets(response, r1)
+
+    assert stance == "bear"
+    assert bullets == ["a"]
+
+
+def test_parse_stance_does_not_read_a_sentence_or_bullet_as_the_stance():
+    from app.services.debate.engine import AgentPosition
+    from app.services.debate.technical import _parse_stance_and_bullets
+
+    r1 = AgentPosition(agent_id="technical", stance="bull", reasoning=["r1"])
+
+    assert _parse_stance_and_bullets("Bear market weighs on the index.\n- a", r1)[0] == "bull"
+    assert _parse_stance_and_bullets("- Bear case: weak RSI", r1)[0] == "bull"
+    assert _parse_stance_and_bullets("bullion prices are up", None)[0] == "neutral"
+
+
+def test_parse_blank_response_raises_so_the_caller_falls_back():
+    from app.services.debate.technical import _parse_stance_and_bullets
+
+    with pytest.raises(ValueError):
+        _parse_stance_and_bullets("  \n ", None)
+
+
+def test_extract_bullets_ignores_markdown_rules():
+    from app.services.debate.technical import _extract_bullets
+
+    assert _extract_bullets("- - -\n* * *\n- real") == ["real"]

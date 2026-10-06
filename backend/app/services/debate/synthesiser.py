@@ -87,21 +87,30 @@ Macro: {macro_stance} — {macro_reasoning}
 """
 
 
+def _agent_fields(round2: dict[str, AgentPosition]) -> dict[str, str]:
+    """Prompt placeholders for every agent's Round 2 stance and ALL its bullets
+    (slicing to the first two once dropped the signal that decided a vote)."""
+    fields: dict[str, str] = {}
+    for key, agent_id in (("tech", "technical"), ("news", "news"), ("macro", "macro")):
+        pos = round2.get(agent_id)
+        fields[f"{key}_stance"] = pos.stance if pos else "N/A"
+        fields[f"{key}_reasoning"] = "; ".join(pos.reasoning) if pos else "N/A"
+    return fields
+
+
 class Synthesiser:
     def __init__(self) -> None:
         self._llm = LLMClient()
 
     async def run(
         self,
+        ticker: str,
         round1: dict[str, AgentPosition],
         round2: dict[str, AgentPosition],
     ) -> SynthesisResult:
         # Use Round 2 stances for verdict
         r2_stances = [round2[a].stance for a in ("technical", "news", "macro")]
         verdict, agreement_level = _map_verdict(r2_stances)
-
-        # Ticker from round1 technical agent if available
-        ticker = "unknown"
 
         key_tension = await self._generate_key_tension(ticker, verdict, agreement_level, round2)
         synthesis_reasoning = await self._generate_synthesis_reasoning(
@@ -122,18 +131,9 @@ class Synthesiser:
         agreement_level: AgreementLevel,
         round2: dict[str, AgentPosition],
     ) -> str:
-        tech = round2.get("technical")
-        news = round2.get("news")
-        macro = round2.get("macro")
-
         prompt = _TENSION_PROMPT.format(
             ticker=ticker,
-            tech_stance=tech.stance if tech else "N/A",
-            tech_reasoning="; ".join(tech.reasoning[:2]) if tech else "N/A",
-            news_stance=news.stance if news else "N/A",
-            news_reasoning="; ".join(news.reasoning[:2]) if news else "N/A",
-            macro_stance=macro.stance if macro else "N/A",
-            macro_reasoning="; ".join(macro.reasoning[:2]) if macro else "N/A",
+            **_agent_fields(round2),
             verdict=verdict,
             agreement_level=agreement_level,
         )
@@ -152,19 +152,10 @@ class Synthesiser:
         verdict: Verdict,
         round2: dict[str, AgentPosition],
     ) -> str:
-        tech = round2.get("technical")
-        news = round2.get("news")
-        macro = round2.get("macro")
-
         prompt = _SYNTHESIS_SUMMARY_PROMPT.format(
             ticker=ticker,
             verdict=verdict,
-            tech_stance=tech.stance if tech else "N/A",
-            tech_reasoning="; ".join(tech.reasoning[:2]) if tech else "N/A",
-            news_stance=news.stance if news else "N/A",
-            news_reasoning="; ".join(news.reasoning[:2]) if news else "N/A",
-            macro_stance=macro.stance if macro else "N/A",
-            macro_reasoning="; ".join(macro.reasoning[:2]) if macro else "N/A",
+            **_agent_fields(round2),
         )
         try:
             return await self._llm.chat([
@@ -173,5 +164,5 @@ class Synthesiser:
             ])
         except Exception as exc:
             logger.warning("Synthesiser reasoning LLM call failed: %s", exc)
-            r2_stances = [p.stance for p in (tech, news, macro) if p]
+            r2_stances = [p.stance for p in round2.values()]
             return f"Verdict: {verdict} ({'; '.join(r2_stances)})"

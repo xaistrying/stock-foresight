@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,8 @@ Verdict = Literal[
     "SPLIT",
 ]
 AgreementLevel = Literal["unanimous", "majority", "split"]
+
+ROUND2_UNAVAILABLE_NOTE = "Round 2 unavailable — Round 1 position kept."
 
 
 @dataclass
@@ -99,9 +101,9 @@ class DebateEngine:
         # Round 2 — each agent receives all Round 1 positions
         # ------------------------------------------------------------------
         r2_technical, r2_news, r2_macro = await asyncio.gather(
-            self._safe_run(self._technical.respond, ticker, "technical", round1),
-            self._safe_run(self._news.respond, ticker, "news", round1),
-            self._safe_run(self._macro.respond, ticker, "macro", round1),
+            self._safe_run(self._technical.respond, ticker, "technical", round1, fallback=round1["technical"]),
+            self._safe_run(self._news.respond, ticker, "news", round1, fallback=round1["news"]),
+            self._safe_run(self._macro.respond, ticker, "macro", round1, fallback=round1["macro"]),
         )
         round2 = {
             "technical": r2_technical,
@@ -112,7 +114,7 @@ class DebateEngine:
         # ------------------------------------------------------------------
         # Synthesis
         # ------------------------------------------------------------------
-        synthesis = await self._synthesiser.run(round1, round2)
+        synthesis = await self._synthesiser.run(ticker, round1, round2)
 
         duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -133,12 +135,18 @@ class DebateEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _safe_run(fn, ticker: str, agent_id: str, *args) -> AgentPosition:
-        """Run an agent coroutine; return a neutral fallback on any exception."""
+    async def _safe_run(
+        fn, ticker: str, agent_id: str, *args, fallback: AgentPosition | None = None
+    ) -> AgentPosition:
+        """Run an agent coroutine; on any exception return `fallback` (Round 2: the
+        agent's Round 1 position, so one failed call can't flip it to neutral) or,
+        with none, a neutral "unavailable" position (Round 1)."""
         try:
             return await fn(ticker, *args)
         except Exception as exc:
             logger.warning("Agent '%s' failed: %s", agent_id, exc, exc_info=True)
+            if fallback is not None:
+                return replace(fallback, reasoning=[*fallback.reasoning, ROUND2_UNAVAILABLE_NOTE])
             return AgentPosition(
                 agent_id=agent_id,
                 stance="neutral",
