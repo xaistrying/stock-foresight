@@ -17,7 +17,12 @@ import { get, post } from './client'
  * Universe fields are null (never omitted) for a symbol the universe has no
  * value for; `features_computed` and `last_loaded_at` are null when the
  * symbol has never been loaded.
- * @returns {Promise<{tickers: Array<{ticker: string, in_training_set: boolean, exchange: string|null, industry_code: string|null, listing_status: string|null, loaded: boolean, features_computed: boolean|null, last_loaded_at: string|null}>}>}
+ *
+ * `eligibility` is what `assess_eligibility` says about the symbol, computed in one batched
+ * pass for the whole catalog: `reasons` come in the server's fixed order (`delisted`,
+ * `insufficient_history`, `stale`, `near_gap`, `hard_quality_flag`, `indicators_missing`).
+ * It is null for a symbol that is not loaded, and absent from an older backend.
+ * @returns {Promise<{tickers: Array<{ticker: string, in_training_set: boolean, exchange: string|null, industry_code: string|null, listing_status: string|null, loaded: boolean, features_computed: boolean|null, last_loaded_at: string|null, eligibility?: {eligible: boolean, reasons: string[], as_of: string|null, age_sessions: number|null}|null}>}>}
  */
 export function fetchTickers() {
   return get('/tickers')

@@ -1,0 +1,294 @@
+/* The Rail: a vertical list of tickers, never a wrapping grid of tiles. Zone placement (grid
+   column, sticky position, own scroll) is in App.css; this file is the Rail's own look and its
+   three shapes: full (wide), symbols only expanding as an overlay (collapsed), a drawer (drawer). */
+.rail {
+  box-sizing: border-box;
+  overflow-x: hidden;
+  /* Re-sorting moves rows; the browser must not follow one of them and scroll the list. */
+  overflow-anchor: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--surface-200);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.rail[hidden] {
+  display: none;
+}
+
+.rail__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rail__lists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.rail__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rail__heading {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.rail__sort {
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-200);
+  color: var(--ink);
+  font: inherit;
+}
+
+.rail__message {
+  margin: 0;
+  color: var(--ink);
+}
+
+.rail__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A row's border is always 2px, transparent until selected, so selecting shifts nothing. The
+   selected row is also marked by aria-current and the inset fill: never by colour alone. */
+.rail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.rail-row[data-selected] {
+  background: var(--surface-300);
+  border-color: var(--accent);
+}
+
+.rail-row--skeleton {
+  min-height: 34px;
+  background: var(--surface-300);
+}
+
+.rail-row__select {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  min-width: 0;
+  min-height: 30px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.rail-row__select:hover {
+  background: var(--surface-300);
+}
+
+.rail-row__age {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Why the ticker cannot be analysed, in words, in the muted ink. No hue: this is not a signal. */
+.rail-row__tag {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Hidden until the row is hovered or focused, but always in the tab order (never display: none),
+   and always visible where nothing can hover. */
+.rail-row__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.rail-row:hover .rail-row__refresh,
+.rail-row:focus-within .rail-row__refresh,
+.rail-row__refresh[data-loading] {
+  opacity: 1;
+}
+
+.rail-row__refresh:disabled {
+  cursor: progress;
+}
+
+@media (hover: none) {
+  .rail-row__refresh {
+    width: 44px;
+    height: 44px;
+    opacity: 1;
+  }
+}
+
+.rail-row__message {
+  grid-column: 1 / -1;
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--ink);
+}
+
+/* Collapsed (1144 to 1439px): symbols only, expanding as an overlay over the Stage on hover, on
+   keyboard focus inside it, or when pinned open by the toggle. The overlay is not modal. */
+.rail__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rail__chevron {
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentcolor;
+  border-right: 2px solid currentcolor;
+  transform: rotate(45deg);
+}
+
+.rail[data-pinned] .rail__chevron {
+  transform: rotate(225deg);
+}
+
+.rail[data-mode='collapsed'] {
+  z-index: 25;
+  width: var(--rail-w-min);
+  padding: var(--space-1);
+  overflow-x: hidden;
+  /* Symbols only, and a scrollbar would take a quarter of the 56px: it scrolls without one. */
+  scrollbar-width: none;
+}
+
+.rail[data-mode='collapsed'] .rail-row__select {
+  padding-inline: var(--space-1);
+}
+
+.rail[data-mode='collapsed'] .rail__header,
+.rail[data-mode='collapsed'] .rail__message,
+.rail[data-mode='collapsed'] .rail-row__age,
+.rail[data-mode='collapsed'] .rail-row__tag,
+.rail[data-mode='collapsed'] .rail-row__message {
+  display: none;
+}
+
+.rail[data-mode='collapsed'] .rail-row__refresh {
+  width: 0;
+  overflow: hidden;
+}
+
+.rail[data-mode='collapsed']:hover,
+.rail[data-mode='collapsed']:focus-within,
+.rail[data-mode='collapsed'][data-pinned] {
+  width: var(--rail-w);
+  padding: var(--space-3);
+  scrollbar-width: auto;
+}
+
+.rail[data-mode='collapsed']:hover .rail-row__select,
+.rail[data-mode='collapsed']:focus-within .rail-row__select,
+.rail[data-mode='collapsed'][data-pinned] .rail-row__select {
+  padding-inline: var(--space-2);
+}
+
+.rail[data-mode='collapsed']:hover .rail__header,
+.rail[data-mode='collapsed']:focus-within .rail__header,
+.rail[data-mode='collapsed'][data-pinned] .rail__header {
+  display: flex;
+}
+
+.rail[data-mode='collapsed']:hover .rail__message,
+.rail[data-mode='collapsed']:focus-within .rail__message,
+.rail[data-mode='collapsed'][data-pinned] .rail__message,
+.rail[data-mode='collapsed']:hover .rail-row__message,
+.rail[data-mode='collapsed']:focus-within .rail-row__message,
+.rail[data-mode='collapsed'][data-pinned] .rail-row__message {
+  display: block;
+}
+
+.rail[data-mode='collapsed']:hover .rail-row__age,
+.rail[data-mode='collapsed']:focus-within .rail-row__age,
+.rail[data-mode='collapsed'][data-pinned] .rail-row__age {
+  display: block;
+}
+
+.rail[data-mode='collapsed']:hover .rail-row__tag,
+.rail[data-mode='collapsed']:focus-within .rail-row__tag,
+.rail[data-mode='collapsed'][data-pinned] .rail-row__tag {
+  display: inline-block;
+}
+
+.rail[data-mode='collapsed']:hover .rail-row__refresh,
+.rail[data-mode='collapsed']:focus-within .rail-row__refresh,
+.rail[data-mode='collapsed'][data-pinned] .rail-row__refresh {
+  width: 28px;
+}
+
+/* Drawer (768 to 1143px): opened from the topbar. No slide animation: it appears. */
+.rail[data-mode='drawer'] {
+  position: fixed;
+  top: var(--topbar-h);
+  bottom: 0;
+  left: 0;
+  z-index: 28;
+  width: min(var(--rail-w), 85vw);
+  overflow-y: auto;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.rail-scrim {
+  position: fixed;
+  inset: var(--topbar-h) 0 0 0;
+  z-index: 27;
+  background: var(--ink);
+  opacity: 0.25;
+}

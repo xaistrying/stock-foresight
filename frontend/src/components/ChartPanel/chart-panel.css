@@ -1,16 +1,81 @@
-/* Hallmark · component: chart-panel · genre: modern-minimal (data-dense financial dashboard)
- * states: default(=loaded) · loading · error · success(=range band shown when a range is served) — see overlay states below
- * contrast: pass (46-50)
- */
+/* The chart card and its history control. Colours are the design tokens; the card is separated from
+   the page by a 1px border, never a shadow. The chart's own colours are read from the same tokens by
+   chartTheme.js and follow the theme. */
+.chart-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
 
+/* The chart history control: three toggle buttons (3M, 1Y, All), not ARIA tabs, since they control
+   no panel. Right-aligned over the card. */
+.chart-history {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.chart-history__button {
+  min-height: 28px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.chart-history__button:hover:not(:disabled) {
+  background: var(--surface-300);
+}
+
+.chart-history__button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--surface-300);
+  color: var(--ink);
+}
+
+.chart-history__button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+@media (pointer: coarse) {
+  .chart-history__button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* The card: 240px on phones, --chart-h from 768px, growing to 56vh from 1144px. */
 .chart-panel {
   position: relative;
-  min-height: 26rem;
-  height: 26rem;
-  background: var(--color-paper);
-  border: 1px solid var(--color-border);
+  box-sizing: border-box;
+  height: 240px;
+  min-width: 0;
+  background: var(--surface-200);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .chart-panel {
+    height: var(--chart-h);
+  }
+}
+
+@media (min-width: 1144px) {
+  .chart-panel {
+    height: max(var(--chart-h), 56vh);
+  }
 }
 
 .chart-panel__canvas {
@@ -18,79 +83,79 @@
   inset: 0;
 }
 
-/* Reset-zoom (post-ship revision): lightweight-charts leaves auto-fit mode
-   permanently once a user manually pans/zooms and won't self-correct, so
-   this restores the fitted view on demand. Sized to the 44x44 minimum
-   touch target even though the icon itself is small. */
+/* Reset zoom: lightweight-charts leaves auto-fit mode permanently once a user pans or zooms and will
+   not self-correct, so this restores the active window on demand. Its glyph (four corner brackets) is
+   not the circular arrow Refresh uses. 44px target on touch. */
 .chart-panel__reset-zoom {
   position: absolute;
-  top: var(--space-sm);
-  right: var(--space-sm);
-  /* lightweight-charts' own internal canvases (e.g. the price-scale
-     overlay) set z-index: 2 on themselves — this must clear that or the
-     button becomes visually present but unclickable, intercepted by the
-     canvas underneath it despite being painted behind it. */
+  top: var(--space-2);
+  /* Left of the price scale, so it never covers an axis label. */
+  right: calc(82px + var(--space-2));
+  /* lightweight-charts' own internal canvases set z-index: 2 on themselves; this must clear that or
+     the button is painted but unclickable. */
   z-index: 3;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  color: var(--color-ink-2);
-  background: color-mix(in oklch, var(--color-paper) 85%, transparent);
-  border: 1px solid var(--color-border);
+  width: 32px;
+  height: 32px;
+  color: var(--ink-muted);
+  background: var(--surface-200);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
     color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
+    background-color var(--dur-fast) var(--ease-out);
 }
 
 .chart-panel__reset-zoom:hover {
-  color: var(--color-accent);
-  border-color: var(--color-accent-border);
-  background: var(--color-paper);
+  color: var(--ink);
+  background: var(--surface-300);
 }
 
-.chart-panel__reset-zoom:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.chart-panel__reset-zoom:active {
-  transform: translateY(1px);
-}
-
-@media (prefers-reduced-motion: reduce) {
+@media (pointer: coarse) {
   .chart-panel__reset-zoom {
-    transition: none;
+    width: 44px;
+    height: 44px;
   }
 }
 
-/* OHLCV legend (add-chart-ohlcv-legend) — fixed to the top-left corner,
-   mirroring .chart-panel__reset-zoom's own absolute-positioning/z-index
-   technique (lightweight-charts' own internal canvases paint at
-   z-index: 2, so this must clear that to render above them). Content
-   updates in place via the crosshair handler; the element itself never
-   moves — a legend, not a cursor-following tooltip. aria-hidden: it
-   duplicates data already on the canvas (which has no accessible
-   alternative of its own today, a separate pre-existing gap) and is
-   driven by mouse-only crosshair movement a screen-reader user can't
-   trigger (design.md Decision 5). */
+/* OHLCV legend, fixed to the top-left corner. Its values are in the primary ink (text needs 4.5:1,
+   and the candle colours only reach 3:1 as marks); the swatch beside them carries the session's
+   direction in the candle colour. aria-hidden: it repeats what the canvas shows and is driven by a
+   mouse-only crosshair a screen-reader user cannot trigger; the chart section has its own text
+   alternative. */
 .chart-panel__legend {
   position: absolute;
-  top: var(--space-sm);
-  left: var(--space-sm);
+  top: var(--space-2);
+  left: var(--space-2);
   z-index: 3;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-sm);
-  padding: var(--space-2xs) var(--space-xs);
-  background: color-mix(in oklch, var(--color-paper) 85%, transparent);
+  align-items: center;
+  gap: var(--space-2);
+  /* Clear of the Reset zoom button and the price scale on a narrow card. */
+  max-width: calc(100% - 82px - 32px - 3 * var(--space-2));
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-200);
   border-radius: var(--radius-sm);
   pointer-events: none;
+}
+
+.chart-panel__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+.chart-panel__swatch[data-swatch='up'] {
+  background: var(--candle-up);
+}
+
+.chart-panel__swatch[data-swatch='down'] {
+  background: var(--candle-down);
 }
 
 .chart-panel__legend-item {
@@ -101,65 +166,55 @@
 
 .chart-panel__legend-label {
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
-  color: var(--color-ink-3);
+  color: var(--ink-muted);
 }
 
 .chart-panel__legend-value {
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: var(--color-ink-3);
-}
-
-.chart-panel__legend[data-direction='up'] .chart-panel__legend-value {
-  color: var(--color-positive);
-}
-
-.chart-panel__legend[data-direction='down'] .chart-panel__legend-value {
-  color: var(--color-negative);
-}
-
-@media (max-width: 480px) {
-  .chart-panel__legend {
-    gap: var(--space-xs);
-    font-size: var(--text-xs);
-  }
+  color: var(--ink);
 }
 
 .chart-panel__overlay {
   position: absolute;
   inset: 0;
+  /* Above lightweight-charts' own canvases (z-index: 2), or the message is painted over. */
+  z-index: 4;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-sm);
+  gap: var(--space-3);
   text-align: center;
-  padding: var(--space-xl);
-  background: color-mix(in oklch, var(--color-paper) 92%, transparent);
-  backdrop-filter: blur(1px);
+  padding: var(--space-5);
+  background: var(--surface-200);
 }
 
 .chart-panel__message {
   margin: 0;
   max-width: 26rem;
-  font-family: var(--font-body);
-  font-size: var(--text-base);
-  color: var(--color-ink-2);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--ink-muted);
 }
 
+/* A failure is named in words in the primary ink: the design has no error colour, and red would read
+   as a bearish cue. */
 .chart-panel__overlay[data-kind='error'] .chart-panel__message {
-  color: var(--color-negative);
+  color: var(--ink);
 }
 
 .chart-panel__spinner {
   width: 1.5rem;
   height: 1.5rem;
-  border: 2px solid var(--color-border-strong);
-  border-top-color: var(--color-accent);
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: chart-panel-spin 0.7s linear infinite;
 }
@@ -173,11 +228,5 @@
 @media (prefers-reduced-motion: reduce) {
   .chart-panel__spinner {
     animation-duration: 1.4s;
-  }
-}
-
-@media (max-width: 480px) {
-  .chart-panel {
-    height: 18rem;
   }
 }

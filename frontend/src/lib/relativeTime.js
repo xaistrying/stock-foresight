@@ -1,9 +1,9 @@
 // Renders a "last loaded" timestamp as a short relative string for the
-// ticker chip's refresh control (design.md Decision 5, tasks.md 4.2) —
+// Rail row (design.md Decision 5, tasks.md 4.2) —
 // e.g. "Loaded 14d ago". Deliberately coarse (minutes/hours/days), not a
 // full i18n relative-time formatter: the chip only needs a compact "is
 // this old?" signal, with the exact ISO timestamp available via `title`
-// for anyone who wants it (see TickerChip's use of this).
+// for anyone who wants it (see RailRow's use of this).
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS

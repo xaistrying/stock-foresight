@@ -1,0 +1,263 @@
+/* The Verdict panel: the range block, then one of six states. Zone placement (sticky column, strip)
+   is in App.css; this file is the panel's own look. Direction is told by an arrow and a word, never
+   by hue alone. The warn colours belong to Key tension, and nothing else. A failure is named in words
+   in the primary ink, with no up or down colour. */
+.verdict-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--surface-200);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.verdict-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* With no range block above it (a phone), the body starts the panel. */
+.verdict-panel__body:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.verdict-panel__ready,
+.verdict-panel__result,
+.verdict-panel__insufficient,
+.verdict-panel__running,
+.verdict-panel__failure-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.verdict-panel__meta,
+.verdict-panel__agreement,
+.verdict-panel__lm-note {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.verdict-panel__meta code {
+  font-family: var(--font-mono);
+}
+
+/* Buttons: the Analyse button is the one accent-filled control; the rest are outlined. */
+.verdict-panel__button {
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 6px var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.verdict-panel__button:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.verdict-panel__button--secondary {
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+}
+
+.verdict-panel__button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+@media (pointer: coarse) {
+  .verdict-panel__button {
+    min-height: 44px;
+  }
+}
+
+/* The verdict badge and the stance chips: tinted, never solid, always with the word. */
+.verdict-badge,
+.stance-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-300);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.verdict-badge {
+  padding: var(--space-1) 10px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.stance-chip {
+  padding: 2px var(--space-2);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.verdict-badge--bull,
+.stance-chip--bull {
+  color: var(--up-ink);
+  background: var(--up-bg);
+}
+
+.verdict-badge--bear,
+.stance-chip--bear {
+  color: var(--down-ink);
+  background: var(--down-bg);
+}
+
+.verdict-badge--neutral,
+.stance-chip--neutral {
+  color: var(--ink);
+  background: var(--surface-300);
+}
+
+/* No data, or an agent that did not vote: muted, on the inset surface, with a dashed strong border. */
+.verdict-badge--insufficient,
+.stance-chip--unavailable {
+  border-style: dashed;
+  background: var(--surface-300);
+  color: var(--ink-muted);
+}
+
+.stance-chip--unavailable {
+  font-weight: 400;
+}
+
+.verdict-panel__chips {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: var(--space-1);
+}
+
+/* Key tension: the one use of the warn colours. The label is the warn line colour (4.5:1 on the warn
+   ground in both themes), the body the warn ink. */
+.verdict-panel__tension {
+  align-self: stretch;
+  padding: var(--space-3);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--radius-md);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+
+.verdict-panel__tension-label {
+  margin: 0;
+  color: var(--warn-line);
+}
+
+.verdict-panel__tension-text {
+  margin: var(--space-1) 0 0;
+}
+
+.verdict-panel__synthesis h3 {
+  margin: 0 0 var(--space-1);
+}
+
+.verdict-panel__synthesis p {
+  margin: 0;
+}
+
+.verdict-panel__reasons {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+/* Running: the stage from the server and the elapsed seconds, never a spinner alone. */
+.verdict-panel__running {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.verdict-panel__stage {
+  margin: 0;
+}
+
+.verdict-panel__spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: verdict-panel-spin 0.7s linear infinite;
+}
+
+@keyframes verdict-panel-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .verdict-panel__spinner {
+    animation-duration: 1.4s;
+  }
+}
+
+.verdict-panel__elapsed {
+  color: var(--ink-muted);
+}
+
+.verdict-panel__failure-box {
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+.verdict-panel__failure {
+  margin: 0;
+  color: var(--ink);
+}
+
+.verdict-panel__failure-marker {
+  color: var(--ink);
+}
+
+/* The disclaimer, in every state, with the full text one step away. */
+.verdict-panel__foot {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.verdict-panel__disclaimer {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.verdict-panel__about {
+  margin-top: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.verdict-panel__about summary {
+  cursor: pointer;
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.verdict-panel__about p {
+  margin: var(--space-2) 0 0;
+}

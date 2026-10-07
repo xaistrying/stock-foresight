@@ -1,109 +1,162 @@
-/* Design tokens for the stock-foresight dashboard. Financial/data-dense
-   domain — calm neutrals, one restrained accent, reserved semantic colors
-   for up/down and status signal only (never decorative). Light/dark via
-   prefers-color-scheme; no user-facing theme toggle exists (or is planned).
-   redesign-dashboard-visual-look: retuned toward "Swiss Data Minimalism" —
-   a single sans family, tabular numerals for data, a cooler/deeper navy
-   register, and near-flat radii. Every value below was chosen against a
-   computed WCAG contrast check against the paper it renders on (see that
-   change's design.md Decision 2 and tasks.md 2.5) — still directional
-   enough to re-verify live once real components render it. */
+/* Design tokens of the dashboard: the owner's "Stock Foresight" design (Rail · Stage ·
+   Verdict), copied from its token file, light and dark. Every colour is a hex value so the
+   chart (lightweight-charts) and canvas read it unchanged.
+
+   Theme: light is the default on :root. Dark applies in two places that must stay equal (a
+   test compares them): under the operating-system preference unless the user chose light,
+   and under an explicit data-theme="dark" (the topbar toggle sets data-theme on <html>). */
 :root {
-  /* Paper / ink */
-  --color-paper: oklch(99% 0.002 258);
-  --color-paper-2: oklch(97% 0.004 258);
-  --color-paper-3: oklch(94% 0.006 258);
-  --color-ink: oklch(16% 0.02 258);
-  --color-ink-2: oklch(38% 0.016 258);
-  --color-ink-3: oklch(54% 0.013 258);
-  --color-border: oklch(87% 0.008 258);
-  --color-border-strong: oklch(76% 0.01 258);
+  color-scheme: light;
 
-  /* Accent — restrained navy, used for selection/focus, not decoration.
-     Deeper than the prior brighter selection-blue (redesign-dashboard-
-     visual-look Decision 2), reading as institutional rather than
-     interactive-bright. */
-  --color-accent: oklch(40% 0.12 258);
-  --color-accent-bg: oklch(93% 0.025 258);
-  --color-accent-border: oklch(64% 0.09 258);
-  --color-focus: oklch(52% 0.14 258);
+  /* Surfaces */
+  --surface-100: #f4f6f9;
+  --surface-200: #ffffff;
+  --surface-300: #e9edf2;
+  --line: #d3d9e1;
+  --line-strong: #76808f;
 
-  /* Semantic — reserved for signal states only. Positive/negative retuned
-     to lightweight-charts' own canonical bullish/bearish hues (teal-green
-     / coral-red) rather than pure green/red — redesign-dashboard-visual-
-     look Decision 2; this is a return to the charting library's defaults,
-     not a new custom pairing. */
-  --color-positive: oklch(54% 0.1 170);
-  --color-positive-bg: oklch(95% 0.025 170);
-  --color-negative: oklch(55% 0.17 20);
-  --color-negative-bg: oklch(95% 0.03 20);
-  --color-warning: oklch(58% 0.14 75);
-  --color-warning-bg: oklch(95% 0.05 75);
-  --color-neutral-signal: oklch(55% 0.01 258);
+  /* Ink and accent */
+  --ink: #12161d;
+  --ink-muted: #4a5463;
+  --accent: #1d4ed8;
+  --on-accent: #ffffff;
 
-  /* Type — single sans family (IBM Plex Sans) for display+body, IBM Plex
-     Mono for genuinely numeric data (redesign-dashboard-visual-look
-     Decision 1), replacing the prior Fraunces/Inter pairing. Unlike that
-     prior change's Fraunces fix, --font-mono is loaded correctly from the
-     start (see frontend/index.html) rather than falling back silently. */
-  --font-display: 'IBM Plex Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --font-body: 'IBM Plex Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  /* Direction marks: stance chips and verdict badges, always with the arrow and the word. */
+  --up-ink: #0a6b46;
+  --up-bg: #e1f3ea;
+  --down-ink: #b3202f;
+  --down-bg: #fbe6e8;
 
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.9375rem;
-  --text-md: 1.0625rem;
-  --text-lg: 1.375rem;
-  --text-xl: 1.75rem;
+  /* Chart marks only (3:1); never a text colour. */
+  --candle-up: #0f8f5e;
+  --candle-down: #d1334a;
+  --band-fill: #1d4ed826;
 
-  /* Space — 4pt scale */
-  --space-2xs: 0.25rem;
-  --space-xs: 0.5rem;
-  --space-sm: 0.75rem;
-  --space-md: 1rem;
-  --space-lg: 1.5rem;
-  --space-xl: 2rem;
-  --space-2xl: 3rem;
+  /* Key tension, and nothing else. */
+  --warn-bg: #fff3d1;
+  --warn-line: #a05a00;
+  --warn-ink: #4d3000;
 
-  /* Radius — tightened to a near-flat register (redesign-dashboard-visual-
-     look Decision 3). --radius-full is unchanged: it remains reserved for
-     the selected-ticker pill indicator, a real affordance, not decoration. */
-  --radius-sm: 2px;
-  --radius-md: 4px;
-  --radius-full: 999px;
+  /* Type */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Motion */
+  /* Space and shape */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+
+  /* Layout */
+  --topbar-h: 52px;
+  --rail-w: 232px;
+  --rail-w-min: 56px;
+  --verdict-w: 340px;
+  --chart-h: 440px;
+
+  /* Motion: a colour change of at most 120 ms, nothing else. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-fast: 120ms;
-  --dur-base: 180ms;
-  --dur-slow: 320ms;
 }
 
+/* Dark, by the operating-system preference unless the user chose light. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-paper: oklch(18% 0.008 258);
-    --color-paper-2: oklch(22% 0.01 258);
-    --color-paper-3: oklch(27% 0.012 258);
-    --color-ink: oklch(95% 0.008 258);
-    --color-ink-2: oklch(80% 0.01 258);
-    --color-ink-3: oklch(64% 0.012 258);
-    --color-border: oklch(31% 0.012 258);
-    --color-border-strong: oklch(41% 0.014 258);
-
-    --color-accent: oklch(72% 0.13 258);
-    --color-accent-bg: oklch(27% 0.055 258);
-    --color-accent-border: oklch(50% 0.11 258);
-    --color-focus: oklch(76% 0.14 258);
-
-    --color-positive: oklch(70% 0.11 170);
-    --color-positive-bg: oklch(26% 0.045 170);
-    --color-negative: oklch(68% 0.18 20);
-    --color-negative-bg: oklch(27% 0.065 20);
-    --color-warning: oklch(78% 0.14 75);
-    --color-warning-bg: oklch(30% 0.06 75);
-    --color-neutral-signal: oklch(65% 0.01 258);
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-100: #0f1217;
+    --surface-200: #171b22;
+    --surface-300: #222833;
+    --line: #2d3541;
+    --line-strong: #8892a2;
+    --ink: #e9ecf1;
+    --ink-muted: #a6b0be;
+    --accent: #7ea6ff;
+    --on-accent: #0a1430;
+    --up-ink: #4cc58b;
+    --up-bg: #10301f;
+    --down-ink: #ff8591;
+    --down-bg: #3a1b21;
+    --candle-up: #2fbf80;
+    --candle-down: #f0566b;
+    --band-fill: #7ea6ff2e;
+    --warn-bg: #2e2510;
+    --warn-line: #e3a22f;
+    --warn-ink: #f7e0ad;
   }
+}
+
+/* Dark, by the user's choice (the topbar toggle). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-100: #0f1217;
+  --surface-200: #171b22;
+  --surface-300: #222833;
+  --line: #2d3541;
+  --line-strong: #8892a2;
+  --ink: #e9ecf1;
+  --ink-muted: #a6b0be;
+  --accent: #7ea6ff;
+  --on-accent: #0a1430;
+  --up-ink: #4cc58b;
+  --up-bg: #10301f;
+  --down-ink: #ff8591;
+  --down-bg: #3a1b21;
+  --candle-up: #2fbf80;
+  --candle-down: #f0566b;
+  --band-fill: #7ea6ff2e;
+  --warn-bg: #2e2510;
+  --warn-line: #e3a22f;
+  --warn-ink: #f7e0ad;
+}
+
+/* Type styles. Numbers and symbols use the mono family so columns align. */
+.t-kpi {
+  font-family: var(--font-mono);
+  font-size: 40px;
+  line-height: 44px;
+  font-weight: 700;
+}
+
+.t-ticker {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  line-height: 32px;
+  font-weight: 700;
+}
+
+.t-heading {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+.t-body {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+}
+
+.t-small {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+}
+
+.t-label {
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.t-num {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
 }

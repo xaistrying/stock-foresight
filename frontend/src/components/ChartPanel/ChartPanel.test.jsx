@@ -1,30 +1,41 @@
 import { act } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ChartPanel } from './ChartPanel'
 import * as tickersApi from '../../api/tickers'
 import { ApiError } from '../../api/client'
+import { useTheme } from '../../hooks/useTheme'
 
-// jsdom has no real CSS cascade, so readChartTheme()'s
-// getComputedStyle(...).getPropertyValue('--color-positive') calls resolve
-// to '' rather than a real token value — indistinguishable from each other
-// for a per-bar color-matching assertion. Mocked with distinct fake values
-// so the volume-coloring test (design.md Decision 7) can assert on
-// something meaningful.
-vi.mock('./chartTheme', () => ({
-  readChartTheme: () => ({
-    paper: 'rgb(255, 255, 255)',
-    border: 'rgb(200, 200, 200)',
-    ink2: 'rgb(50, 50, 50)',
-    ink3: 'rgb(100, 100, 100)',
-    positive: 'rgb(0, 128, 0)',
-    negative: 'rgb(200, 0, 0)',
+// jsdom has no real CSS cascade, so readChartTheme()'s getComputedStyle(...).getPropertyValue()
+// calls resolve to '' rather than a real token value — indistinguishable from each other for a
+// per-bar colour assertion. Mocked with distinct fake values so the colour tests can assert on
+// something meaningful, and held in a mutable object so a test can switch to a "dark" theme.
+const theme = vi.hoisted(() => {
+  const light = {
+    surface: 'rgb(255, 255, 255)',
+    line: 'rgb(200, 200, 200)',
     ink: 'rgb(20, 20, 20)',
+    inkMuted: 'rgb(50, 50, 50)',
+    candleUp: 'rgb(0, 128, 0)',
+    candleDown: 'rgb(200, 0, 0)',
     accent: 'rgb(0, 0, 200)',
-  }),
-}))
+    bandFill: 'rgba(0, 0, 200, 0.15)',
+  }
+  const dark = {
+    surface: 'rgb(23, 27, 34)',
+    line: 'rgb(45, 53, 65)',
+    ink: 'rgb(233, 236, 241)',
+    inkMuted: 'rgb(166, 176, 190)',
+    candleUp: 'rgb(47, 191, 128)',
+    candleDown: 'rgb(240, 86, 107)',
+    accent: 'rgb(126, 166, 255)',
+    bandFill: 'rgba(126, 166, 255, 0.18)',
+  }
+  return { light, dark, current: light }
+})
+vi.mock('./chartTheme', () => ({ readChartTheme: () => ({ ...theme.current }) }))
 
 // Captures every setData call made to the predicted-point line series, so
 // tests can assert on the actual data points handed to lightweight-charts
@@ -45,6 +56,8 @@ const candleSetAutoScaleCalls = []
 const volumeSetAutoScaleCalls = []
 const visibleLogicalRangeCalls = []
 const createChartCalls = []
+const chartApplyOptionsCalls = []
+const candleApplyOptionsCalls = []
 // Captures the handler ChartPanel registers via subscribeCrosshairMove so
 // tests can simulate a crosshair position directly (jsdom fires no real
 // mouse-over-canvas events) — add-chart-ohlcv-legend tasks.md section 4.
@@ -66,6 +79,11 @@ vi.mock('lightweight-charts', async () => {
     createChart: (...args) => {
       createChartCalls.push(args[1])
       const chart = actual.createChart(...args)
+      const originalChartApplyOptions = chart.applyOptions.bind(chart)
+      chart.applyOptions = (options) => {
+        chartApplyOptionsCalls.push(options)
+        return originalChartApplyOptions(options)
+      }
       const originalAddSeries = chart.addSeries.bind(chart)
       chart.addSeries = (definition, options, paneIndex) => {
         const series = originalAddSeries(definition, options, paneIndex)
@@ -105,6 +123,11 @@ vi.mock('lightweight-charts', async () => {
         }
         if (definition === actual.CandlestickSeries) {
           candleSeriesInstance = series
+          const originalApplyOptions = series.applyOptions.bind(series)
+          series.applyOptions = (options) => {
+            candleApplyOptionsCalls.push(options)
+            return originalApplyOptions(options)
+          }
           const originalAttach = series.attachPrimitive.bind(series)
           series.attachPrimitive = (primitive) => {
             attachedPrimitives.push(primitive)
@@ -236,6 +259,9 @@ beforeEach(() => {
   stretchFactorCallsByPane[1].length = 0
   visibleLogicalRangeCalls.length = 0
   createChartCalls.length = 0
+  chartApplyOptionsCalls.length = 0
+  candleApplyOptionsCalls.length = 0
+  theme.current = theme.light
   crosshairMoveHandler = null
   candleSeriesInstance = null
   volumeSeriesInstance = null
@@ -354,7 +380,7 @@ describe('ChartPanel', () => {
     unmount()
   })
 
-  it('draws the band in the neutral ink colour, never the positive or negative candle colours', async () => {
+  it('draws the band bounds in the accent colour and its fill in the band-fill colour, never the candle colours', async () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
       rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
@@ -365,9 +391,28 @@ describe('ChartPanel', () => {
 
     await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
 
-    expect(attachedPrimitives[0].color).toBe('rgb(20, 20, 20)')
-    expect(attachedPrimitives[0].color).not.toBe('rgb(0, 128, 0)')
-    expect(attachedPrimitives[0].color).not.toBe('rgb(200, 0, 0)')
+    expect(attachedPrimitives[0].colors).toEqual({
+      line: theme.light.accent,
+      fill: theme.light.bandFill,
+      text: theme.light.ink,
+    })
+    expect(Object.values(attachedPrimitives[0].colors)).not.toContain(theme.light.candleUp)
+    expect(Object.values(attachedPrimitives[0].colors)).not.toContain(theme.light.candleDown)
+    unmount()
+  })
+
+  it('labels the band with the same ±X.XX% text the Verdict panel shows', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29', range_5s_pct: 4.12 }))
+
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
+
+    expect(attachedPrimitives[0].band.label).toBe('±4.12%')
     unmount()
   })
 
@@ -692,20 +737,24 @@ describe('ChartPanel OHLCV legend', () => {
     unmount()
   })
 
-  it('colors the legend to match the hovered session\'s up/down direction', async () => {
+  it('inks the legend values and marks the session direction with a swatch in the candle colour', async () => {
     mockHistoryAndPrediction()
     const { unmount } = renderPanel('TCB')
 
-    // Default (latest row, index 1) is an up session (close >= open).
-    // `crosshairMoveHandler` is registered at chart-creation time, before
-    // history data (and so the legend element itself) exists — wait for
-    // the legend's own text, not just the handler capture, before
-    // querying the element.
+    // Default (latest row, index 1) is an up session (close >= open). `crosshairMoveHandler` is
+    // registered at chart-creation time, before history data (and so the legend) exists — wait for
+    // the legend's own text, not just the handler capture, before querying the element.
     await waitFor(() => expect(candleSeriesInstance).not.toBeNull())
     const priceFormatter = candleSeriesInstance.priceFormatter()
     await screen.findByText(priceFormatter.format(rows[rows.length - 1].close))
     const legend = document.querySelector('.chart-panel__legend')
-    expect(legend).toHaveAttribute('data-direction', 'up')
+    expect(legend.querySelector('.chart-panel__swatch')).toHaveAttribute('data-swatch', 'up')
+    // The direction is the swatch's alone: the legend itself and its text carry no direction hue.
+    expect(legend).not.toHaveAttribute('data-direction')
+    for (const value of legend.querySelectorAll('.chart-panel__legend-value')) {
+      expect(value).not.toHaveAttribute('style')
+      expect(value).not.toHaveAttribute('data-direction')
+    }
 
     // Hover the down session (index 0).
     const down = rows[0]
@@ -718,7 +767,7 @@ describe('ChartPanel OHLCV legend', () => {
         ]),
       })
     })
-    expect(legend).toHaveAttribute('data-direction', 'down')
+    expect(legend.querySelector('.chart-panel__swatch')).toHaveAttribute('data-swatch', 'down')
 
     unmount()
   })
@@ -743,5 +792,434 @@ describe('ChartPanel OHLCV legend', () => {
     expect(await screen.findByText(priceFormatter.format(latest.close))).toBeInTheDocument()
 
     unmount()
+  })
+})
+
+// A user pan or zoom, as the chart's inputs report it (a wheel turn on the chart).
+const userZooms = () => fireEvent.wheel(document.querySelector('.chart-panel__canvas'))
+
+// The chart history control (3M / 1Y / All): the visible window in sessions (rows), never calendar
+// days, with no request when it changes.
+describe('ChartPanel chart history control', () => {
+  const group = () => screen.getByRole('group', { name: 'Chart history' })
+  const button = (name) => within(group()).getByRole('button', { name })
+  const lastRange = () => visibleLogicalRangeCalls[visibleLogicalRangeCalls.length - 1]
+
+  async function open(count, ticker = 'TCB') {
+    const rows = generateRows(count)
+    const history = vi.spyOn(tickersApi, 'fetchTickerHistory').mockImplementation(async (t) => ({ ticker: t, rows }))
+    const range = vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
+    const view = renderPanel(ticker)
+    await screen.findByRole('button', { name: /reset zoom/i })
+    await waitForCountToStabilize(() => visibleLogicalRangeCalls.length + fitContentCallCount)
+    return { rows, history, range, ...view }
+  }
+
+  it('is a group of three toggle buttons, with 3M pressed', async () => {
+    const { unmount } = await open(750)
+
+    expect(within(group()).getAllByRole('button').map((b) => b.textContent)).toEqual(['3M', '1Y', 'All'])
+    expect(button('3M')).toHaveAttribute('aria-pressed', 'true')
+    expect(button('1Y')).toHaveAttribute('aria-pressed', 'false')
+    expect(button('All')).toHaveAttribute('aria-pressed', 'false')
+    unmount()
+  })
+
+  it('opens on the last 60 sessions plus the band margin', async () => {
+    const { unmount } = await open(750)
+
+    expect(lastRange().from).toBe(750 - 60)
+    expect(lastRange().to).toBeGreaterThan(750 - 1 + 5)
+    unmount()
+  })
+
+  it('1Y shows the last 250 sessions and All shows every row served', async () => {
+    const { unmount } = await open(750)
+
+    await userEvent.click(button('1Y'))
+    expect(lastRange().from).toBe(750 - 250)
+    expect(button('1Y')).toHaveAttribute('aria-pressed', 'true')
+    expect(button('3M')).toHaveAttribute('aria-pressed', 'false')
+
+    await userEvent.click(button('All'))
+    expect(lastRange().from).toBe(0)
+    expect(lastRange().to).toBeGreaterThan(750 - 1 + 5)
+    expect(button('All')).toHaveAttribute('aria-pressed', 'true')
+    unmount()
+  })
+
+  it('counts sessions (rows), not calendar days: 3M is 60 rows however the dates fall', async () => {
+    const rows = generateRows(400).filter((_, index) => index % 2 === 0) // 200 rows over 400 days
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
+    const { unmount } = renderPanel('TCB')
+    await screen.findByRole('button', { name: /reset zoom/i })
+    await waitFor(() => expect(visibleLogicalRangeCalls.length).toBeGreaterThan(0))
+
+    expect(lastRange().from).toBe(200 - 60)
+    unmount()
+  })
+
+  it('changing the window issues no request', async () => {
+    const { history, range, unmount } = await open(750)
+
+    await userEvent.click(button('1Y'))
+    await userEvent.click(button('All'))
+    await userEvent.click(button('3M'))
+
+    expect(history).toHaveBeenCalledTimes(1)
+    expect(range).toHaveBeenCalledTimes(1)
+    unmount()
+  })
+
+  it.each([
+    [200, { '3M': true, '1Y': false, All: false }],
+    [249, { '3M': true, '1Y': false, All: false }],
+    [250, { '3M': true, '1Y': true, All: false }],
+    [251, { '3M': true, '1Y': true, All: true }],
+    [600, { '3M': true, '1Y': true, All: true }],
+    [60, { '3M': true, '1Y': false, All: false }],
+  ])('with %i rows enables %j', async (count, enabled) => {
+    const { unmount } = await open(count)
+
+    for (const [name, isEnabled] of Object.entries(enabled)) {
+      expect(button(name), name).toHaveProperty('disabled', !isEnabled)
+    }
+    unmount()
+  })
+
+  it('shows all of a short history and presses nothing when even 3M cannot be filled', async () => {
+    const { unmount } = await open(30)
+
+    for (const name of ['3M', '1Y', 'All']) {
+      expect(button(name)).toBeDisabled()
+      expect(button(name)).toHaveAttribute('aria-pressed', 'false')
+    }
+    expect(fitContentCallCount).toBeGreaterThan(0)
+    expect(visibleLogicalRangeCalls).toHaveLength(0)
+    unmount()
+  })
+
+  it('has every button disabled, and none pressed, with no ticker selected', () => {
+    const { unmount } = renderPanel(null)
+
+    for (const name of ['3M', '1Y', 'All']) expect(button(name)).toBeDisabled()
+    unmount()
+  })
+
+  it('returns to 3M when another ticker is selected', async () => {
+    const rows = generateRows(750)
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockImplementation(async (t) => ({ ticker: t, rows }))
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <ChartPanel ticker="TCB" />
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('button', { name: /reset zoom/i })
+    await userEvent.click(button('1Y'))
+    expect(button('1Y')).toHaveAttribute('aria-pressed', 'true')
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChartPanel ticker="VIB" />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(button('3M')).toHaveAttribute('aria-pressed', 'true'))
+    expect(button('1Y')).toHaveAttribute('aria-pressed', 'false')
+    view.unmount()
+  })
+
+  it('Reset zoom restores the active window, not the opening one', async () => {
+    const { unmount } = await open(750)
+    await userEvent.click(button('1Y'))
+    userZooms() // the user pans
+    const before = visibleLogicalRangeCalls.length
+
+    await userEvent.click(screen.getByRole('button', { name: /reset zoom/i }))
+
+    expect(visibleLogicalRangeCalls.length).toBe(before + 1)
+    expect(lastRange().from).toBe(750 - 250)
+    expect(button('1Y')).toHaveAttribute('aria-pressed', 'true')
+    unmount()
+  })
+})
+
+describe('ChartPanel chart section', () => {
+  it('gives the chart a text alternative stating the last close and the typical move', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29', range_5s_pct: 5 }))
+    const { unmount } = renderPanel('TCB')
+
+    const section = await screen.findByRole('region', { name: 'Price chart for TCB' })
+    const alternative = await within(section).findByText('Last close 11.00; typical 5-session move ±5.00%')
+
+    expect(alternative).toHaveClass('sr-only')
+    unmount()
+  })
+
+  it('says the typical move is unavailable when /range serves no band', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ status: 'ineligible', range_5s_pct: null }))
+    const { unmount } = renderPanel('TCB')
+
+    expect(await screen.findByText('Last close 11.00; typical 5-session move unavailable')).toBeInTheDocument()
+    unmount()
+  })
+
+  it('has no text alternative before there is data', () => {
+    const { unmount } = renderPanel(null)
+
+    expect(screen.queryByText(/^Last close/)).not.toBeInTheDocument()
+    unmount()
+  })
+
+  it('draws Reset zoom as the circular arrow, a 1.5px stroke path with an accessible name', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows: generateRows(10) })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
+    const { unmount } = renderPanel('TCB')
+
+    const button = await screen.findByRole('button', { name: /reset zoom/i })
+    const path = button.querySelector('path')
+
+    expect(path.getAttribute('d')).toBe('M2 8a6 6 0 1 1 1.76 4.24M2 8V4m0 4h4')
+    expect(path.getAttribute('stroke-width')).toBe('1.5')
+    unmount()
+  })
+})
+
+function ThemeToggle() {
+  const { toggle } = useTheme()
+  return (
+    <button type="button" onClick={toggle}>
+      toggle theme
+    </button>
+  )
+}
+
+describe('ChartPanel theme', () => {
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-theme')
+    localStorage.clear()
+  })
+
+  it('re-colours the chart, candles, volume and band on a theme change, keeping the visible window', async () => {
+    const rows = generateRows(750)
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: rows[rows.length - 1].date }))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { unmount } = render(
+      <QueryClientProvider client={queryClient}>
+        <ThemeToggle />
+        <ChartPanel ticker="TCB" />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
+    await waitForCountToStabilize(() => visibleLogicalRangeCalls.length + volumeSeriesDataCalls.length)
+    const rangesBefore = visibleLogicalRangeCalls.length
+    const volumeBefore = volumeSeriesDataCalls.length
+    chartApplyOptionsCalls.length = 0
+    candleApplyOptionsCalls.length = 0
+
+    theme.current = theme.dark
+    await userEvent.click(screen.getByRole('button', { name: 'toggle theme' }))
+
+    await waitFor(() => expect(chartApplyOptionsCalls.length).toBeGreaterThan(0))
+    const chartOptions = chartApplyOptionsCalls[chartApplyOptionsCalls.length - 1]
+    expect(chartOptions.layout.background.color).toBe(theme.dark.surface)
+    expect(chartOptions.layout.textColor).toBe(theme.dark.inkMuted)
+    expect(chartOptions.grid.vertLines.color).toBe(theme.dark.line)
+    expect(chartOptions.grid.horzLines.color).toBe(theme.dark.line)
+    expect(chartOptions.rightPriceScale.borderColor).toBe(theme.dark.line)
+    expect(chartOptions.timeScale.borderColor).toBe(theme.dark.line)
+    expect(chartOptions.crosshair.vertLine.color).toBe(theme.dark.inkMuted)
+
+    expect(candleApplyOptionsCalls[candleApplyOptionsCalls.length - 1]).toMatchObject({
+      upColor: theme.dark.candleUp,
+      downColor: theme.dark.candleDown,
+      borderUpColor: theme.dark.candleUp,
+      borderDownColor: theme.dark.candleDown,
+      wickUpColor: theme.dark.candleUp,
+      wickDownColor: theme.dark.candleDown,
+    })
+
+    // Volume colours are in the data, so the data is set again; every bar is one of the two colours.
+    expect(volumeSeriesDataCalls.length).toBeGreaterThan(volumeBefore)
+    const volume = volumeSeriesDataCalls[volumeSeriesDataCalls.length - 1]
+    expect(volume.every((bar) => [theme.dark.candleUp, theme.dark.candleDown].includes(bar.color))).toBe(true)
+
+    expect(attachedPrimitives[0].colors).toEqual({
+      line: theme.dark.accent,
+      fill: theme.dark.bandFill,
+      text: theme.dark.ink,
+    })
+
+    // The visible window is not touched by a re-colour.
+    expect(visibleLogicalRangeCalls).toHaveLength(rangesBefore)
+    unmount()
+  })
+})
+
+// The chart fills its card edge to edge (design.md Decision 15). jsdom has no layout, so the card
+// width is stubbed (clientWidth) and the ResizeObserver replaced; what is asserted is the range the
+// component asks the chart for.
+describe('ChartPanel fills the card', () => {
+  const PRICE_SCALE_PX = 82
+  const LABEL_PX = '±5.00%'.length * 0.6 * 12 // the label is 12px monospace
+  let cardWidth = 772
+  let observers = []
+
+  class FakeResizeObserver {
+    constructor(callback) {
+      this.callback = callback
+      this.targets = []
+      observers.push(this)
+    }
+    observe(target) {
+      this.targets.push(target)
+    }
+    unobserve() {}
+    disconnect() {
+      this.targets = []
+    }
+  }
+
+  const resizeCard = async (width) => {
+    cardWidth = width
+    const card = document.querySelector('.chart-panel')
+    for (const observer of observers) if (observer.targets.includes(card)) observer.callback([{ target: card }])
+    await new Promise((resolve) => setTimeout(resolve, 60)) // one animation frame
+  }
+  const lastRange = () => visibleLogicalRangeCalls[visibleLogicalRangeCalls.length - 1]
+
+  const original = { resizeObserver: globalThis.ResizeObserver }
+
+  beforeEach(() => {
+    observers = []
+    cardWidth = 772
+    globalThis.ResizeObserver = FakeResizeObserver
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return this.classList?.contains('chart-panel') ? cardWidth : 0
+      },
+    })
+  })
+
+  afterEach(() => {
+    globalThis.ResizeObserver = original.resizeObserver
+    delete HTMLElement.prototype.clientWidth
+  })
+
+  async function open(width) {
+    cardWidth = width
+    const rows = generateRows(750)
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: rows[rows.length - 1].date }))
+    const view = renderPanel('TCB')
+    await screen.findByRole('button', { name: /reset zoom/i })
+    await waitForCountToStabilize(() => visibleLogicalRangeCalls.length)
+    return view
+  }
+
+  it.each([772, 1252, 1892])('shows the same 60 sessions at a %ipx card, with room for the label inside the plot', async (width) => {
+    const { unmount } = await open(width)
+
+    const { from, to } = lastRange()
+    expect(from).toBe(750 - 60)
+    const plotPx = width - PRICE_SCALE_PX
+    const slotPx = plotPx / (to - from + 1)
+    const slotsRightOfBand = to - (750 - 1 + 5)
+    expect(slotsRightOfBand).toBeGreaterThanOrEqual(1)
+    expect(slotsRightOfBand * slotPx).toBeGreaterThanOrEqual(LABEL_PX)
+    unmount()
+  })
+
+  it('leaves less margin on a wider card, since a slot is wider', async () => {
+    const narrow = await open(772)
+    const narrowExtra = lastRange().to - (750 - 1 + 5)
+    narrow.unmount()
+    visibleLogicalRangeCalls.length = 0
+    const wide = await open(1892)
+
+    expect(lastRange().to - (750 - 1 + 5)).toBeLessThan(narrowExtra)
+    wide.unmount()
+  })
+
+  it('applies the window again when the card is resized', async () => {
+    const { unmount } = await open(772)
+    const before = visibleLogicalRangeCalls.length
+    const widthBefore = lastRange().to
+
+    await resizeCard(1252)
+
+    expect(visibleLogicalRangeCalls.length).toBe(before + 1)
+    expect(lastRange().from).toBe(750 - 60)
+    expect(lastRange().to).not.toBe(widthBefore)
+    unmount()
+  })
+
+  it('does not apply it again after the user zoomed or panned', async () => {
+    const { unmount } = await open(772)
+    userZooms()
+    const before = visibleLogicalRangeCalls.length
+
+    await resizeCard(1252)
+
+    expect(visibleLogicalRangeCalls).toHaveLength(before)
+    unmount()
+  })
+
+  it('counts a drag, the wheel and a touch on the chart as the user\'s, and a press on its buttons as not', async () => {
+    const { unmount } = await open(772)
+    const canvas = document.querySelector('.chart-panel__canvas')
+    const before = visibleLogicalRangeCalls.length
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /reset zoom/i }))
+    await resizeCard(1252)
+    expect(visibleLogicalRangeCalls.length).toBe(before + 1)
+
+    for (const fire of [() => fireEvent.pointerDown(canvas), () => fireEvent.touchStart(canvas)]) {
+      await userEvent.click(screen.getByRole('button', { name: /reset zoom/i })) // re-arm
+      const armed = visibleLogicalRangeCalls.length
+      fire()
+      await resizeCard(772)
+      expect(visibleLogicalRangeCalls.length).toBe(armed)
+    }
+    unmount()
+  })
+
+  it('Reset zoom and a tab change apply the window again, and re-arm the resize', async () => {
+    const { unmount } = await open(772)
+    userZooms()
+    const afterZoom = visibleLogicalRangeCalls.length
+
+    await userEvent.click(screen.getByRole('button', { name: /reset zoom/i }))
+    expect(visibleLogicalRangeCalls.length).toBe(afterZoom + 1)
+    await resizeCard(1252)
+    expect(visibleLogicalRangeCalls.length).toBe(afterZoom + 2)
+
+    userZooms()
+    await userEvent.click(screen.getByRole('button', { name: '1Y' }))
+    expect(lastRange().from).toBe(750 - 250)
+    unmount()
+  })
+
+  it('stops observing the card when it unmounts', async () => {
+    const { unmount } = await open(772)
+    const card = document.querySelector('.chart-panel')
+    expect(observers.some((observer) => observer.targets.includes(card))).toBe(true)
+
+    unmount()
+
+    expect(observers.every((observer) => !observer.targets.includes(card))).toBe(true)
   })
 })

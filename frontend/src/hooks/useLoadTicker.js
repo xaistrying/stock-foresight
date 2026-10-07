@@ -1,5 +1,6 @@
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query'
 import { loadTicker } from '../api/tickers'
+import { ApiError } from '../api/client'
 import { queryKeys } from '../lib/queryClient'
 
 // Mutation key namespace, parameterized by ticker, so multiple chips can
@@ -28,11 +29,33 @@ export function describeLoadStatus(status, ticker) {
 }
 
 /**
+ * What a Refresh that did not complete with `ok` says, or null: one wording wherever a ticker is
+ * refreshed (a Rail row, the Verdict panel), per status, never a generic line for a named one.
+ */
+export function describeLoadOutcome(mutation, ticker) {
+  if (mutation.isError) {
+    return mutation.error instanceof ApiError ? 'Something went wrong — try again' : 'Network error — try again'
+  }
+  if (mutation.isSuccess && mutation.data.status !== 'ok') return describeLoadStatus(mutation.data.status, ticker)
+  return null
+}
+
+/**
+ * What a completed load refreshes: the catalog (the ticker's age, eligibility and load time) and
+ * this ticker's history and range, and nothing else. An invalidated query that nothing observes
+ * (an unselected ticker) is only marked stale, not fetched. Shared by the Rail's Refresh, the
+ * Verdict panel's Refresh and the topbar search, so all three refresh the same things.
+ */
+export function invalidateAfterLoad(queryClient, ticker) {
+  queryClient.invalidateQueries({ queryKey: queryKeys.tickers })
+  queryClient.invalidateQueries({ queryKey: queryKeys.history(ticker) })
+  queryClient.invalidateQueries({ queryKey: queryKeys.range(ticker) })
+}
+
+/**
  * Wraps `POST /tickers/{ticker}/load` as a React Query mutation. On a
- * successful load (`status: "ok"`), invalidates the catalog and this
- * ticker's history and range, so whatever is showing them refetches — no
- * separate user action needed. An invalidated query that nothing observes
- * (an unselected ticker) is only marked stale, not fetched. `ticker` is fixed per hook call so its
+ * successful load (`status: "ok"`), invalidates what `invalidateAfterLoad` names, so whatever is
+ * showing it refetches — no separate user action needed. `ticker` is fixed per hook call so its
  * mutationKey can be ticker-scoped (see loadMutationKey above).
  */
 export function useLoadTicker(ticker) {
@@ -42,10 +65,7 @@ export function useLoadTicker(ticker) {
     mutationKey: loadMutationKey(ticker),
     mutationFn: () => loadTicker(ticker),
     onSuccess: (result) => {
-      if (result.status !== 'ok') return
-      queryClient.invalidateQueries({ queryKey: queryKeys.tickers })
-      queryClient.invalidateQueries({ queryKey: queryKeys.history(ticker) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.range(ticker) })
+      if (result.status === 'ok') invalidateAfterLoad(queryClient, ticker)
     },
   })
 }

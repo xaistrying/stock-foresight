@@ -1,0 +1,83 @@
+/* The fixed bar over the Rail, the Stage and the Verdict panel. Height and padding come from the
+   design tokens; the page below it starts at --topbar-h (index.css). */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  height: var(--topbar-h);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-inline: var(--space-4);
+  background: var(--surface-200);
+  border-bottom: 1px solid var(--line);
+}
+
+@media (min-width: 1440px) {
+  .topbar {
+    padding-inline: var(--space-6);
+  }
+}
+
+.topbar__brand {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.topbar__search {
+  flex: 0 1 320px;
+  min-width: 0;
+}
+
+.topbar__spacer {
+  flex: 1;
+}
+
+.topbar__button {
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.topbar__button:hover,
+.topbar__button[aria-pressed='true'],
+.topbar__button[aria-expanded='true'] {
+  background: var(--surface-300);
+}
+
+/* Touch-primary controls reach 44px (WCAG 2.5.8 asks 24px; the design asks more on touch). */
+@media (pointer: coarse) {
+  .topbar__button {
+    min-height: 44px;
+  }
+}
+
+/* Below 768px the search takes the room the brand and buttons leave: it is the ticker picker. */
+@media (max-width: 767px) {
+  .topbar {
+    gap: var(--space-2);
+  }
+
+  .topbar__search {
+    flex: 1 1 auto;
+  }
+
+  .topbar__spacer {
+    display: none;
+  }
+}

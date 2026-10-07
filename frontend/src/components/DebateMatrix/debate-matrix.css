@@ -1,0 +1,152 @@
+/* The Debate matrix: agent cards, three columns by two rows. The grid's own columns (three equal
+   ones, whatever the Stage width) are in App.css, next to the other zone layout. A card is clamped to
+   five lines of body text by height, with its list semantics intact. */
+.debate-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.debate-matrix__heading,
+.debate-matrix__disclaimer,
+.debate-matrix__lm-note,
+.debate-matrix__message {
+  margin: 0;
+}
+
+.debate-matrix__disclaimer,
+.debate-matrix__lm-note,
+.debate-matrix__message {
+  color: var(--ink-muted);
+}
+
+.debate-grid__row-label {
+  grid-column: 1 / -1;
+  margin: var(--space-1) 0 0;
+  color: var(--ink-muted);
+}
+
+.agent-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--surface-200);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.agent-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-self: stretch;
+}
+
+.agent-card__heading {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.agent-card__stance {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Five lines of body text, by height. Opening the card removes the limit. */
+.agent-card__text {
+  max-height: calc(5 * 20px);
+  overflow: hidden;
+}
+
+.agent-card__text[data-expanded] {
+  max-height: none;
+}
+
+.agent-card__list {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.agent-card__more {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .agent-card__more {
+    min-height: 44px;
+  }
+}
+
+/* An agent that did not answer: a dashed strong border, text only, no hue. */
+.agent-card--unavailable {
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+
+.agent-card__unavailable,
+.agent-card__reason {
+  margin: 0;
+}
+
+.agent-card__reason {
+  color: var(--ink-muted);
+}
+
+.agent-card--skeleton {
+  min-height: 96px;
+  background: var(--surface-300);
+  border-color: transparent;
+}
+
+/* Phone: one agent per tab, Round 1 above Round 2. */
+.debate-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.debate-tabs__list {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.debate-tabs__tab {
+  flex: 1;
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.debate-tabs__tab[aria-selected='true'] {
+  border-color: var(--accent);
+  background: var(--surface-300);
+  color: var(--ink);
+}
+
+.debate-tabs__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.debate-tabs__panel[hidden] {
+  display: none;
+}

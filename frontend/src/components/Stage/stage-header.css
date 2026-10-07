@@ -1,0 +1,70 @@
+/* The Stage's header row: ticker, last close, the data date and age, and Stale in text. */
+.stage-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+}
+
+.stage-header__ticker {
+  margin: 0;
+}
+
+.stage-header__ticker[data-empty] {
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.stage-header__close {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.stage-header__asof {
+  color: var(--ink-muted);
+}
+
+/* "Stale" is a word, not a hue: a bordered text tag in the muted ink, like the Rail's. */
+.stage-header__stale {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+}
+
+/* The favorite star, after the data date. Muted when off, the primary ink and filled when on. */
+.favorite-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.favorite-star:hover {
+  background: var(--surface-300);
+  color: var(--ink);
+}
+
+.favorite-star[aria-pressed='true'] {
+  color: var(--ink);
+}
+
+@media (pointer: coarse) {
+  .favorite-star {
+    width: 44px;
+    height: 44px;
+  }
+}

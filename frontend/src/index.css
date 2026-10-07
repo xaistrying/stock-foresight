@@ -1,21 +1,42 @@
-/* Global page-level reset. Component-level styling lives in each
-   component's own CSS file, driven by the design tokens in
-   `styles/tokens.css` (imported before this file in main.jsx). Previously
-   held leftover Vite-template styles (a fixed-width, centered, bordered
-   #root, unused heading/code rules) that conflicted with the dashboard's
-   own layout once the real panels were assembled (tasks.md 11.1) — removed
-   rather than carried forward unused. */
+/* Global page-level rules. Component-level styling lives in each component's own CSS file,
+   driven by the design tokens in `styles/tokens.css` (imported before this file in main.jsx). */
+html {
+  /* A focused element is never hidden under the fixed topbar (WCAG 2.4.11). */
+  scroll-padding-top: calc(var(--topbar-h) + var(--space-4));
+}
+
 :root {
-  color-scheme: light dark;
-  font: 16px/145% var(--font-body, system-ui, sans-serif);
+  font: 14px/20px var(--font-sans);
 }
 
 body {
   margin: 0;
-  background: var(--color-paper);
-  color: var(--color-ink);
+  /* The topbar is position: fixed, so the page starts below it. */
+  padding-top: var(--topbar-h);
+  background: var(--surface-100);
+  color: var(--ink);
 }
 
 #root {
-  min-height: 100svh;
+  min-height: calc(100svh - var(--topbar-h));
+}
+
+/* One focus ring for every interactive element: 2px solid accent, 2px offset, at least 3:1 on
+   every surface in both themes (checked by the contrast test). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Text for assistive technology only: announcements and descriptions with no visible counterpart. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }

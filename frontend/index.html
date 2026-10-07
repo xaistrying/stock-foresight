@@ -4,17 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- redesign-dashboard-visual-look Decision 1: IBM Plex Sans (display
-         + body, single family) and IBM Plex Mono (numeric figures — see
-         tokens.css --font-mono). Replaces the Fraunces link the prior
-         polish-dashboard-hierarchy-and-copy change added. -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
     <title>Stock Foresight</title>
+    <!-- Applies a stored theme choice before first paint, so a dark-theme user never sees a light
+         flash. Storage can be blocked: any failure leaves the page following the operating
+         system. Keep the key equal to THEME_STORAGE_KEY in src/hooks/useTheme.js. -->
+    <script>
+      try {
+        var theme = localStorage.getItem('stock-foresight-theme')
+        if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme)
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

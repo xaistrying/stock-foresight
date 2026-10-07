@@ -1,48 +1,142 @@
+/* Page layout: a fixed topbar (topbar.css) over three zones, the Rail, the Stage and the Verdict
+   panel. The page uses the whole viewport width: no max-width and no centred column anywhere
+   here, equal left and right padding, the Rail and the Verdict panel at their token widths and
+   the Stage taking every remaining pixel (App.fullWidth.test.js). The breakpoints repeat the
+   numbers in lib/layout.js (lib/layout.test.js fails if they differ):
+
+     1440+       wide       Rail --rail-w, Stage, Verdict --verdict-w (both sticky)
+     1144-1439   collapsed  Rail --rail-w-min (symbols only, overlay on hover or click)
+     768-1143    drawer     Rail is a drawer; the Verdict panel is a strip between chart and Debate
+     below 768   phone      one column; the search is the ticker picker
+
+   Mobile first: the single column is the base, and each min-width rule adds a zone. */
 .app-shell {
-  /* Fills the viewport width (design.md Decision 14) — previously capped
-     at max-width: 72rem; margin: 0 auto, which centered the dashboard in
-     a fixed ~1152px column with unused space on either side on wide
-     screens. Horizontal padding still keeps content off the viewport
-     edges. */
-  padding: var(--space-xl) var(--space-lg);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding-block: var(--space-4);
+  padding-inline: var(--space-4);
 }
 
-.app-shell__main {
+/* The Stage and the Verdict panel. In the single column the panel sits where it is in the DOM:
+   after the chart, before the Debate matrix. */
+.workspace {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr);
-  gap: var(--space-lg);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Three equal Debate columns, whatever the Stage width. */
+.debate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (min-width: 768px) {
+  .workspace {
+    row-gap: var(--space-5);
+  }
+}
+
+@media (min-width: 1144px) {
+  .app-shell {
+    grid-template-columns: var(--rail-w-min) minmax(0, 1fr);
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) var(--verdict-w);
+    column-gap: var(--space-4);
+  }
+
+  .workspace > * {
+    grid-column: 1;
+  }
+
+  /* The Verdict panel is the one item of the right column, spanning every Stage row. */
+  .workspace > .verdict-panel {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+  }
+
+  .rail,
+  .verdict-panel {
+    position: sticky;
+    top: calc(var(--topbar-h) + var(--space-4));
+    max-height: calc(100vh - var(--topbar-h) - 2 * var(--space-4));
+    overflow-y: auto;
+    align-self: start;
+  }
+}
+
+@media (min-width: 1440px) {
+  .app-shell {
+    grid-template-columns: var(--rail-w) minmax(0, 1fr);
+    padding-inline: var(--space-6);
+  }
+}
+
+/* Drawer mode (768 to 1143px): the Verdict panel is a full-width strip between the chart and the
+   Debate. The typical move and its range check sit at the left, the verdict with Agreement and the
+   stance chips in the middle, Key tension at the right and Synthesis in a full-width row under
+   them, the disclaimer at the foot. The panel's wrappers dissolve (display: contents) so each piece
+   is a cell of one grid, and it is still one DOM tree in reading order: nothing is rendered twice.
+   Chosen by the layout mode the hook reports, which uses the breakpoints above, so the two agree.
+   Rows have no gap of their own (cells carry a bottom margin) so the unused rows of the grid, which
+   the spanning cells need, cost no height. */
+.app-shell[data-layout='drawer'] .verdict-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  grid-template-rows: repeat(9, auto) auto auto;
+  column-gap: var(--space-4);
+  row-gap: 0;
   align-items: start;
 }
 
-/* Spans both columns; the negative bottom margin offsets part of the grid
-   gap so the heading sits closer to the panels it names than to the ticker
-   panel above. */
-.app-shell__ticker {
+.app-shell[data-layout='drawer'] .verdict-panel__body,
+.app-shell[data-layout='drawer'] .verdict-panel__result,
+.app-shell[data-layout='drawer'] .verdict-panel__ready,
+.app-shell[data-layout='drawer'] .verdict-panel__running,
+.app-shell[data-layout='drawer'] .verdict-panel__insufficient,
+.app-shell[data-layout='drawer'] .verdict-panel__failure-box {
+  display: contents;
+}
+
+.app-shell[data-layout='drawer'] .verdict-panel > .range-block {
+  grid-column: 1;
+  grid-row: 1 / 10;
+}
+
+.app-shell[data-layout='drawer']
+  :is(
+    .verdict-panel__body,
+    .verdict-panel__result,
+    .verdict-panel__ready,
+    .verdict-panel__running,
+    .verdict-panel__insufficient,
+    .verdict-panel__failure-box
+  )
+  > * {
+  grid-column: 2;
+  margin-bottom: var(--space-2);
+}
+
+.app-shell[data-layout='drawer'] .verdict-panel__tension {
+  grid-column: 3;
+  grid-row: 1 / 10;
+  align-self: start;
+  margin-bottom: 0;
+}
+
+.app-shell[data-layout='drawer'] .verdict-panel__synthesis {
   grid-column: 1 / -1;
-  margin: 0 0 calc(-1 * var(--space-sm));
-  font-family: var(--font-display);
-  font-size: var(--text-lg);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--color-ink);
+  grid-row: 10;
 }
 
-.app-shell__ticker[data-empty] {
-  font-weight: 500;
-  color: var(--color-ink-3);
-}
-
-.app-shell__side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
-
-@media (max-width: 800px) {
-  .app-shell__main {
-    grid-template-columns: 1fr;
-  }
+.app-shell[data-layout='drawer'] .verdict-panel__foot {
+  grid-column: 1 / -1;
+  grid-row: 11;
 }

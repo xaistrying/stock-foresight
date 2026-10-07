@@ -1,0 +1,89 @@
+/* The range block: the typical 5-session move, its range check and its coverage. A size with no
+   direction, so nothing here carries an up or down colour. */
+.range-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.range-block__label,
+.range-block__check-label {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.range-block__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.range-block__figure {
+  margin: 0;
+  color: var(--ink);
+}
+
+.range-block__figure--placeholder {
+  color: var(--ink-muted);
+}
+
+.range-block__slot {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.range-block__check {
+  display: flex;
+  flex-direction: column;
+}
+
+.range-block__check p {
+  margin: 0;
+}
+
+.range-block__check .t-small {
+  color: var(--ink);
+}
+
+.range-block__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.range-block__message {
+  margin: 0;
+}
+
+/* A failure is named in words in the primary ink, never in a hue that could read as bearish. */
+.range-block__state[data-kind='failed'] {
+  color: var(--ink);
+}
+
+.range-block__spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: range-block-spin 0.7s linear infinite;
+}
+
+@keyframes range-block-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .range-block__spinner {
+    animation-duration: 1.4s;
+  }
+}
+
+.range-block__disclaimer {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+}

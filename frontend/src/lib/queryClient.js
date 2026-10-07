@@ -1,15 +1,18 @@
 import { QueryClient } from '@tanstack/react-query'
 
-// Single shared QueryClient for the app. Defaults kept conservative — the
-// dashboard's data (prices, range) is only as fresh as the last `/load`, so
-// React Query must not silently refetch on every window focus and hide how
-// old the stored data is (each chip says "Loaded Nd ago").
+// The dashboard's data (the catalog, prices, range) is only as fresh as the last `/load`, so React
+// Query must not silently refetch it: not on window focus, and not when a component that reads it
+// mounts again (a layout change moves the range block and the Rail in and out of the tree). It is
+// refetched when a load invalidates it, which is what keeps the "Loaded Nd ago" text honest.
+export const queryDefaults = {
+  refetchOnWindowFocus: false,
+  staleTime: Infinity,
+}
+
+// Single shared QueryClient for the app.
 export const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
+    queries: { retry: 1, ...queryDefaults },
   },
 })
 
