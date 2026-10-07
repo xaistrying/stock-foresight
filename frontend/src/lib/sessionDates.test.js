@@ -1,35 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  approximateTargetDate,
-  intermediateSessionDates,
-  logReturnToPercent,
-  logReturnToPrice,
-} from './logReturn'
-
-describe('logReturnToPercent', () => {
-  it('converts a zero log return to 0%', () => {
-    expect(logReturnToPercent(0)).toBeCloseTo(0, 10)
-  })
-
-  it('converts a positive log return to a positive percentage', () => {
-    // ln(1.023) ~= 0.02274 -> back to +2.3%
-    expect(logReturnToPercent(Math.log(1.023))).toBeCloseTo(2.3, 5)
-  })
-
-  it('converts a negative log return to a negative percentage', () => {
-    expect(logReturnToPercent(Math.log(0.989))).toBeCloseTo(-1.1, 5)
-  })
-})
-
-describe('logReturnToPrice', () => {
-  it('returns the reference close unchanged for a zero log return', () => {
-    expect(logReturnToPrice(0, 100)).toBeCloseTo(100, 10)
-  })
-
-  it('scales the reference close by e^x', () => {
-    expect(logReturnToPrice(Math.log(1.05), 100)).toBeCloseTo(105, 5)
-  })
-})
+import { approximateTargetDate, intermediateSessionDates, rangeBand } from './sessionDates'
 
 describe('approximateTargetDate', () => {
   it('steps forward 5 weekdays, skipping a weekend in between', () => {
@@ -63,5 +33,25 @@ describe('intermediateSessionDates', () => {
       expect(dayOfWeek).not.toBe(0) // Sunday
       expect(dayOfWeek).not.toBe(6) // Saturday
     }
+  })
+})
+
+describe('rangeBand', () => {
+  it('puts the bounds at close x (1 +/- r/100) at the t+5 date', () => {
+    const band = rangeBand(11, '2026-07-29', 5)
+
+    expect(band.time).toBe('2026-08-05')
+    expect(band.upper).toBeCloseTo(11.55, 10)
+    expect(band.lower).toBeCloseTo(10.45, 10)
+  })
+
+  it('is symmetric about the last close', () => {
+    const band = rangeBand(23.4, '2026-08-03', 3.7)
+
+    expect(band.upper - 23.4).toBeCloseTo(23.4 - band.lower, 10)
+  })
+
+  it('returns only the t+5 position, never a path', () => {
+    expect(Object.keys(rangeBand(10, '2026-07-29', 2)).sort()).toEqual(['lower', 'time', 'upper'])
   })
 })

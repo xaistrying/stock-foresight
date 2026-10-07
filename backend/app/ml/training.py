@@ -1,37 +1,17 @@
-from pathlib import Path
+"""Walk-forward split helpers over the `features` table. Holds no model.
+
+The XGBoost direction model that these helpers were written for is retired. What stays is the
+leakage-safe split machinery (`compute_fold_boundaries`, `purge_training_rows`) and the clean-row
+filter, which `scripts/evaluate_cross_sectional_momentum.py` and its tests still use.
+"""
 
 import pandas as pd
-import xgboost as xgb
-
-from app.db.connection import get_connection
-
-MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "models" / "pooled_xgb_model.json"
 
 TRAINING_TICKERS = ["TCB", "VIB", "VHM", "VND", "MWG", "HPG", "MSN", "VNM", "SAB"]
 
 N_FOLDS = 5
 
 TARGET_HORIZON = 5
-
-# design.md Decision 5: conservative, untuned posture — shallow trees, a
-# moderate learning rate relying on early stopping rather than a large
-# fixed n_estimators, subsample/colsample_bytree < 1.0 for regularization,
-# and a min_child_weight above the library default (1). Chosen for the
-# sample-size ceiling documented there (row count overstates the
-# effective independent sample size, since labels overlap 4-of-5 days
-# with their neighbors under Rule 1's 5-session horizon), not tuned
-# against any validation metric.
-XGB_PARAMS = {
-    "objective": "reg:squarederror",
-    "max_depth": 3,
-    "eta": 0.05,
-    "subsample": 0.8,
-    "colsample_bytree": 0.8,
-    "min_child_weight": 5,
-    "seed": 0,
-}
-MAX_BOOST_ROUNDS = 500
-EARLY_STOPPING_ROUNDS = 20
 
 FEATURE_COLUMNS = [
     "tenkan_sen",
@@ -49,24 +29,6 @@ FEATURE_COLUMNS = [
     "atr",
     "obv",
 ]
-
-
-def load_training_features() -> pd.DataFrame:
-    """Read `features` rows for `TRAINING_TICKERS` (design.md Decision 1),
-    ordered by ticker then date ascending. No filtering or feature-matrix
-    assembly here — see tasks 2.2/2.3.
-    """
-    placeholders = ", ".join("?" for _ in TRAINING_TICKERS)
-    conn = get_connection()
-    try:
-        return pd.read_sql_query(
-            f"SELECT * FROM features WHERE ticker IN ({placeholders}) "
-            "ORDER BY ticker ASC, date ASC",
-            conn,
-            params=tuple(TRAINING_TICKERS),
-        )
-    finally:
-        conn.close()
 
 
 def filter_clean_labeled(df: pd.DataFrame) -> pd.DataFrame:
@@ -87,15 +49,6 @@ def filter_clean_labeled(df: pd.DataFrame) -> pd.DataFrame:
     return df[
         (df["near_gap"] == 0) & (df["target"].notna()) & indicators_present
     ].reset_index(drop=True)
-
-
-def assemble_feature_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Assemble the model input feature matrix from the existing indicator
-    columns only (design.md Decision 3) — no `ticker` or other
-    ticker-derived column is included, so the model can't memorize
-    per-ticker base rates.
-    """
-    return df[FEATURE_COLUMNS]
 
 
 def compute_fold_boundaries(df: pd.DataFrame, n_folds: int = N_FOLDS) -> list[str]:
@@ -180,60 +133,3 @@ def purge_training_rows(full_df: pd.DataFrame, clean_df: pd.DataFrame, boundary:
     merged = clean_df.merge(label_dates, on=["ticker", "date"], how="left")
     keep = (merged["label_date"].isna() | (merged["label_date"] < boundary)).to_numpy()
     return clean_df[keep]
-
-
-def train_xgb_model(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_val: pd.DataFrame,
-    y_val: pd.Series,
-) -> xgb.Booster:
-    """Train an XGBoost regressor against `target` using the fixed
-    conservative configuration in `XGB_PARAMS` (design.md Decision 5): no
-    hyperparameter search — early stopping against the supplied validation
-    fold (`X_val`/`y_val`) is the only thing that determines the actual
-    number of boosting rounds used.
-    """
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval = xgb.DMatrix(X_val, label=y_val)
-    return xgb.train(
-        XGB_PARAMS,
-        dtrain,
-        num_boost_round=MAX_BOOST_ROUNDS,
-        evals=[(dval, "validation")],
-        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
-        verbose_eval=False,
-    )
-
-
-def train_final_model(full_df: pd.DataFrame, clean_df: pd.DataFrame) -> xgb.Booster:
-    """Train the final pooled model (tasks.md 4.2) on the full clean+labeled
-    dataset, following the same purge discipline (design.md Decision 4) as
-    the walk-forward backtest folds: the most recent fold boundary's test
-    window is held out as the early-stopping validation set, and the
-    training side is purged against that same boundary so no training
-    row's label overlaps the held-out period. This mirrors backtesting's
-    per-fold train/validation split rather than introducing a separate,
-    undocumented held-out scheme just for the final model.
-
-    `full_df` is the unfiltered per-ticker sequence (needed for the purge's
-    label-date lookup); `clean_df` is the near_gap=0/target-not-null set to
-    train on.
-    """
-    boundaries = compute_fold_boundaries(clean_df)
-    final_boundary = boundaries[-1]
-
-    train_df = purge_training_rows(full_df, clean_df, final_boundary)
-    train_df = train_df[train_df["date"] < final_boundary]
-    val_df = clean_df[clean_df["date"] >= final_boundary]
-
-    model = train_xgb_model(
-        assemble_feature_matrix(train_df),
-        train_df["target"],
-        assemble_feature_matrix(val_df),
-        val_df["target"],
-    )
-
-    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    model.save_model(MODEL_PATH)
-    return model

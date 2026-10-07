@@ -14,6 +14,8 @@ Expected result (design.md Decision 3 and Migration Plan step 3):
   legitimate moves under the wider limit of the exchange each traded on
   before migrating to HOSE.
 - The other 11 tickers are entirely clean, at both tiers.
+- VHM's blackout leaves exactly 11 labelled, near_gap = 0 `features` rows with
+  null indicators, 2018-11-16 to 2018-11-30 (the tail `near_gap` does not cover).
 
 WHY THE DESIGN'S "-69%" IS NOT A PERCENTAGE. The design describes the `VHM`
 2018-08-14 row as "approximately -69%". Measured, that session is a -49.87%
@@ -35,6 +37,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.ml.training import FEATURE_COLUMNS  # noqa: E402
 from app.services.ohlcv_quality_gate import (  # noqa: E402
     FLAG_TIER_HARD,
     FLAG_TIER_SOFT,
@@ -55,6 +58,7 @@ EXPECTED_HARD = {("VHM", "2018-08-14")}
 MIGRATED = ("ACB", "VIB", "VND")
 EXPECTED_SOFT_TOTAL_MIGRATED = 24
 EXPECTED_CLEAN_TICKERS = 11
+EXPECTED_VHM_BLACKOUT = (11, "2018-11-16", "2018-11-30")  # rows, first date, last date
 
 # The known-answer expectations above hold for exactly these 15 tickers, whose
 # flags were established by hand. Once the batch ingest adds hundreds more,
@@ -76,6 +80,12 @@ def main() -> int:
     conn = sqlite3.connect(DB_PATH)
     try:
         tickers = [r[0] for r in conn.execute("SELECT ticker FROM tickers ORDER BY ticker")]
+        blackout_condition = " OR ".join(f"{column} IS NULL" for column in FEATURE_COLUMNS)
+        vhm_blackout = conn.execute(
+            "SELECT COUNT(*), MIN(date), MAX(date) FROM features "
+            "WHERE ticker = 'VHM' AND near_gap = 0 AND target IS NOT NULL "
+            f"AND ({blackout_condition})"
+        ).fetchone()
         histories = {
             ticker: pd.read_sql(
                 "SELECT date, close FROM ohlcv WHERE ticker = ? ORDER BY date ASC",
@@ -171,6 +181,13 @@ def main() -> int:
         if is_step
         else "close reverts after the jump — this is a bad print, and "
              "neutralising the return alone is the wrong repair",
+    ))
+
+    checks.append((
+        "VHM's blackout leaves 11 labelled near_gap = 0 rows with null indicators, "
+        "2018-11-16 to 2018-11-30",
+        vhm_blackout == EXPECTED_VHM_BLACKOUT,
+        f"got {vhm_blackout}",
     ))
 
     print()
