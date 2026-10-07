@@ -108,4 +108,36 @@ Refresh, and potentially changes what's shown in the AI insight panel
 `/opsx:propose` as its own change rather than folding into an existing
 one.
 
-**Status**: open, undecided. Not blocking anything currently shipped.
+**Update 2026-10-07**: there is no served prediction to log any more: the
+product moved to a volatility band and a debate verdict (`multi-agent-debate-analyst`).
+Rule 4, as approved in `align-rules-and-disclaimer`, is the range hit-rate
+measured from price history, not a backtest hit-rate, so "Confidence" and the
+options above that mention it are superseded. Options 2 to 4 (log runs, then
+score them against realised outcomes) were taken up for debates by
+`debate-outcome-log`; see the update below.
+
+**Update 2026-10-07 (`debate-outcome-log` applied)**: options 2 and 3 are done
+for the debate. Every debate run is now one row in `backend/data/debate_log.db`
+(its own file, not `app.db`: the log cannot be rebuilt), and
+`backend/scripts/score_debates.py`, run by hand and offline, scores a row once its
+fifth market session is in `ohlcv` and reports range coverage and directional
+hit-rates against base rates, with a clustered interval rather than a naive one.
+Still deferred: option 4 (no hit-rate is shown to any user), any scheduler, a
+piggyback on Refresh, and a nightly basket. Rule 4 is ruled by
+`align-rules-and-disclaimer`; this change only produces the measurement.
+
+**Nothing was backfilled.** The seven `reports/*.md` files that predate the log
+were not imported, because: they hold no structured fields (stances are markdown
+text; no close at `as_of`, eligibility, degradation flags, model hash, headline ids
+or macro values); the date in a filename is `result.as_of`, which was
+`date.today()` when the technical agent failed; the "Volatility range" in the early
+ones is the per-session sigma labelled as a 5-session range, with no `range_k`;
+they were produced while the agents were still changing (the foreign-flow vote rule
+changed on 2026-10-05), so they are not runs of one specification; and any value
+reconstructed now (such as the close at the time) would be exactly the revised data
+the log exists to avoid. Seven rows from three tickers carry almost no statistical
+weight and would contaminate a table whose value is provenance.
+
+**Status**: debate version done for options 2 and 3 (`debate-outcome-log`); option 4
+and any scheduler deferred; open for the old prediction path. Not blocking anything
+currently shipped.

@@ -60,7 +60,7 @@ the repo (see "Reproducing").
   all delisted (MTC 2818%, SQC 722%); 49 are above 15%. Live tickers top out
   at about 6.3%. Delisted tickers are loaded, selectable, and not filtered by
   the debate endpoint.
-- Trained on the 208 modelling-universe tickers, served to all 599 loaded. On
+- Trained on the 208 modelling-universe tickers, served to all 599 loaded symbols (the dashboard lists only 208 of them). On
   the 379 outside it, ×1 covers 53.7% and ×√5 covers 74.7%, so it is too wide
   there. The range is `None` only for the 7 tickers with fewer than 60 closes.
 - The estimate is median-type: realised mean σ is about 14% above mean
@@ -176,12 +176,15 @@ the repo (see "Reproducing").
   on in the owner's running app.
 - The Fresh/Stale dot is wrong for nearly every ticker (see
   `DISCUSSION_calendar_staleness.md`) and is fed by `/prediction`.
-- Page load makes about 1 + 3 × 599 ≈ 1,800 requests (derived from code, not
-  measured in a browser): `TickerPanel.jsx:34` renders every loaded ticker and
-  each chip fires `/prediction` and `/history`
+- Page load makes about 1 + 3 × 208 = 625 requests (derived from code, not
+  measured in a browser; corrected 2026-10-07, this file first said 1,800):
+  `GET /tickers` returns the 208-symbol catalog (all loaded, 4 delisted;
+  `list_tickers_endpoint` filters by the universe), `TickerPanel.jsx:34` renders
+  each as a chip, and each chip fires `/prediction` and `/history`
   (`useTickerFreshness.js:26-38`) and `/insight` (`TickerChip.jsx:88`). Each
-  `/prediction` unpickles the HAR model and reads the full OHLCV. 229 of the
-  loaded symbols are delisted. Removing the prefetch loses instant first paint
+  `/prediction` unpickles the HAR model and reads the full OHLCV. The other 391
+  of the 599 rows in `tickers` are outside the catalog and are reachable only
+  through search. Removing the prefetch loses instant first paint
   on selection (history and prediction share cache keys with the chart), not
   correctness.
 - Blast radius if the direction model were removed (ML reviewer):
@@ -276,8 +279,12 @@ the repo (see "Reproducing").
 
 ## Where the reviewers disagreed, or earlier statements were wrong
 
-- Loaded tickers: 599, not 208. The comment at `TickerPanel.jsx:41` is stale;
-  208 is the modelling universe.
+- Loaded tickers: the `tickers` table holds 599 rows, but the dashboard's
+  catalog and Watchlist are the 208-symbol modelling universe, so the comment
+  at `TickerPanel.jsx:41` ("208") was right. An earlier version of this review
+  (and its first summary to the owner) said the Watchlist rendered 599 chips
+  and about 1,800 requests; that was wrong and was corrected on 2026-10-07 by
+  the `retire-direction-model` draft, then confirmed against the database.
 - Debate latency: "4–8 s" exists only as a frontend comment
   (`DebatePanel.jsx:163`). The README documents about 45–50 s on `claude_cli`.
 - Stale-ticker counts differ slightly between reviewers (367 vs 392 ending in
@@ -327,8 +334,9 @@ the repo (see "Reproducing").
    provenance labelling. Resolve 2 neutral + 1 directional (SPLIT or OBSERVE).
 7. **Outcome tracking now.** The only route to a measurable Rule 4 replacement
    and to range-coverage scoring.
-8. **Watchlist.** Curate it rather than rendering all 599 loaded tickers, 229 of
-   which are delisted.
+8. **Watchlist.** Decide whether to curate it further: it currently lists the
+   208-symbol catalog (4 delisted). The 391 other loaded symbols, 190 of them delisted,
+   appear only through search.
 9. **Doc sync.** One change that updates `CLAUDE.md` and `config.yaml` in
    lockstep, plus `MODEL_CARD`, `DISCLAIMER` and the status lines above.
 

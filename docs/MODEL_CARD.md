@@ -1,9 +1,18 @@
 # Model Card: Pooled XGBoost Regressor (M3)
 
+> **Status: retired as a product output (2026-10-05 pivot).** The XGBoost
+> directional model below was replaced by a HAR-RV volatility band plus a
+> three-agent debate (see "HAR-RV volatility model" at the end). Removing it
+> from serving and the dashboard is tracked by `retire-direction-model`. This
+> card is kept as the historical record: its statements that "M6's confidence
+> score (Rule 4) reads" the rolling hit-rate (Hit-rate definition and the
+> "Most recent ~60 predictions" table) no longer apply, because Rule 4 is now
+> the range hit-rate.
+
 Documents the first-pass model trained by
-`openspec/changes/xgboost-training-pipeline/`: `backend/app/ml/training.py`
+`openspec/changes/archive/2026-07-30-xgboost-training-pipeline/`: `backend/app/ml/training.py`
 and `backend/app/ml/backtest.py`. Design rationale:
-`openspec/changes/xgboost-training-pipeline/design.md`.
+`openspec/changes/archive/2026-07-30-xgboost-training-pipeline/design.md`.
 
 This is a first pass proving the pipeline (features -> training ->
 walk-forward backtest -> persisted model) works end-to-end, not a tuned or
@@ -258,3 +267,27 @@ adds real complexity not attempted here.
   for the nine; both would be for a universe-wide model.
 - No FastAPI prediction endpoints or UI — this change stops at a persisted
   model, persisted backtest results, and this document.
+
+## HAR-RV volatility model (current, 2026-10-05)
+
+The model behind the 5-session band, in `backend/app/ml/volatility.py`
+(trained by `backend/scripts/train_har_rv.py`).
+
+- **Features**: `rv5`, `rv20`, `rv60`, the trailing standard deviation of daily
+  log returns over 5, 20 and 60 sessions.
+- **Target**: the daily sigma of log returns over the next 5 sessions (the
+  standard deviation of the next five daily log returns), not the 5-session
+  return (Rule 1). It is fitted as a linear regression on log-volatility and
+  displayed as a percentage (Rule 2).
+- **Artifact**: `backend/data/models/har_rv_model.json` (intercept, three
+  coefficients, the band multiplier `range_k` and the nominal `range_coverage`,
+  plus training metadata), written atomically by `backend/scripts/train_har_rv.py`
+  and loaded without pickle. `backend/data/models/*` is gitignored, so the file
+  is not in the repository and must be regenerated with the training script.
+- **Measured quality**: the band's coverage of real 5-session moves is measured
+  by `backend/scripts/evaluate_vol_range.py` (read-only; preserved by
+  `calibrate-volatility-range`). On 2026-10-07 the calibrated band (nominal
+  coverage 0.68) contained 68.0% of all windows, 70.6% over the last 12 months
+  and 73.0% in the out-of-time test. Re-run the script rather than trusting
+  these figures; the earlier exploratory numbers in
+  `docs/DISCUSSION_model_direction.md` are not the shipped model's.

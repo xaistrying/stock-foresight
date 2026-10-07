@@ -4,7 +4,7 @@ Schema and known quirks for the data ingested by
 `backend/app/services/ticker_ingestion.py` (`POST /tickers/{ticker}/load`).
 Source: [ticker_ingestion.py](../backend/app/services/ticker_ingestion.py),
 [schema.py](../backend/app/db/schema.py). Design rationale:
-`openspec/changes/data-ingestion-vnstock/design.md`.
+`openspec/changes/archive/2026-07-27-data-ingestion-vnstock/design.md`.
 
 ## Tables
 
@@ -41,7 +41,7 @@ reload alike.
 Engineered technical-analysis features and the prediction target, one row
 per `(ticker, date)`, computed from `ohlcv` by
 [feature_engineering.py](../backend/app/ml/feature_engineering.py). Design
-rationale: `openspec/changes/feature-engineering-ta/design.md`.
+rationale: `openspec/changes/archive/2026-07-29-feature-engineering-ta/design.md`.
 
 **Indicator computation approach: hand-rolled (pandas/numpy), not a
 library.** `pandas-ta` was considered and rejected — it has had no PyPI
@@ -51,7 +51,7 @@ ATR, and OBV are all short, well-known formulas, so hand-rolling with
 `pandas`/`numpy` (both added to `backend/requirements.txt`) avoids taking on
 an unmaintained dependency and keeps every parameter (periods, smoothing)
 explicit in code rather than relying on a library's silent defaults. See
-`openspec/changes/feature-engineering-ta/design.md` Decision 4.
+`openspec/changes/archive/2026-07-29-feature-engineering-ta/design.md` Decision 4.
 
 | Column | Type | Parameters | Warm-up window | Notes |
 | --- | --- | --- | --- | --- |
@@ -71,7 +71,7 @@ explicit in code rather than relying on a library's silent defaults. See
 | `bb_lower` | REAL | period 20, 2 std | 20 rows | `SMA(close, 20) - 2 * population_std(close, 20)` |
 | `atr` | REAL | period 14, Wilder smoothing | 15 rows | True Range = `max(high-low, \|high-prev_close\|, \|low-prev_close\|)`, then Wilder-smoothed (same seeding as RSI) |
 | `obv` | REAL | | full ticker history | Cumulative signed volume from the ticker's earliest stored row; not a bounded window — see Decision 5 below |
-| `target` | REAL | horizon 5 sessions | n/a (looks forward, not back) | Rule 1: `ln(close[t+5] / close[t])`, 5 TRADING SESSIONS ahead (row offset, not calendar days); `NULL` for a ticker's last 5 stored sessions (insufficient future data) — the row is still written with feature columns populated. Also `NULL` for the 5 sessions before a hard-flagged one; see [hard-flag nulling](#hard-flag-nulling-in-features) |
+| `target` | REAL | horizon 5 sessions | n/a (looks forward, not back) | Rule 1: the realised outcome `outcome_t = ln(close[t+5] / close[t])`, 5 TRADING SESSIONS ahead (row offset, not calendar days), that ranges and verdicts are scored against. It is not the volatility model's target (that is the daily sigma over the next 5 sessions, computed in `app/ml/volatility.py`, not stored here); `NULL` for a ticker's last 5 stored sessions (insufficient future data) — the row is still written with feature columns populated. Also `NULL` for the 5 sessions before a hard-flagged one; see [hard-flag nulling](#hard-flag-nulling-in-features) |
 | `near_gap` | INTEGER NOT NULL | | | `1`/`0`; see semantics below |
 | `computed_at` | TEXT NOT NULL | | | ISO timestamp set on every upsert; see caveat below |
 
@@ -152,7 +152,7 @@ recompute. See design Decision 8.
 The set of symbols the system knows about, one row per symbol. Distinct from
 `tickers`, which means "something we have loaded" — a `ticker_universe` row
 exists for symbols never fetched and for symbols whose fetch failed. Design
-rationale: `openspec/changes/hose-universe-ingestion/design.md` Decision 1.
+rationale: `openspec/changes/archive/2026-09-07-hose-universe-ingestion/design.md` Decision 1.
 
 The key column is `symbol`, not `ticker`. This table is the authority on what
 a symbol *is*; `ohlcv`, `features`, and `tickers` key on `ticker` as the thing
@@ -198,6 +198,69 @@ recomputing and rewriting flags for every row of every load; design Decision
 Indexed on `flag_tier` (`idx_ohlcv_quality_flags_tier`), since the common
 query is "all hard-flagged rows" when excluding them from feature and
 volatility computation.
+
+## `debate_log.db` (a second database)
+
+`backend/data/debate_log.db` is a separate SQLite file from `app.db`, created on
+the first debate run by `app/db/debate_log.py` (`app.db`'s `init_db` does not know
+it). It holds one table, `debate_log`, written by
+`app/services/debate/outcome_log.py` and scored by
+`backend/scripts/score_debates.py`.
+
+**Unlike `app.db`, this file cannot be rebuilt**: the News and Macro agents read
+live data, so a lost row cannot be recreated. Back it up (see `KNOWN_ISSUES.md`).
+It is gitignored by `data/*.db`.
+
+### `debate_log`
+
+One row per completed debate run, every run kept (a re-run of the same ticker and
+`as_of` is a new row; abstentions are rows too). No uniqueness on `(ticker, as_of)`.
+Percent columns are percentages, not log returns, except `r5`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER PK AUTOINCREMENT | surrogate key; the response's `debate_log_id` |
+| `ticker` | TEXT NOT NULL | |
+| `as_of` | TEXT NOT NULL | the features-row date the run used (`data_as_of`), never the run date |
+| `run_at` | TEXT NOT NULL | UTC ISO-8601 with offset |
+| `close_at_asof` | REAL | `ohlcv` close for `(ticker, as_of)` when logged (audit anchor: stored closes can be revised) |
+| `data_age_sessions` | INTEGER | sessions between `as_of` and the run (0 = run on the `as_of` session) |
+| `eligible`, `eligibility_reasons` | INTEGER NOT NULL, TEXT (JSON list) | the data-eligibility verdict |
+| `agents_degraded` | TEXT (JSON list) | agents without a vote |
+| `sigma_daily_pct`, `range_5s_pct`, `range_k`, `range_coverage` | REAL | the displayed band; NULL when unavailable (`range_coverage` is also NULL for an uncalibrated ticker) |
+| `r1_technical`, `r1_news`, `r1_macro`, `r2_technical`, `r2_news`, `r2_macro` | TEXT | `bull`/`bear`/`neutral` per agent and round; NULL when the agent did not run or did not vote |
+| `verdict`, `agreement_level` | TEXT | the synthesised verdict (enum value, not label) and agreement |
+| `model_sha256` | TEXT | SHA-256 of `har_rv_model.json`; NULL if absent |
+| `llm_provider`, `llm_model`, `llm_effort` | TEXT | the language model behind the agents (`llm_effort` only for `claude_cli`) |
+| `code_rev` | TEXT | short git revision, `+dirty` if the tree had uncommitted changes; NULL if git was unavailable |
+| `evidence` | TEXT (JSON) | what the agents used: `{technical: indicator values, near_gap, range_k; news: headline_ids [{tag, date, id}]; macro: slope, relative return, USD/VND change, foreign net and gross VND, foreign_vote_counted}` |
+
+Not stored, on purpose: agent reasoning or synthesis text, headline titles or
+snippets (only 12-character SHA-256 ids), `range_hit_rate`, and any environment
+value other than the three `llm_*` ones.
+
+Outcome columns, NULL until `score_debates.py` fills them, once:
+
+| Column | Meaning |
+|---|---|
+| `outcome_status` | `scored`; `void_gap` (the ticker has no bar on the fifth market session but has a later one); `void_no_bar` (no positive close on `as_of` or the target session). NULL = pending |
+| `scored_at` | UTC time of scoring |
+| `date_t5` | the fifth market session after `as_of` (Rule 1: sessions, not calendar days). A row is scored only once the ticker also has a bar after it, because a pull made during that session stores a provisional bar; refresh after the next session has closed |
+| `close_asof_at_scoring`, `close_t5` | the closes the row was scored on, both read from current `ohlcv` |
+| `r5` | `ln(close_t5 / close_asof_at_scoring)`, a log return like `features.target` |
+| `inside_band` | 1 if `abs(r5) * 100 <= range_5s_pct`; NULL without a band |
+| `direction_hit` | for `STRONG_BUY_SIGNAL`/`BUY_SIGNAL`: 1 if `r5 > 0`; for `CAUTION_SIGNAL`/`STRONG_CAUTION_SIGNAL`: 1 if `r5 < 0`; a zero move is a miss; NULL for other verdicts |
+
+A row with a non-NULL `outcome_status` is never rewritten.
+
+## Files outside the database
+
+- `backend/data/models/har_rv_model.json`: the HAR-RV linear model and band
+  multiplier behind the 5-session band (see `docs/MODEL_CARD.md`). Gitignored
+  (`backend/data/models/*`); regenerate with `backend/scripts/train_har_rv.py`.
+- `reports/<as_of>_<TICKER>.md` at the repo root: exported debate reports.
+  `reports/*.md` is gitignored; a re-run for the same ticker and date replaces
+  the file, and an `INSUFFICIENT_DATA` result writes none.
 
 ## Quirks and caveats
 

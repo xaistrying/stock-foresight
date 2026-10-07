@@ -6,6 +6,10 @@ after observing that a ticker loaded 13 days ago (`VHM`) still showed
 working exactly as designed. Recording it here because the gap it leaves
 is worth a deliberate decision, not a silent assumption.
 
+**Update 2026-10-07**: the dot is fed by `/prediction` (the retired XGBoost
+path), so its fate follows `retire-direction-model`: it needs a new source or
+goes. The calendar-age question below stays open.
+
 ## How Fresh/Stale actually works today
 
 Defined in [`useTickerFreshness.js`](../frontend/src/hooks/useTickerFreshness.js),
@@ -43,12 +47,12 @@ Fresh, because Fresh only checks internal consistency (prediction agrees
 with its own stored data), never "is this data itself old by wall-clock
 time." This exact gap is what motivated the `ticker-manual-refresh`
 change in the first place (see its
-[proposal.md](../openspec/changes/ticker-manual-refresh/proposal.md),
-still active/unarchived as of this writing) — Refresh and the "Loaded
+[proposal.md](../openspec/changes/archive/2026-08-12-ticker-manual-refresh/proposal.md),
+archived 2026-08-12) — Refresh and the "Loaded
 Xd ago" text next to it exist *because* the dot can't tell you a ticker
 is calendar-stale. That change explicitly scoped a calendar-age
 indicator **out**, deferring it as a future decision (see that change's
-[design.md](../openspec/changes/ticker-manual-refresh/design.md)
+[design.md](../openspec/changes/archive/2026-08-12-ticker-manual-refresh/design.md)
 "Non-Goals" and "Open Questions").
 
 ## The open question

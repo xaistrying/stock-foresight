@@ -221,3 +221,165 @@ alongside the existing `invalid_symbol` matches.
 `test_well_formed_ticker_with_no_data_reports_status_no_data` in
 `backend/tests/test_ticker_ingestion.py`. (This entry previously said
 "not yet covered"; that's no longer accurate as of this check.)
+
+## Post-pivot review: five security and rule gaps in the debate surface
+
+**Found**: the 2026-10-06 post-pivot review (`docs/DISCUSSION_post_pivot_review.md`),
+recorded by `align-rules-and-disclaimer`. Each entry was confirmed by reading
+the code on 2026-10-06 and re-checked against the tree on 2026-10-07. None was
+exploited or reproduced against a live system. The owner has said the app is
+for personal use, which sets the risk level; the entries are here so they are
+fixed or accepted deliberately.
+
+### 1. RSS headline text is untrusted input to LLM prompts
+
+**Surface**: `backend/app/services/debate/news_feeds.py`, `news.py`, the
+debate prompts, the panel and the exported reports.
+
+**What exists today**: `_clean` strips markup and control characters and caps
+titles at 200 and snippets at 160 characters (`TITLE_MAX`, `SNIPPET_MAX`,
+`news_feeds.py:58-59`). The News prompt tells the model to ignore instructions
+inside headlines (`news.py:50`).
+
+**Not done**: headlines are not fenced as data in the prompt, and their text is
+echoed into Round 2, the synthesis, the UI and the report, so an
+instruction-shaped headline can steer the model and reach the user.
+
+**Fix**: `harden-debate-runtime` (2026-10-07). Headlines go into the News prompt
+inside a fence with every `<` and `>` replaced by a space, so they cannot close
+it; the other agents' bullets (which can quote headlines) are fenced in every
+Round 2 prompt and in both synthesiser prompts, and so is the News agent's own
+Round 1 reasoning. Every prompt says to describe and not to recommend. Model
+output is checked by a narrow pattern that replaces a recommendation-style
+sentence with a visible placeholder (`prompt_safety.py`).
+
+**Still true**: this is a backstop, not a classifier. Paraphrase, euphemism and
+most Vietnamese phrasing pass the output check, a news item relaying a named
+broker's call ("BSC recommends buying VCB") is withheld although it is
+description, and a fence reduces injection risk without eliminating it.
+
+**Status**: mitigated, not closed.
+
+### 2. The `claude_cli` provider runs a subprocess with the prompt in argv
+
+**Surface**: `backend/app/services/debate/llm_client.py` (`claude_cli`
+provider, command built near `:134-158`) and `POST /tickers/{ticker}/debate`.
+
+**What exists today**: the prompt is passed in argv, so it is visible in `ps`
+on the machine (the code accepts this as market data). Tools are disabled
+(`--tools ""`), user settings and MCP servers are skipped, the working
+directory is an empty one, and each call times out after 120 s
+(`CLAUDE_CLI_TIMEOUT_SECONDS`).
+
+**Not done**: no retries after a timeout, and no cap on concurrent
+`POST /debate` requests, so repeated requests start many subprocesses.
+
+**Fix**: `harden-debate-runtime` (2026-10-07). Every call, for every provider, is
+bounded by `DEBATE_LLM_CALL_TIMEOUT_SECONDS` (60 s; the hard-coded 120 s is gone),
+a fast failure is retried once and a timeout is not, at most
+`DEBATE_MAX_CONCURRENT_RUNS` (2) runs are in flight per process (one more is
+HTTP 429), and requests for a ticker already running join that run. The OpenAI and
+Anthropic SDK defaults (600 s read timeout, 2 retries; measured on openai 3.24.0
+and anthropic 1.11.0) are replaced the same way.
+
+**Still true**: the prompt is visible in `ps` while a call runs (accepted: it is
+market data).
+
+**Status**: fixed except the `ps` visibility; the limits are per process (below).
+
+### 3. `pickle.load` of the HAR-RV model file
+
+**Surface**: `backend/app/ml/volatility.py` at HEAD `e77986e` (`pickle.load`
+at `:139`, on every call) and `backend/scripts/train_har_rv.py`.
+
+**What existed**: `backend/data/models/har_rv_model.pkl` was gitignored,
+written non-atomically, and had no hash or metadata. Anyone who could write
+`backend/data/models/` could run code in the server when the file was loaded.
+
+**Fix**: `calibrate-volatility-range` (archived 2026-10-07) stores the model
+as `har_rv_model.json`, written atomically and loaded without pickle
+(`volatility.py` needs numpy only). Re-checked 2026-10-07: no `pickle` import
+remains in `volatility.py`.
+
+**Status**: fixed once the change's commit lands; closed. (Kept as a record of
+the review's finding.)
+
+### 4. Ticker, indicator and headline data go to a third-party LLM provider
+
+**Surface**: every debate run (`llm_client.py`).
+
+**What exists today**: the ticker symbol, indicator values, the range, macro
+numbers and up to 19 headlines are sent to the configured provider (OpenAI or
+Anthropic API, or the user's Claude login through `claude_cli`). No holdings
+or personal data are sent.
+
+**Not done**: the vendors' retention and training terms were not reviewed. The
+owner has said the app is for personal use; if it is ever shown beyond that,
+confirm the wording and the data handling with whoever owns compliance.
+
+**Status**: open; a data-handling note, not a code defect.
+
+### 5. The Macro agent's fixed price-move thresholds do not meet Rule 3
+
+**Surface**: `backend/app/services/debate/macro.py`: the trend helper (slope
+beyond 0.05% of the series mean, `:67-69`) and the ticker-versus-VN-Index vote
+(relative 20-session return beyond +/-1 point, near `:339`).
+
+**What exists today**: both classify the size of a price move with fixed
+numbers. Rule 3 as re-homed ("magnitude thresholds are volatility-relative")
+does not cover them. The owner accepted this gap on 2026-10-07 rather than
+narrowing the rule's text.
+
+**Not done**: retrofitting volatility-relative thresholds; the effect of the
+fixed thresholds on the Macro agent's votes has not been measured. The stale
+comment "Rule 3's 0.5" in `macro.py` goes with it.
+
+**Status**: open; owned by whoever next changes the Macro agent.
+
+## `POST /tickers/{ticker}/debate` is unauthenticated and spends the owner's LLM budget
+
+**Found**: applying `harden-debate-runtime` (2026-10-07); owner ruling: no
+authentication for a personal localhost app. Reproduced, not assumed: the endpoint
+test `test_known_issue_the_debate_endpoint_runs_for_any_caller_with_no_credentials`
+(`backend/tests/test_debate_export_api.py`) sends a request with no credentials and
+a foreign `Origin` header and gets HTTP 200 and one run.
+
+**What exists today**: anyone who can reach the port can start debate runs, and each
+run costs up to 8 LLM calls (an API bill, or the owner's Claude subscription usage
+through `claude_cli`). The concurrency cap and the joining of same-ticker requests
+guard against accidents (a double click, two tabs, a loop in a test script), not a
+hostile caller. CORS restricts browsers only: it stops a page on another origin from
+reading the answer, not from causing the run, and `curl` is not affected at all.
+
+**What protects it**: `make up` starts uvicorn on its default `127.0.0.1`, and the
+CORS allow-list names only the Vite dev origins. The limits are per process: with
+`uvicorn --workers N` every worker would allow its own runs (the Makefile starts one).
+
+**What would invalidate this**: binding to a non-loopback address, putting the app
+behind a proxy or a tunnel, running several workers, or any use beyond the owner's
+own machine. Add authentication and per-caller rate limits first.
+
+**Not done**: authentication, per-caller limits, shared limits across workers,
+server-side cancellation when a client disconnects (an abandoned request still runs
+to its end and spends its calls).
+
+**Status**: open; accepted for personal use.
+
+## `backend/data/debate_log.db` is irreplaceable and sits among disposable files
+
+**Found**: applying `debate-outcome-log` (2026-10-07). Not a defect: a hazard of the layout.
+
+**What exists today**: the debate outcome log lives in `backend/data/debate_log.db`,
+under `data/*.db`, which the repo treats as generated and reproducible (`app.db`
+rebuilds by reloading tickers). The log does not: News and Macro read live data, so
+a deleted row cannot be recreated, and the rows are the only record of what the
+product said and what the price then did. There is no off-machine copy.
+
+**What to do**: back it up by copying the file, or
+`sqlite3 backend/data/debate_log.db ".dump" > debate_log.sql`. Never clean
+`backend/data/*.db` blindly (a `rm data/*.db`, a `git clean -x`, a fresh clone's
+rebuild script). Deleting `app.db` is safe for the log; deleting the log is not.
+
+**Not done**: an automatic backup or export; it was out of scope.
+
+**Status**: open; a standing caution, not a task.

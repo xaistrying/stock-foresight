@@ -571,5 +571,13 @@ start rather than ad hoc, per the same discipline this section documents
 for the earlier findings. Read-only; verified bit-identical across two
 consecutive runs on 2026-09-11.
 
-**Status**: open, undecided. Nothing here has been implemented. The
-directional model as shipped is unchanged and still serving predictions.
+**Update 2026-10-07**: Option 3 (pivot to volatility) was taken by
+`multi-agent-debate-analyst` (archived 2026-10-05), which replaced the
+directional prediction with a HAR-RV volatility band and a three-agent debate.
+The consequences for the domain rules are proposed in
+`align-rules-and-disclaimer`; the review that prompted the follow-up work is
+`docs/DISCUSSION_post_pivot_review.md`.
+
+**Status**: Option 3 taken; the other options were not pursued. The
+XGBoost directional model is retired as a product output and is still served
+by `/prediction` and `/insight` until `retire-direction-model` removes it.
