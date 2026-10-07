@@ -4,11 +4,12 @@ schema: spec-driven
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
 context: |
-  Product: web app predicting short-term price movement for Vietnamese stocks.
-  Dashboard = chart panel + ticker-loading panel (vnstock -> SQLite) + AI insight
-  panel (Confidence, Market Sentiment, Advice). Model v1 is a single XGBoost
-  regressor. SageMaker and real news-based sentiment are future milestones
-  (M7, M8) — not implemented, do not assume they exist.
+  Product: web app for Vietnamese HOSE stocks. A HAR-RV volatility model gives
+  a 5-session typical-move band; a three-agent LLM debate (technical, news,
+  macro; two rounds) gives a verdict by deterministic vote over Round 2
+  stances. The XGBoost return predictor is retired (served until
+  `retire-direction-model` lands; docs/MODEL_CARD.md). SageMaker (M7) is not
+  implemented.
 
   Tech stack: FastAPI (Python, pip + requirements.txt — no poetry/uv without
   asking first), Vite + React (npm), SQLite, XGBoost. Data source is the
@@ -29,31 +30,37 @@ context: |
   Non-negotiable domain rules — restate the rule number in any spec/design that
   touches one of these; if a task seems to require changing one, stop and ask
   first rather than silently changing it:
-    1. Prediction target: target_t = ln(close[t+5] / close[t]) — log return,
-       5 TRADING SESSIONS ahead, not calendar days.
+    1. Horizon and outcome: the horizon is 5 TRADING SESSIONS ahead, not
+       calendar days. Ranges and verdicts are scored against the realised
+       outcome_t = ln(close[t+5] / close[t]); the volatility model targets the
+       daily sigma of log returns over the next 5 sessions, displayed as a
+       5-session band.
     2. Never show raw log return in the UI — convert to a simple percentage
        for display.
-    3. Advice thresholds are volatility-relative: 0.5 x rolling_std(returns,
-       60 sessions), not a fixed number. The 0.5 coefficient is provisional
-       and may change after backtesting (M3) — the volatility-relative
-       *design* is not provisional.
-    4. Confidence score (v1) = backtested hit-rate over the ticker's most
-       recent ~60 predictions. Not a statistical prediction interval (that's
-       a future quantile-regression upgrade, out of v1 scope).
-    5. "Market Sentiment" is a technical proxy (RSI, MACD, Ichimoku position),
-       not real news/NLP sentiment. Must be labeled as such in the UI.
+    3. Magnitude thresholds are volatility-relative: any threshold on the size
+       of a price move is set relative to the ticker's volatility, not as a
+       fixed number. (The former Advice formula and its 0.5 coefficient are
+       retired with Advice.)
+    4. Reliability is measured, never asserted: the only reliability figure
+       shown is the range hit-rate, measured from price history and labelled
+       as such. The agent vote count is labelled Agreement, never Confidence.
+       The band states its nominal coverage; it is not a guaranteed interval.
+    5. Label by provenance: name each agent for what it reads (Technical
+       Signal, News Context, Macro) and mark language-model text as such.
+       "Market Sentiment" is reserved for the technical proxy (RSI, MACD,
+       Ichimoku) and is never applied to news, macro or a verdict.
     6. Never frame output as investment advice. Use "technical observation"
-       framing and show the disclaimer from docs/DISCLAIMER.md anywhere
-       Advice, Confidence, or Sentiment is displayed.
+       framing. Verdict labels contain no buy, sell, hold or other
+       instruction. Show the disclaimer from docs/DISCLAIMER.md wherever a
+       verdict, Agreement, a range or agent reasoning is displayed or
+       exported.
 
   Repository structure: backend/app/{api,core,db,services,ml}/,
   backend/data/app.db, frontend/src/{components,pages,api,hooks}/,
   docs/{MODEL_CARD.md, DATA_DICTIONARY.md, DISCLAIMER.md}, scripts/, openspec/.
-  docs/DATA_DICTIONARY.md doesn't exist yet — created in M1.
-  docs/DISCLAIMER.md doesn't exist yet — created in M6, when Advice/Confidence/
-  Sentiment are first displayed. Not M1 — there's nothing to disclaim before
-  M6 produces UI output.
-  Do not assume a SQLite schema; it isn't finalized until M1.
+  docs/DATA_DICTIONARY.md documents the SQLite schema. docs/DISCLAIMER.md is
+  the single source of the disclaimer text (Rule 6); the frontend and the
+  export hold verbatim copies guarded by tests.
 
   Before proposing, check docs/KNOWN_ISSUES.md (confirmed issues not yet
   scheduled into a milestone) and any docs/DISCUSSION_*.md (open design
@@ -76,7 +83,7 @@ context: |
         follow-up also shipped same day (ticker-manual-refresh change).
     [x] M6 - AI insight panel — delivered as part of M5 above, not as a
         separate milestone. Confidence/Sentiment/Advice/disclaimer are
-        real (rules 3-6 in effect), not the stubbed contract below.
+        real (rules 3-6 in effect).
     [x] Post-M6 hardening - HOSE universe ingestion (shipped 2026-09-07 via
         the hose-universe-ingestion change): point-in-time universe
         construction (405 listed + 194 delisted HOSE stocks ingested, no
@@ -87,35 +94,26 @@ context: |
         modelling-universe filters. See
         openspec/changes/archive/2026-09-07-hose-universe-ingestion/ and
         docs/DISCUSSION_model_direction.md for why this was undertaken.
+    [x] Post-M6 pivot (2026-10-05 to 2026-10-07) - HAR-RV volatility band plus
+        a three-agent LLM debate (multi-agent-debate-analyst,
+        debate-data-quality-refinements, debate-data-guards, all archived).
+        The XGBoost return predictor is retired as a product output; removing
+        it from serving and the dashboard is tracked by
+        `retire-direction-model`. See docs/DISCUSSION_model_direction.md
+        (Option 3 taken) and docs/DISCUSSION_post_pivot_review.md.
 
-  Current focus: no active milestone. Priority is hardening and polishing
-  what M0-M6 already shipped, not starting M7/M8 — see Known gaps below and
-  docs/KNOWN_ISSUES.md / docs/DISCUSSION_*.md for specifics. Treat any new
-  proposal through this lens first: does it improve/fix the existing
-  dashboard, model, or pipeline, before considering new-milestone scope.
-
-  The single most consequential open item: the served model
-  (backend/data/models/pooled_xgb_model.json) is still the original M3
-  artifact — trained on data through 2026-07-30, on only the original 9
-  TRAINING_TICKERS — and was never retrained after the universe expansion
-  above. Its own pooled out-of-fold hit-rate (47.8%) is documented in
-  docs/MODEL_CARD.md as statistically indistinguishable from a coin flip.
-  A live consequence of this gap, measured 2026-09-11: 198 of the 208
-  tickers in the modelling universe show Confidence as N/A, because
-  compute_rolling_hit_rate has no backtest history for anything outside
-  the original 9. See docs/DISCUSSION_model_direction.md in full — it
-  found the flat-prediction result is not a tuning problem (fixing the
-  model's non-stationary features does not rescue directional accuracy at
-  any horizon from 5 to 252 sessions), that volatility forecasting works
-  well on the same data (corr ~0.48, stable across folds and tickers), and
-  that cross-sectional momentum — the one directional effect that
-  survived testing — specifically needed a universe larger than 9-15
-  tickers to be exploitable, which now exists and is as yet untested. Any
-  of that doc's five options (do nothing / fix features only / pivot to
-  volatility / add portfolio risk via holdings / pursue cross-sectional
-  signal) requires deciding Rule 4's definition, since Confidence as
-  currently defined cannot survive a volatility pivot unchanged. Treat
-  this as the natural next explore/propose session, not a bug to patch.
+  Current focus: validating and hardening the post-pivot outputs, not starting
+  new milestones. Open items are in docs/DISCUSSION_post_pivot_review.md and
+  are tracked by the active changes under openspec/changes/:
+    - the volatility range's coverage and calibration (calibrate-volatility-range);
+    - removing the retired XGBoost model from serving and the dashboard
+      (retire-direction-model);
+    - logging debate runs so verdicts and ranges can be scored against
+      realised outcomes (debate-outcome-log);
+    - runtime hardening: prompt fencing, failure texts (harden-debate-runtime);
+    - this change (align-rules-and-disclaimer): rules, disclaimer, labels, docs.
+  Treat any new proposal through this lens first: does it validate or fix the
+  existing debate, range or pipeline, before considering new-milestone scope.
 
   Known gaps in the shipped M5/M6 surface (each already has a doc, not
   freshly discovered — fold into a proposal or explicitly defer again,
@@ -127,13 +125,13 @@ context: |
       move in lockstep by construction, so Stale is unreachable. Open
       question is now "repoint it at a reference that varies (e.g. the
       max session date across all loaded tickers), or remove it" rather
-      than "should a second signal be added." See
+      than "should a second signal be added." The dot is fed by `/prediction`,
+      so its fate follows `retire-direction-model`. See
       docs/DISCUSSION_calendar_staleness.md (open, undecided).
-    - No mechanism logs live predictions or scores them against realized
-      outcomes later — Confidence (rule 4) is backtest-only, live drift is
-      invisible. See docs/DISCUSSION_prediction_outcome_tracking.md (open,
-      undecided; flagged as a likely prerequisite for real continuous
-      retraining, whenever that's picked up).
+    - No mechanism logs debate runs or scores their verdicts and ranges
+      against realized outcomes later, so the range hit-rate (rule 4) is the
+      only measured figure and verdict quality is unknown. Tracked by
+      `debate-outcome-log`. See docs/DISCUSSION_prediction_outcome_tracking.md.
 
   Future, deliberately not scoped yet (vague on purpose — do not start
   designing against these without a dedicated explore/propose session
@@ -141,11 +139,10 @@ context: |
     [ ] M7 - SageMaker integration - idea only, not discussed, not started.
         No target service (training vs. hosted inference vs. both),
         no design, no contract decided.
-    [ ] M8 - Real news-based sentiment - idea only, not discussed, not
-        started. Would replace/augment the technical-proxy Sentiment
-        (rule 5) with real NLP sentiment; needs its own explore session
-        given rule 5's current "must be labeled as a technical proxy,
-        not real sentiment" constraint.
+    [x] M8 - News context - delivered as the News Context agent (an LLM
+        reading recent Vietnamese headlines), not as a sentiment score.
+        A numeric NLP sentiment score is still not built; rule 5 keeps
+        "Market Sentiment" for the technical proxy.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
@@ -160,7 +157,7 @@ rules:
   tasks:
     - Do not include tasks that hand-roll vnstock API calls already wrapped
       by the project's vnstock skill.
-    - Any task that renders Confidence, Sentiment, or Advice in the UI must
-      include (a) labeling Sentiment explicitly as a technical proxy, not
-      real sentiment (rule 5), and (b) displaying the investment-advice
-      disclaimer (rule 6).
+    - Any task that renders a verdict, Agreement, a range, a range hit-rate or
+      language-model-written text must include (a) provenance labels per
+      rule 5, (b) the disclaimer per rule 6, and (c) verdict labels from the
+      `debate-synthesiser` display label table.

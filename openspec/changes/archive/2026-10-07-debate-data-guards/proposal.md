@@ -1,0 +1,34 @@
+## Why
+
+The debate gives a verdict from whatever is in the database and from whichever agents happened to answer. The 2026-10-06 post-pivot review (`docs/DISCUSSION_post_pivot_review.md`, Findings 2 and 3; its numbers are the reviewers' own and were not reproduced by the author of that file) measured: 596 of 599 loaded tickers last loaded about a month ago; no `near_gap`, quality-flag, delisting or staleness guard on `POST /tickers/{ticker}/debate`; a failed agent counted as a normal neutral vote (Round 1) or as a silent confirmation (Round 2, commit e77986e); a stub run with the LLM down rendered "Unanimous — 3 of 3 agents"; `as_of` falling back to `date.today()`; and the Macro agent comparing the ticker's stored closes with the live VN-Index by position, not by date. A verdict that looks confident from stale, partial or degraded inputs is the failure this change removes.
+
+## What Changes
+
+- **New shared service `assess_eligibility(ticker)`** returning `{eligible, reasons, as_of, age_sessions}`. Reasons: `delisted`, `insufficient_history`, `stale`, `near_gap`, `hard_quality_flag`, `indicators_missing`. Used by the debate endpoint, and (per the shared contract) by `GET /tickers/{ticker}/range` and the debate log.
+- **Ineligible ticker: HTTP 200, verdict `INSUFFICIENT_DATA`**, the reasons, no agent runs, no LLM call, no report file. The verdict enum gains `INSUFFICIENT_DATA`; `agreement_level` gains `none`.
+- **Degraded agents are first-class.** Each position carries `degraded_reason` (null = live); the result lists `agents_degraded`. A degraded agent does not vote. Three live agents: unchanged mapping. Two live: they agree (verdict capped below "strong") or `SPLIT`. Fewer than two live: `INSUFFICIENT_DATA`, and Round 2 and synthesis calls are skipped. The vote count is stated over live agents ("2 of 2 live agents").
+- **`as_of` is always the features row date** (never `date.today()`), the Technical agent reads that row, and the result exposes `data_as_of` and `data_age_sessions` plus `eligibility`.
+- **Macro agent aligns by date.** Signal 2 compares the ticker and VN-Index over the same two dates; mismatched windows make the signal unavailable and say so. A Macro run with no counted signal is degraded, not neutral.
+- **Spec conflict resolved:** 2 neutral + 1 directional is `OBSERVE` / `majority` (the code and `debate-synthesiser` spec), not `SPLIT` (the `debate-engine` spec and archived design). Owner-approved.
+- **UI and export (additive):** the panel shows the data date and age, marks degraded agents, and has an insufficient-data state with human-readable reasons. The export states data age and degraded agents and is not written for `INSUFFICIENT_DATA`.
+- **Owner rulings recorded:** a failed Round 2 excludes the agent (reverses part of e77986e); no exemption for Tet or other long closures (documented Known Limitation, follow-up: optional extra-closures list); News with zero headlines is degraded; Macro with one counted signal stays live. Also fixes the stale "Rule 3's 0.5" comment in `macro.py`.
+- **Not done here:** range math, outcome logging, LLM timeouts/concurrency/retries, prompt fencing, verdict display labels, `DISCLAIMER.md`.
+
+## Capabilities
+
+### New Capabilities
+- `data-eligibility`: what makes a loaded ticker usable by the debate and the range endpoint: the reason set, definitions, thresholds, and how data age in sessions is counted without a market calendar.
+
+### Modified Capabilities
+- `debate-engine`: Round 1 and Round 2 failure semantics (degraded, not neutral / not kept); `DebateResult` shape (`INSUFFICIENT_DATA`, `agreement_level` `none`, `data_as_of`, `data_age_sessions`, `agents_degraded`, `eligibility`); the 2-neutral-plus-1-directional scenario; new requirements for the ineligible path, `as_of` provenance and degraded-agent definitions.
+- `debate-synthesiser`: new requirements for voting over live agents only, the two-live-agent rule and abstention; the mapping requirement is MODIFIED only to drop the superseded "BUY"/"SELL" sentence (display wording belongs to `align-rules-and-disclaimer`) and to add the two-neutral-plus-one-directional scenario.
+- `macro-agent`: new requirements for date alignment of signal 2 and for degrading when no signal is counted.
+- `debate-panel-ui`: new requirements (data date and age, degraded markers and honest agreement text, insufficient-data state). Existing requirements untouched.
+- `debate-report-export`: new requirements (data age and degraded agents in the Summary, no export for `INSUFFICIENT_DATA`, filename from `as_of`). Existing requirements untouched.
+
+## Impact
+
+- **Code**: new `backend/app/services/data_eligibility.py`; `backend/app/api/debate.py`; `services/debate/engine.py`, `synthesiser.py`, `technical.py`, `news.py`, `macro.py` (incl. a comment fix), `export.py`; frontend `DebatePanel.jsx`, `debate-panel.css`, tests. No table or column change and no new dependency; one additive index, `idx_ohlcv_date` on `ohlcv(date)`, applied by `init_db` (the market-calendar scan took 0.42 s without it, task 2.3). `assess_eligibility` must not import `app.api.predictions` (the retire change slims that module).
+- **API**: `POST /tickers/{ticker}/debate` stays 404 (not loaded) / 503 (features failed); adds a 200 `INSUFFICIENT_DATA` shape and new response fields. Existing verdict values do not change.
+- **Domain rules**: Rule 6 honored unchanged (disclaimer stays visible in the insufficient-data state; nothing here renders Advice, Confidence or Sentiment). Rules 1, 2, 3, 5 untouched (data age is counted in sessions, Rule 1's unit). Rule 4 is not decided here: "Agreement" naming and the Rule 4 ruling belong to `align-rules-and-disclaimer`; this change only makes the count honest ("N of M live agents"). All thresholds (3 sessions of age, 2 missing sessions, 65 and 78 sessions of history windows) are **new and provisional**, not covered by Rules 1–6; the owner accepted them as provisional.
+- **Siblings**: `calibrate-volatility-range` (renames `volatility_range_pct` in the same `DebateResult` requirement; `/range` consumes `assess_eligibility`; archive that change first or merge the field names, see design Risks); `debate-outcome-log` (consumes `data_as_of`, `data_age_sessions`, `agents_degraded`, `eligibility`, and logs abstentions); `align-rules-and-disclaimer` (owns display labels incl. "Insufficient data", the word "Agreement", and may MODIFY existing export/panel requirements; mine are ADDED with distinct names); `harden-debate-runtime` (edits `news.py`, `technical.py` parsing; same files, no spec overlap; retries there reduce Round 2 degradations); `retire-direction-model` (relocates `get_latest_features_row`; this change avoids that dependency). Suggested order: `calibrate-volatility-range` and this change can land in either order but the `DebateResult` delta must be merged; `debate-outcome-log` after this change.

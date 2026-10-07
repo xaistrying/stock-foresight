@@ -57,167 +57,6 @@ provided this filtering never hides or otherwise affects the Watchlist.
 - **THEN** all 9 Watchlist entries remain visible and selectable; only the
   searched-in list's visible entries change
 
-### Requirement: Predicted log return is converted to a percentage before display
-Per domain Rule 2, the dashboard SHALL NOT render the raw
-`predicted_log_return` value returned by `GET
-/tickers/{ticker}/prediction` anywhere in the UI. It SHALL convert it to
-a simple percentage (`(e^predicted_log_return - 1) * 100`) before
-display. This applies identically whether the value is shown in the
-Prediction display or in the chart panel's single predicted point.
-
-#### Scenario: Prediction display shows a percentage, not a log return
-- **WHEN** `GET /tickers/{ticker}/prediction` responds with `status:
-  "ok"` and a `predicted_log_return` value
-- **THEN** the dashboard displays a percentage derived from that value
-  and does not render the raw `predicted_log_return` number anywhere on
-  the page, including in tooltips or hidden/debug text
-
-### Requirement: Prediction display distinguishes ok, near_gap, not-loaded, and failed states
-The dashboard SHALL render visually distinct states for the five
-outcomes of `GET /tickers/{ticker}/prediction`: `200` with `status:
-"ok"`, `200` with `status: "near_gap"`, `200` with `status:
-"indicators_unavailable"`, `404`, and `5xx`. It SHALL NOT render the same
-UI treatment (e.g. a blank or generic loading state) for more than one of
-these outcomes. This applies identically for any ticker, whether one of
-the 9 `TRAINING_TICKERS` or a searched-in ticker.
-
-#### Scenario: Ok state shows the converted prediction
-- **WHEN** the prediction response has `status: "ok"`
-- **THEN** the dashboard displays the converted percentage, the `as_of`
-  date, and static label text naming the fixed 5-trading-session horizon
-  (Rule 1) — never a control implying the horizon is adjustable
-
-#### Scenario: near_gap state is distinguishable from ok
-- **WHEN** the prediction response has `status: "near_gap"`
-- **THEN** the dashboard shows a message indicating a data gap prevents a
-  current prediction, and does not display a percentage figure
-
-#### Scenario: indicators_unavailable state is distinguishable from near_gap
-- **WHEN** the prediction response has `status: "indicators_unavailable"`
-- **THEN** the dashboard shows a message naming a data-quality flag on the
-  ticker's recent sessions, distinct in wording from the near_gap message
-  and displaying no percentage figure — never an empty card body
-
-#### Scenario: Not-loaded state is distinguishable from near_gap and failure
-- **WHEN** the prediction request responds `404`
-- **THEN** the dashboard shows a message indicating the ticker has not
-  been loaded yet, distinct from the near_gap and failure messages
-
-#### Scenario: Feature-computation-failure state is distinguishable from the others
-- **WHEN** the prediction request responds with a `5xx` status
-- **THEN** the dashboard shows a message indicating feature computation
-  failed for this ticker, distinct from the near_gap and not-loaded
-  messages
-
-### Requirement: Unselected-ticker state shows explicit placeholders, not an empty message
-
-When no ticker is selected, the Prediction display and AI insight panel
-SHALL each render their full populated layout (all labels and value
-slots) with an explicit non-fabricated placeholder value (`N/A`) in
-place of every value that depends on a selected ticker, rather than
-showing a "select a ticker" message or omitting either panel. This
-placeholder SHALL render at the same font-size, font-family, and weight
-as a real populated value, distinguished from one only by a muted color
-— not by a smaller or less visually substantial presentation — so it
-reads as a legible, deliberate "no value" state rather than a barely-
-visible mark. The AI insight panel's disclaimer SHALL render
-unconditionally in this state, consistent with its unconditional
-visibility whenever a ticker is selected. This requirement applies only
-to the no-ticker-selected case; each component's other states (loading,
-not-loaded, feature-computation failure, populated) are unaffected and
-continue to render independently per their own existing behavior.
-
-#### Scenario: No ticker selected shows N/A placeholders in both panels
-
-- **WHEN** the dashboard loads or a ticker is deselected, and no ticker is
-  currently selected
-- **THEN** the Prediction display renders its title and an `N/A`
-  placeholder, styled at the same font-size/family/weight as a real
-  percentage, in place of the percentage value, and the AI insight
-  panel renders Confidence, Technical Signal, and Advice labels each with
-  an `N/A` placeholder value styled at the same font-size/family/weight
-  as a real value, plus its disclaimer
-
-#### Scenario: Prediction display keeps the same three-line shape whether or not a ticker is selected
-
-- **WHEN** no ticker is selected
-- **THEN** the Prediction display renders all three of its populated-state
-  lines — the `N/A` percentage placeholder, an "As of —" placeholder in
-  place of the real date, and the unconditional "Fixed horizon: 5 trading
-  sessions" line (unchanged, since the horizon is fixed regardless of
-  ticker selection) — so selecting a ticker for the first time does not
-  grow the card by adding lines that were previously absent
-
-#### Scenario: N/A placeholders are visually distinct from a real N/A value by color, not by wording
-
-- **WHEN** the no-ticker `N/A` placeholder is shown
-- **THEN** it is styled in a distinctly muted color from a real computed
-  value or a real N/A result (e.g. Confidence's own no-backtest-history
-  N/A state), so it cannot be mistaken for actual Confidence/Sentiment/
-  Advice/Prediction data — consistent with rules 4/5/6's requirement that
-  these disclosures reflect real computed data or an explicit N/A, never
-  a value that could pass as real
-
-#### Scenario: Selecting a ticker replaces N/A placeholders with per-component states
-
-- **WHEN** a ticker is selected after the N/A-placeholder state was
-  showing
-- **THEN** the N/A placeholders are removed, and the Prediction display
-  and AI insight panel each independently render their own state
-  (loading, not-loaded, failure, or populated) for the selected ticker,
-  as already specified elsewhere in this capability
-
-### Requirement: Chart panel renders OHLCV plus the single predicted point, no derived-indicator overlay
-
-The chart panel SHALL render candles from `GET /tickers/{ticker}/history`,
-and MAY additionally render that same response's volume field as a
-histogram — both are raw OHLCV data already present in the response, not a
-derived indicator. The chart SHALL NOT render any derived technical
-indicator overlay (Ichimoku, RSI, MACD, Bollinger, ATR, OBV). The chart MAY
-additionally render exactly one predicted point at t+5 sessions, derived
-from `predicted_log_return` per the percentage-conversion requirement
-above, connected to the most recent historical close by a single straight
-line. The chart SHALL NOT render any interpolated, smoothed, or otherwise
-fabricated point between the most recent historical close and the t+5
-predicted point.
-
-This requirement's substantive constraint is unchanged — no derived
-technical indicator may be drawn. Only its wording is clarified to state
-explicitly that volume (already named as part of OHLCV) is not itself a
-prohibited indicator, since it is raw fetched data rather than something
-computed from the price series.
-
-#### Scenario: Chart shows candles for the selected ticker
-- **WHEN** a ticker is selected in the ticker panel
-- **THEN** the chart panel renders OHLC candles from that ticker's `GET
-  /tickers/{ticker}/history` response
-
-#### Scenario: No derived indicator lines are drawn
-
-- **WHEN** the chart panel renders
-- **THEN** no derived technical indicator overlay (Ichimoku, RSI, MACD,
-  Bollinger, ATR, OBV) is drawn on or alongside the candles
-
-#### Scenario: Volume histogram is not a prohibited indicator overlay
-
-- **WHEN** the chart panel renders a volume histogram below the
-  candlesticks
-- **THEN** this does not violate the no-derived-indicator-overlay
-  constraint, since volume is raw OHLCV data already named in this
-  requirement, not a derived technical indicator
-
-#### Scenario: Predicted point is a single point, not a path
-- **WHEN** the chart panel renders a predicted point for a ticker with
-  `status: "ok"` from `GET /tickers/{ticker}/prediction`
-- **THEN** exactly one additional point appears at the t+5 position,
-  joined to the most recent historical close by one straight line, with
-  no intermediate point rendered between them
-
-#### Scenario: No predicted point when prediction is unavailable
-- **WHEN** the prediction response has `status: "near_gap"`, or the
-  request responds `404` or `5xx`
-- **THEN** the chart panel renders candles only, with no predicted point
-
 ### Requirement: Chart panel shows an OHLCV legend for the hovered or most recent session
 The chart panel SHALL display a fixed-position legend showing that
 session's Open, High, Low, Close, and Volume values. The legend SHALL
@@ -247,201 +86,240 @@ different up/down comparison or a new color.
   positive color used for that session's candle and volume bar
 
 #### Scenario: Legend reflects only real historical data
-- **WHEN** the chart panel renders a predicted point (per the existing
-  "Chart panel renders OHLCV plus the single predicted point" requirement)
-- **THEN** the legend never displays the predicted point's value as if it
-  were a real session's OHLCV
+- **WHEN** the chart panel renders a range band (per the "Chart panel
+  renders OHLCV plus a 5-session range band" requirement)
+- **THEN** the legend never displays a band bound as if it were a real
+  session's OHLCV
 
-### Requirement: AI insight panel computes and displays Confidence, Sentiment, and Advice
-The dashboard SHALL display an AI insight panel with three elements —
-Confidence, Sentiment ("Technical Signal"), and Advice — for the
-selected ticker, alongside an unconditional disclaimer (see the
-Disclaimer requirement below). This panel SHALL NOT be a placeholder;
-it SHALL compute and render real values per the requirements below for
-any loaded ticker.
+### Requirement: Range display shows the typical 5-session move and its measured coverage
+For the selected ticker the dashboard SHALL render a range display from `GET /tickers/{ticker}/range` showing `range_5s_pct` as an unsigned half-width (`±X.X%`) labelled "Typical 5-session move" (Rule 1: five trading sessions), the response's `as_of` date, the nominal coverage stated in words and derived from the response's `range_coverage` (not a constant in the UI), and the ticker's `range_hit_rate` as a count of non-overlapping five-session moves (about the last year; the window and method are defined by `calibrate-volatility-range`) that stayed inside the band, worded "N of the last M five-session moves", where M is the `n` returned by `/range` and N is the response's hit count or, when the response carries only `rate` and `n`, `rate x n` rounded. The disclaimer in force SHALL be visible in the same card as the coverage and hit-rate figures.
 
-#### Scenario: AI insight panel renders for any loaded ticker
-- **WHEN** a ticker (one of the 9 `TRAINING_TICKERS`, or a searched-in
-  ticker) has a prediction with `status: "ok"`
-- **THEN** the dashboard displays Confidence, Sentiment, and Advice for
-  that ticker — not a "coming soon" or not-yet-available placeholder
+This display, the range card, is the only surface that renders `range_hit_rate`. The chart band draws the range only, and the debate panel shows only the range line added by `calibrate-volatility-range`; neither renders the hit-rate. This change owns this rendering requirement.
 
-### Requirement: Confidence reflects backtested hit-rate, or explicit N/A for unvalidated tickers
-Per domain Rule 4, Confidence SHALL display the ticker's backtested
-hit-rate (`compute_rolling_hit_rate`) when that value exists. When it
-does not exist (the function returns `None` — no persisted
-`backtest_predictions` rows for that ticker), the dashboard SHALL
-display an explicit `N/A` state with text naming the reason, and SHALL
-NOT display a fabricated, estimated, or substituted percentage in its
-place.
+#### Scenario: Available range is shown with its coverage
+- **WHEN** `/range` responds with a numeric `range_5s_pct` of 3.2, `range_coverage` of 0.68 and `range_hit_rate` of `{rate: 0.75, n: 48}`
+- **THEN** the card shows "±3.2%" labelled "Typical 5-session move", the `as_of` date, a sentence stating the nominal coverage as about 2 in 3, and a line reading "36 of the last 48 five-session moves"
 
-#### Scenario: Trained ticker shows a real hit-rate
-- **WHEN** the selected ticker is one of the 9 `TRAINING_TICKERS`
-- **THEN** Confidence displays `compute_rolling_hit_rate`'s value as a
-  percentage, with subtext naming it as a hit-rate over the ticker's
-  most recent backtested predictions
+#### Scenario: The hit-rate is rendered only in the range card
+- **WHEN** the dashboard renders the range card, the chart band and the debate panel for a ticker whose `/range` response carries a `range_hit_rate`
+- **THEN** the hit-rate wording appears in the range card and nowhere in the chart or the debate panel
 
-#### Scenario: Searched-in ticker with no backtest history shows N/A
-- **WHEN** the selected ticker has no rows in `backtest_predictions`
-- **THEN** Confidence displays `N/A` with text explaining that more
-  price history or a backtest run is needed, and no numeric percentage
-  is shown
+#### Scenario: Coverage wording follows the response
+- **WHEN** `/range` responds with `range_coverage` null (an uncalibrated ticker)
+- **THEN** the card shows the range but makes no coverage claim
 
-#### Scenario: N/A never substitutes a pooled or global value
-- **WHEN** Confidence is in the `N/A` state for a ticker
-- **THEN** the dashboard does not display the model's pooled/overall
-  backtested accuracy, or any other ticker's hit-rate, as a stand-in
-  value
+#### Scenario: Hit-rate that cannot be measured
+- **WHEN** `range_hit_rate` is missing, has `n` of 0 or has neither a hit count nor a `rate`
+- **THEN** the card shows "Not enough history to measure" in place of a percentage and no number is fabricated
 
-### Requirement: "Backtest this ticker" action populates Confidence for unvalidated tickers
-When Confidence is in the `N/A` state and the selected ticker has at
-least the minimum number of clean, labeled feature rows needed to form
-a walk-forward fold, the dashboard SHALL offer a "Backtest this ticker"
-action. Selecting it SHALL trigger a single-ticker walk-forward backtest
-whose results persist so a subsequent Confidence read reflects a real
-hit-rate. While the backtest runs, the action SHALL show a disabled,
-loading state without blocking the rest of the AI insight panel.
+#### Scenario: Disclaimer accompanies the coverage figures
+- **WHEN** the card shows a coverage or hit-rate figure
+- **THEN** the disclaimer in force is visible in the same card with no interaction
 
-#### Scenario: Action is offered once there is enough history
-- **WHEN** the selected ticker's `N/A` Confidence state has at least the
-  minimum clean+labeled row count needed to form a walk-forward fold
-- **THEN** the dashboard shows an enabled "Backtest this ticker" action
+### Requirement: Range display distinguishes available, unavailable, not-loaded, and failed states
+The range display SHALL render visually distinct states for: `GET /tickers/{ticker}/range` responding `200` with a numeric `range_5s_pct`; `200` with a null `range_5s_pct` (any refusing `status`); `404`; and `5xx`. It SHALL decide between the first two by whether `range_5s_pct` is a number and SHALL use `status` and `reasons` only as display text, so a status added later cannot cause a stale figure to be shown. It SHALL NOT render the same treatment for more than one of these outcomes, and SHALL show no number in any state but the first.
 
-#### Scenario: Action is hidden or disabled below the history threshold
-- **WHEN** the selected ticker has fewer clean+labeled rows than the
-  minimum needed to form a walk-forward fold
-- **THEN** the "Backtest this ticker" action is hidden or disabled, with
-  text explaining more price history is needed
+#### Scenario: Unavailable range names its reason
+- **WHEN** `/range` responds `200` with a null `range_5s_pct` and a non-empty `reasons`
+- **THEN** the card shows a message naming the reason from the response and no percentage
 
-#### Scenario: Running the backtest does not block the rest of the panel
-- **WHEN** a user triggers the "Backtest this ticker" action
-- **THEN** the action shows a disabled, loading state until the backtest
-  completes, while Prediction, Sentiment, and Advice remain interactive
-  and unaffected
+#### Scenario: Unavailable range without a reason
+- **WHEN** `/range` responds `200` with a null `range_5s_pct` and no `reasons`
+- **THEN** the card shows a generic "range unavailable for this ticker" message and no percentage
 
-#### Scenario: Completed backtest transitions Confidence to a real value
-- **WHEN** a single-ticker backtest completes successfully
-- **THEN** Confidence subsequently displays that ticker's real
-  `compute_rolling_hit_rate` value, identically to a `TRAINING_TICKERS`
-  ticker, with no distinct "just backtested" visual treatment
+#### Scenario: Not-loaded state is distinguishable
+- **WHEN** the range request responds `404`
+- **THEN** the card shows that the ticker has not been loaded yet, in wording distinct from the unavailable and failed messages
 
-### Requirement: Sentiment is labeled as a technical proxy, not real sentiment
-Per domain Rule 5, the dashboard SHALL label this element "Technical
-Signal" (not "Market Sentiment" or any wording implying real news/NLP
-sentiment) and SHALL always display, inline and without requiring a
-hover or additional interaction, the technical indicators it is
-computed from (RSI, MACD, Ichimoku position). This applies identically
-for any loaded ticker.
+#### Scenario: Server failure is distinguishable
+- **WHEN** the range request responds with a `5xx` status
+- **THEN** the card shows a failure message distinct from the not-loaded and unavailable messages
 
-#### Scenario: Label and basis are both visible without interaction
-- **WHEN** the AI insight panel renders Sentiment for any loaded ticker
-- **THEN** the element is labeled "Technical Signal", and text naming
-  RSI, MACD, and Ichimoku position as the basis is visible without a
-  hover, click, or other interaction
+### Requirement: Range display shows no daily sigma, direction, or point forecast
+The dashboard SHALL NOT render `sigma_daily_pct`, any signed or direction-coloured figure, or any single predicted price or return derived from the range, anywhere in the UI, including tooltips and hidden text. The range SHALL be drawn and written symmetrically about the last close and SHALL use no positive or negative (up or down) colour. This replaces the Rule 2 log-return conversion requirement: no endpoint the dashboard calls returns a log return.
 
-#### Scenario: Sentiment computes identically regardless of ticker origin
-- **WHEN** the selected ticker is a searched-in ticker outside
-  `TRAINING_TICKERS`
-- **THEN** Sentiment is computed and displayed the same way as for one
-  of the 9 fixed tickers — Sentiment has no training-set dependency
+#### Scenario: Daily sigma is never rendered
+- **WHEN** `/range` responds with both `sigma_daily_pct` and `range_5s_pct`
+- **THEN** only `range_5s_pct` appears in the DOM, and the value of `sigma_daily_pct` appears nowhere on the page
 
-#### Scenario: Basis text renders unconditionally, even with no ticker selected or a ticker's insight still loading
-- **WHEN** no ticker is selected, or a selected ticker's insight is in
-  flight
-- **THEN** the RSI/MACD/Ichimoku-position basis text is still visible —
-  it does not wait for a ticker to be selected or its data to load, since
-  this basis is a fixed list that never varies per ticker (unlike
-  Confidence's basis or Advice's reasoning, which do depend on
-  per-ticker data and correctly remain placeholders until known)
+#### Scenario: No signed or directional figure
+- **WHEN** the range card is rendered for any available range
+- **THEN** its figure carries no `+` or `-` sign and no up/down data attribute or colour class
 
-### Requirement: Advice uses directional wording, never a transaction verb
-Per domain Rules 3 and 6, Advice SHALL be computed from `0.5 x
-rolling_std(returns, 60 sessions)` (volatility-relative, not a fixed
-threshold) and SHALL be worded directionally (e.g. "HOLD" / "Signal:
-up" / "Signal: down"). The dashboard SHALL NOT use "BUY" or "SELL" or
-any other literal transaction-instruction wording. Each verdict SHALL be
-preceded by text naming the technical criterion that produced it.
+### Requirement: Dashboard issues no per-ticker requests for tickers that are not selected
+On load the dashboard SHALL issue `GET /tickers` and no other request that depends on a ticker. Selecting a ticker SHALL issue `GET /tickers/{ticker}/history` and `GET /tickers/{ticker}/range` for that ticker and nothing else per ticker (the debate runs only on the user's Analyse click). A ticker chip SHALL NOT issue any query. Re-selecting a ticker within the session MAY be served from cache.
 
-#### Scenario: Move within threshold shows HOLD with reasoning
-- **WHEN** the ticker's predicted move is within `0.5 x
-  rolling_std(returns, 60 sessions)`
-- **THEN** the dashboard shows text stating the move is within normal
-  volatility range, followed by "HOLD"
+#### Scenario: Initial load with no selection
+- **WHEN** the dashboard loads and the catalog holds 208 loaded tickers
+- **THEN** exactly one API request is made, `GET /tickers`
 
-#### Scenario: Move above threshold shows directional wording, not BUY/SELL
-- **WHEN** the ticker's predicted move exceeds `0.5 x
-  rolling_std(returns, 60 sessions)` in either direction
-- **THEN** the dashboard shows text naming which direction the move
-  exceeds typical volatility, followed by "Signal: up" or "Signal: down"
-  as appropriate — never "BUY" or "SELL"
+#### Scenario: Selecting a ticker
+- **WHEN** a user selects a ticker
+- **THEN** one `/history` request and one `/range` request are made for that ticker, and no request is made for any other ticker
 
-### Requirement: Disclaimer is always visible, with no visibility control
-Per domain Rule 6, the dashboard SHALL display a disclaimer stating that
-the AI insight panel's output is a technical observation from a
-backtested model, not investment advice, whenever Confidence, Sentiment,
-or Advice is displayed. The dashboard SHALL NOT provide any control that
-hides, collapses, or otherwise makes this disclaimer's visibility
-optional.
+#### Scenario: No prediction, insight or backtest request exists
+- **WHEN** any user flow runs (load, select, search-and-load, refresh, analyse)
+- **THEN** no request is made to `/prediction`, `/insight` or `/backtest`
 
-#### Scenario: Disclaimer renders alongside the AI insight panel
-- **WHEN** the AI insight panel displays Confidence, Sentiment, or
-  Advice for any ticker
+### Requirement: Range display shows explicit placeholders when no ticker is selected
+
+When no ticker is selected, the range display SHALL render its full
+populated layout (all labels and value slots) with an explicit
+non-fabricated placeholder value (`N/A`) in place of every value that
+depends on a selected ticker, rather than showing a "select a ticker"
+message or omitting the card. This placeholder SHALL render at the same
+font-size, font-family, and weight as a real populated value,
+distinguished from one only by a muted color — not by a smaller or less
+visually substantial presentation — so it reads as a legible, deliberate
+"no value" state rather than a barely-visible mark. The debate panel's
+disclaimer and the range card's disclaimer SHALL render unconditionally in
+this state. The debate panel in this state shows its own prompt to select a
+ticker; this requirement does not change that. This requirement applies only
+to the no-ticker-selected case; each component's other states (loading,
+not-loaded, unavailable, failure, populated) are unaffected and continue to
+render independently per their own existing behavior.
+
+#### Scenario: No ticker selected shows N/A placeholders in the range card
+
+- **WHEN** the dashboard loads or a ticker is deselected, and no ticker is
+  currently selected
+- **THEN** the range display renders its title and an `N/A` placeholder,
+  styled at the same font-size/family/weight as a real range value, in
+  place of the percentage, plus its disclaimer
+
+#### Scenario: Range display keeps the same shape whether or not a ticker is selected
+
+- **WHEN** no ticker is selected
+- **THEN** the range display renders all of its populated-state lines — the
+  `N/A` range placeholder, an "As of —" placeholder in place of the real
+  date, the unconditional "5 trading sessions" horizon line and the
+  coverage line slot — so selecting a ticker for the first time does not
+  grow the card by adding lines that were previously absent
+
+#### Scenario: N/A placeholders are visually distinct from a real N/A value by color, not by wording
+
+- **WHEN** the no-ticker `N/A` placeholder is shown
+- **THEN** it is styled in a distinctly muted color from a real computed
+  value or a real "not enough history" result, so it cannot be mistaken for
+  actual range or coverage data
+
+#### Scenario: Selecting a ticker replaces N/A placeholders with the card's states
+
+- **WHEN** a ticker is selected after the N/A-placeholder state was
+  showing
+- **THEN** the N/A placeholders are removed, and the range display renders
+  its own state (loading, not-loaded, unavailable, failure, or populated)
+  for the selected ticker
+
+### Requirement: Chart panel renders OHLCV plus a 5-session range band, no derived-indicator overlay
+
+The chart panel SHALL render candles from `GET /tickers/{ticker}/history`,
+and MAY additionally render that same response's volume field as a
+histogram — both are raw OHLCV data already present in the response, not a
+derived indicator. The chart SHALL NOT render any derived technical
+indicator overlay (Ichimoku, RSI, MACD, Bollinger, ATR, OBV). The chart MAY
+additionally render exactly one range band at the t+5 session position,
+built from `range_5s_pct` in `GET /tickers/{ticker}/range`: an upper bound
+at `close x (1 + range_5s_pct/100)` and a lower bound at
+`close x (1 - range_5s_pct/100)`, where `close` is the most recent
+historical close, drawn as dashed lines with a light fill between them in a
+neutral colour, symmetric about the last close. The band SHALL NOT imply
+direction: it uses no positive or negative colour, no arrow, and no marker
+at either bound. The chart SHALL NOT render any line, point, envelope or
+fill between the most recent historical close and the t+5 position, and
+SHALL NOT render a single predicted price.
+
+This requirement's substantive constraint is unchanged — no derived
+technical indicator may be drawn; volume is raw fetched data, not a
+prohibited indicator.
+
+#### Scenario: Chart shows candles for the selected ticker
+- **WHEN** a ticker is selected in the ticker panel
+- **THEN** the chart panel renders OHLC candles from that ticker's `GET
+  /tickers/{ticker}/history` response
+
+#### Scenario: No derived indicator lines are drawn
+
+- **WHEN** the chart panel renders
+- **THEN** no derived technical indicator overlay (Ichimoku, RSI, MACD,
+  Bollinger, ATR, OBV) is drawn on or alongside the candles
+
+#### Scenario: Volume histogram is not a prohibited indicator overlay
+
+- **WHEN** the chart panel renders a volume histogram below the
+  candlesticks
+- **THEN** this does not violate the no-derived-indicator-overlay
+  constraint, since volume is raw OHLCV data already named in this
+  requirement, not a derived technical indicator
+
+#### Scenario: Band bounds are computed from the last close
+- **WHEN** the last historical close is 11 and `/range` responds with a numeric `range_5s_pct` of 5
+- **THEN** the band's upper bound is 11.55 and its lower bound is 10.45 at the t+5 position
+
+#### Scenario: Band is one position, not a path
+- **WHEN** the chart panel renders a band
+- **THEN** nothing is drawn between the most recent historical close and the t+5 position except empty axis space, and no valued data point is added to any series for the intermediate sessions
+
+#### Scenario: Band is neutral and symmetric
+- **WHEN** the chart panel renders a band
+- **THEN** both bounds and the fill use the chart's neutral ink colour, never the positive or negative candle colours, and the upper and lower distances from the last close are equal
+
+#### Scenario: No band when the range is unavailable
+- **WHEN** `/range` responds with a null `range_5s_pct`, or responds `404` or `5xx`
+- **THEN** the chart panel renders candles and volume only, with no band
+
+#### Scenario: Price scale includes the band
+- **WHEN** a band's upper or lower bound lies outside the price range of the visible candles
+- **THEN** the price scale expands so both bounds are visible
+
+### Requirement: Disclaimer stays visible with the debate panel and range card, with no visibility control
+Per domain Rule 6, the dashboard SHALL display the disclaimer in force
+(the text of `docs/DISCLAIMER.md`; its wording is owned by
+`align-rules-and-disclaimer`) whenever a debate verdict, an Agreement count
+or a measured range coverage is displayed. The dashboard SHALL NOT provide
+any control that hides, collapses, or otherwise makes this disclaimer's
+visibility optional.
+
+#### Scenario: Disclaimer renders alongside the debate panel and the range card
+- **WHEN** the debate panel or the range card is displayed for any ticker, or with no ticker selected
 - **THEN** the disclaimer text is visible on the same view, with no user
   action required to reveal it
 
 #### Scenario: No control can hide the disclaimer
-- **WHEN** the dashboard renders the AI insight panel
+- **WHEN** the dashboard renders
 - **THEN** no toggle, setting, or other control exists anywhere in the
   UI that would hide or collapse the disclaimer
 
-### Requirement: Ticker chips and searched-in entries show a freshness state
-Each selectable ticker (a fixed chip or a searched-in entry) SHALL show
-one of three states: **Loading** (a load-and-predict cycle is in
-flight), **Fresh** (the stored prediction's `as_of` matches the latest
-trading session available in the ticker's data), or **Stale** (a newer
-trading session's data is available than the one the stored
-prediction's `as_of` reflects).
-
-#### Scenario: In-flight load shows Loading
-- **WHEN** a ticker's load-and-predict cycle has been triggered and has
-  not yet completed
-- **THEN** that ticker's entry shows a Loading state
-
-#### Scenario: Up-to-date prediction shows Fresh
-- **WHEN** a ticker's stored prediction's `as_of` matches the latest
-  trading session available for that ticker
-- **THEN** that ticker's entry shows a Fresh state
-
-#### Scenario: Newer data available than the stored prediction shows Stale
-- **WHEN** a ticker has a newer trading session's data available than
-  the one its stored prediction's `as_of` reflects
-- **THEN** that ticker's entry shows a Stale state, rather than a fixed
-  calendar-age threshold determining staleness
-
-### Requirement: Loading a ticker immediately triggers its prediction
+### Requirement: Loading a ticker refreshes its chart and range
 When `POST /tickers/{ticker}/load` succeeds from the dashboard — whether
-triggered by a chip click or by search — the system SHALL immediately
-trigger `GET /tickers/{ticker}/prediction` for that ticker as well, and
-SHALL invalidate and refetch that ticker's `/prediction` and `/history`
-data so the chart and prediction display reflect the newly-loaded data
-without a manual page refresh or a separate user action to request a
-prediction.
+triggered by a Refresh action or by search — the system SHALL invalidate
+that ticker's catalog entry, `/history` and `/range` data so the chart, the
+range band and the range display reflect the newly-loaded data without a
+manual page refresh or a separate user action. A ticker that is not
+selected SHALL NOT have `/range` or `/history` fetched as a result; they are
+fetched when it is next selected.
 
-#### Scenario: Successful load refreshes chart and prediction automatically
-- **WHEN** a load action for a ticker completes successfully from the
-  dashboard, whether via a chip click or a search-triggered load
-- **THEN** the chart panel, prediction display, and AI insight panel for
-  that ticker fetch and reflect the newly loaded data without the user
-  reloading the page or taking a separate action to request a
-  prediction
+#### Scenario: Successful load refreshes chart and range automatically
+- **WHEN** a load action for the selected ticker completes successfully
+  from the dashboard, whether via search or Refresh
+- **THEN** the chart panel and the range display for that ticker fetch and
+  reflect the newly loaded data without the user reloading the page or
+  taking a separate action
 
-### Requirement: Dashboard renders AI insight panel for selected ticker
-The dashboard SHALL render the `DebatePanel` component in the AI insight panel region when `VITE_DEBATE_PANEL_ENABLED=true`, replacing the `AIInsightPanel`. When the flag is false or unset, `AIInsightPanel` is rendered unchanged. The panel region's layout dimensions and grid position are unchanged — only the component rendered within it changes.
+#### Scenario: A load for an unselected ticker fetches nothing per-ticker
+- **WHEN** a load completes for a ticker that is not selected
+- **THEN** only the catalog is refetched
 
-#### Scenario: Feature flag enabled — DebatePanel shown
-- **WHEN** `VITE_DEBATE_PANEL_ENABLED=true` and a ticker is selected
-- **THEN** DebatePanel is rendered in the AI insight panel region; AIInsightPanel is not mounted
+### Requirement: Dashboard renders the debate panel for the selected ticker
+The dashboard SHALL render the `DebatePanel` in the side panel region
+unconditionally, with no environment variable or flag controlling it. The
+region's layout dimensions and grid position are unchanged. The panel's
+analysis runs only when the user clicks Analyse.
 
-#### Scenario: Feature flag disabled — AIInsightPanel shown
-- **WHEN** `VITE_DEBATE_PANEL_ENABLED=false` or unset and a ticker is selected
-- **THEN** AIInsightPanel is rendered as before; no change to existing behaviour
+#### Scenario: Debate panel is shown with no configuration
+- **WHEN** the dashboard loads with `VITE_DEBATE_PANEL_ENABLED` unset, `false` or `true`
+- **THEN** the `DebatePanel` is rendered and no other insight panel exists in the tree
+
+#### Scenario: No retired panel is reachable
+- **WHEN** any user flow runs
+- **THEN** no Confidence, Advice or "Backtest this ticker" element is rendered
