@@ -1,118 +1,4 @@
-# debate-panel-ui
-
-## Purpose
-
-TBD
-
-## Requirements
-
-### Requirement: Verdict badge uses non-transactional display labels (Rule 6)
-The verdict badge SHALL show the display label for the verdict from the table in the `debate-synthesiser` capability ("Verdict display labels are non-transactional (Rule 6)") and SHALL NOT show enum text. A verdict value missing from the table SHALL render "Unrecognised verdict".
-
-#### Scenario: Label for a bullish majority
-- **WHEN** the result's verdict is `BUY_SIGNAL`
-- **THEN** the badge reads "Bullish lean"
-
-#### Scenario: Every contract value renders its label
-- **WHEN** the panel is rendered for each of the seven verdict values
-- **THEN** the badge reads, in turn, "Strong bullish lean", "Bullish lean", "Observe", "Bearish lean", "Strong bearish lean", "Split — no consensus" and "Insufficient data"
-
-#### Scenario: Unknown verdict never shows the enum
-- **WHEN** the result's verdict is a value not in the table
-- **THEN** the badge reads "Unrecognised verdict"
-
-### Requirement: Range hit-rate, where shown, is labelled as a measurement (Rule 4)
-Wherever the panel shows the range hit-rate (`range_hit_rate = {rate, n}`, defined by `calibrate-volatility-range` over non-overlapping five-session windows covering about the last year), it SHALL label it "Range hit-rate" and show it as "N of the last M five-session moves" (M is n, N is rate times n rounded to a whole number), with basis text saying those moves stayed inside the band. When the rate is unavailable it SHALL show "Not enough history" and no number. This requirement fixes the label and wording; where and when the figure is rendered is decided by the changes that supply it.
-
-#### Scenario: Value shown with its basis
-- **WHEN** the range hit-rate is `{rate: 0.68, n: 50}`
-- **THEN** the panel shows "Range hit-rate" with "34 of the last 50 five-session moves" and basis text saying they stayed inside the band
-
-#### Scenario: No value
-- **WHEN** the range hit-rate is unavailable
-- **THEN** the panel shows "Not enough history" and no count or percentage
-
-### Requirement: Inline disclaimer matches docs/DISCLAIMER.md verbatim (Rule 6)
-The always-visible inline disclaimer, held in the frontend module `frontend/src/lib/disclaimer.js` shared with any other component that shows it, SHALL equal the "Inline version" blockquote of `docs/DISCLAIMER.md` after whitespace normalisation (blockquote lines joined with one space, whitespace collapsed), and SHALL NOT include a repo path. A test SHALL fail if the module's string and the file differ.
-
-#### Scenario: Text equals the file
-- **WHEN** the panel test reads `docs/DISCLAIMER.md` and renders the panel
-- **THEN** the inline disclaimer on screen equals the file's "Inline version" text
-
-#### Scenario: Drift is caught
-- **WHEN** either the file or the module's constant is edited alone
-- **THEN** the test fails
-
-### Requirement: Full disclaimer is one step away in every panel state (Rule 6)
-In every panel state (not-run, loading, error, populated) the panel SHALL show, under the inline disclaimer, an "About this analysis" disclosure that contains the "Full disclaimer" blockquote of `docs/DISCLAIMER.md` verbatim (exported by the same module; same normalisation and drift test). The inline disclaimer SHALL stay visible whether or not the disclosure is open, and no control SHALL hide it.
-
-#### Scenario: Disclosure present in all states
-- **WHEN** the panel is rendered not-run, loading, in error and populated
-- **THEN** an "About this analysis" disclosure holding the full text is present in each, with the inline disclaimer visible
-
-#### Scenario: Opening the disclosure
-- **WHEN** the user opens "About this analysis"
-- **THEN** the full disclaimer is shown and the inline disclaimer remains visible
-
-### Requirement: DebatePanel shows the running stage and elapsed time
-While an analysis for the selected ticker is running, the panel SHALL show the stage reported by `GET /tickers/{ticker}/debate/progress` using the labels "Running agents…" (`round1`), "Comparing positions…" (`round2`) and "Synthesising…" (`synthesis`), and the elapsed seconds since the request was submitted, updated at least once per second. The label SHALL come from the server, not from a timer. A failed progress poll SHALL keep the last label and show no error. The disclaimer SHALL remain visible.
-
-#### Scenario: Stage follows the server
-- **WHEN** the progress endpoint reports `round2` while the request is pending
-- **THEN** the panel shows "Comparing positions…" and an elapsed time
-
-#### Scenario: Elapsed time keeps counting
-- **WHEN** 12 seconds have passed since the request was submitted
-- **THEN** the panel shows an elapsed time of 12 seconds
-
-#### Scenario: Progress poll fails
-- **WHEN** a progress request fails while the analysis is running
-- **THEN** the previous label stays and no error message appears
-
-### Requirement: DebatePanel keeps the last result per ticker for the session
-The panel SHALL keep the last successful result for each ticker in memory until the page reloads or that ticker is analysed again, and SHALL show it with the time it was produced. Switching tickers SHALL NOT cancel an in-flight request or discard a result; when the user returns to a ticker whose analysis finished or is still running, the panel SHALL show that result or that running state. A failed run SHALL NOT remove a kept result: the error is shown above it.
-
-#### Scenario: Switch away and back
-- **WHEN** an analysis for VCB is running, the user selects FPT, and the VCB analysis finishes
-- **THEN** selecting VCB again shows the finished VCB result without a new request
-
-#### Scenario: Result is labelled with its time
-- **WHEN** a kept result is displayed
-- **THEN** the panel shows when it was produced (for example "Analysed 14:32")
-
-#### Scenario: Failed re-run keeps the old result
-- **WHEN** the user re-analyses a ticker that has a kept result and the run fails
-- **THEN** the error is shown and the earlier result remains visible
-
-#### Scenario: Other ticker has no result
-- **WHEN** the user selects a ticker that has never been analysed this session
-- **THEN** the panel shows the not-run state
-
-### Requirement: DebatePanel stops waiting after a client time limit
-The analysis request SHALL be aborted by the client after 200 seconds (the server run budget of 180 s plus 20 s). The panel SHALL then say that no answer arrived in that time, that the server may still be working, and that analysing again rejoins it. It SHALL NOT show the network-error message for this case.
-
-#### Scenario: No response within the limit
-- **WHEN** the request has had no response when the client limit is reached
-- **THEN** the panel shows the time-limit message and an "Analyse again" action, not "could not reach the server"
-
-### Requirement: DebatePanel names the reason an analysis could not run
-The panel SHALL show a distinct message for each of: the ticker is not loaded (404); another analysis limit reached (429 `debate_busy`: "Another analysis is already running; try again shortly"); the service is not configured (503 `debate_not_configured`, showing the server's message); the server run timed out (504 `debate_timeout`); the client time limit. Any other failure SHALL show a generic message together with the server's `detail` when one exists. The disclaimer SHALL remain visible in each of these states.
-
-#### Scenario: Busy
-- **WHEN** the response is HTTP 429 with `code` "debate_busy"
-- **THEN** the panel shows the busy message and offers a retry
-
-#### Scenario: Not configured
-- **WHEN** the response is HTTP 503 with `code` "debate_not_configured" and a message
-- **THEN** the panel shows that message
-
-#### Scenario: Server timeout
-- **WHEN** the response is HTTP 504 with `code` "debate_timeout"
-- **THEN** the panel says the analysis timed out on the server
-
-#### Scenario: Disclaimer in failure states
-- **WHEN** any of the failure messages is shown
-- **THEN** the disclaimer is visible
+## ADDED Requirements
 
 ### Requirement: The Verdict panel is in one of six states, chosen from the ticker's eligibility and the run's status
 The Verdict panel (the component the requirements below call "the panel" and "DebatePanel" is this panel) SHALL be in exactly one of six states for the selected ticker: **ready** (the ticker can be analysed and no run exists), **running** (a run for the ticker is in flight), **result** (a run has finished with a verdict), **one agent unavailable** (a result in which one agent did not vote), **insufficient data** (the ticker cannot be analysed, or a run abstained) and **failed** (the latest run ended in an error; a kept result stays visible beneath it). With no ticker selected the panel SHALL show a prompt to select one. The state SHALL be chosen without a request from, in order: the latest run's status and error, the kept result, and the ticker's eligibility (the catalog entry's `eligibility`, else `GET /tickers/{ticker}/range`'s `status` and `reasons`). The range block (see `dashboard-ui`) SHALL be visible above every state, and the disclaimer with "About this analysis" SHALL be visible in every state, including with no ticker selected.
@@ -301,3 +187,57 @@ All fixed text of the Verdict panel, the Debate matrix, the Rail, the topbar and
 #### Scenario: Guard over every state and verdict
 - **WHEN** the dashboard is rendered in every Verdict state and populated for each of the seven verdicts from a fixture whose agent text avoids those words, with the disclaimer texts removed
 - **THEN** a case-insensitive search for `\b(buy|sell|hold)\b`, for `[A-Z]+_SIGNAL` and for `confiden(ce|t)` finds nothing
+
+## REMOVED Requirements
+
+### Requirement: DebatePanel has three progressive disclosure levels
+**Reason**: The Verdict panel shows the verdict, Agreement, stances, Key tension and Synthesis at once, and the Debate matrix shows both rounds of every agent at once; the three levels and their toggles ("Show reasoning", "Full debate") no longer exist.
+**Migration**: "The result state shows the verdict, Agreement, stance chips, Key tension, Synthesis and the data line" and "The Debate matrix shows three agents by two rounds, with cards clamped to five lines".
+
+### Requirement: DebatePanel shows "not run" state before first analysis
+**Reason**: The not-run state becomes the ready state, which also states the duration and is only shown for a ticker that can be analysed.
+**Migration**: "The ready state offers Analyse and says how long it takes". The running label sequence stays in "DebatePanel shows the running stage and elapsed time".
+
+### Requirement: Disclaimer is visible at Level 1 at all times (Rule 6)
+**Reason**: It is worded in terms of Level 1 and Level 3, which no longer exist.
+**Migration**: "The Verdict panel is in one of six states, chosen from the ticker's eligibility and the run's status" (disclaimer in every state), "Language-model-written text is marked as such and the disclaimer accompanies agent reasoning (Rule 5, Rule 6)" and, in `dashboard-ui`, "Disclaimer stays visible with the Verdict panel, the Debate matrix and the range block, with no visibility control".
+
+### Requirement: Agent cards use correct labels (Rule 5)
+**Reason**: Agent cards live in the Debate matrix, not at "Level 2".
+**Migration**: The "Provenance labels" scenario of "The Debate matrix shows three agents by two rounds, with cards clamped to five lines".
+
+### Requirement: Panel shows the data date and age with every result
+**Reason**: It is worded in terms of Level 1; the data line is now part of the result state, and the Stage header states the date and age before any run.
+**Migration**: "The result state shows the verdict, Agreement, stance chips, Key tension, Synthesis and the data line" and, in `dashboard-ui`, "Stage header states the ticker, last close and the data date and age before any debate runs".
+
+### Requirement: Panel marks degraded agents and states agreement over live agents
+**Reason**: It is worded in terms of the Level 1 stance row, Level 2 cards and Level 3, and the Agreement text now names the agents that did not answer.
+**Migration**: "Unavailable agents are marked, and Agreement counts only the agents that answered and names those that did not".
+
+### Requirement: Panel shows an insufficient-data state with human-readable reasons
+**Reason**: The state is now also shown before any run (from eligibility), offers a Refresh action in place of text pointing at a ticker panel that no longer exists, and is worded without Levels.
+**Migration**: "The insufficient-data state gives reasons in plain words and offers Refresh, before or after a run".
+
+### Requirement: Panel range line states the typical 5-session move and its coverage
+**Reason**: The typical 5-session move and its coverage are the first element of the Verdict panel (the range block); a second line in the debate result would show the band twice, with one decimal where the block shows two.
+**Migration**: `dashboard-ui` "Verdict panel's range block states the typical 5-session move, its range check and its coverage". "Range hit-rate, where shown, is labelled as a measurement (Rule 4)" is unchanged and governs the block's label and wording.
+
+### Requirement: Vote count is labelled "Agreement", never "Confidence" (Rule 4)
+**Reason**: It says "Level 1 SHALL show"; the labelling rule is unchanged and now covers the whole dashboard.
+**Migration**: "The vote count is labelled "Agreement", never "Confidence" (Rule 4)".
+
+### Requirement: Language-model-written text is marked as such (Rule 5)
+**Reason**: It places the note at Level 2 and Level 3; it is now shown above the Debate matrix's cards and above Key tension and Synthesis.
+**Migration**: "Language-model-written text is marked as such and the disclaimer accompanies agent reasoning (Rule 5, Rule 6)".
+
+### Requirement: Fixed panel text contains no transaction verbs (Rule 6)
+**Reason**: Its scenario renders the panel "at Levels 1 to 3" and covers one component; the guard now covers every zone of the dashboard.
+**Migration**: "Fixed dashboard text contains no transaction verbs, enum text or Confidence (Rule 6)".
+
+### Requirement: DebatePanel shows the report-saved line only when the report was saved
+**Reason**: It places the line at Level 3.
+**Migration**: "The report-saved line appears only when the report was saved".
+
+### Requirement: DebatePanel marks an unavailable key tension
+**Reason**: It places Key Tension at Level 2; Key tension is now a block of the Verdict panel.
+**Migration**: "Key tension is shown in the Verdict panel only, and says when it is unavailable".

@@ -1,98 +1,4 @@
-# dashboard-ui
-
-## Purpose
-
-TBD
-
-## Requirements
-
-### Requirement: Chart panel shows an OHLCV legend for the hovered or most recent session
-The chart panel SHALL display a fixed-position legend showing that
-session's Open, High, Low, Close, and Volume values. The legend SHALL
-reflect the session currently under the crosshair; when the crosshair is
-not positioned over the chart, the legend SHALL show the most recent
-(rightmost) session's values instead of appearing blank. The legend's
-five values SHALL render in the primary ink, with a small colour swatch
-beside them in the candle colour of that session (Close ≥ Open → up, else
-down); the candle colours SHALL NOT be used as text (they reach 3:1 as marks,
-not the 4.5:1 text needs); the legend SHALL NOT introduce a different
-up/down comparison.
-
-#### Scenario: Legend defaults to the most recent session
-- **WHEN** the chart panel renders for a selected ticker and the
-  crosshair is not positioned over the chart
-- **THEN** the legend shows the most recent session's Open, High, Low,
-  Close, and Volume values
-
-#### Scenario: Legend updates to the hovered session
-- **WHEN** a user positions the crosshair over a specific candle
-- **THEN** the legend shows that candle's Open, High, Low, Close, and
-  Volume values, replacing whatever it showed before
-
-#### Scenario: Legend values are inked, with a swatch matching the session's direction
-- **WHEN** the legend displays a session whose Close is greater than or
-  equal to its Open
-- **THEN** the legend's O/H/L/C/Volume values render in the primary ink
-  (at least 4.5:1 against the card surface in both themes) beside a swatch
-  in the up candle colour, and beside a swatch in the down candle colour
-  for a session whose Close is below its Open
-
-#### Scenario: Legend reflects only real historical data
-- **WHEN** the chart panel renders a range band (per the "Chart panel
-  renders OHLCV, volume and the 5-session range band, with the band label
-  and no derived indicator" requirement)
-- **THEN** the legend never displays a band bound as if it were a real
-  session's OHLCV
-
-### Requirement: Range display distinguishes available, unavailable, not-loaded, and failed states
-The range display SHALL render visually distinct states for: `GET /tickers/{ticker}/range` responding `200` with a numeric `range_5s_pct`; `200` with a null `range_5s_pct` (any refusing `status`); `404`; and `5xx`. It SHALL decide between the first two by whether `range_5s_pct` is a number and SHALL use `status` and `reasons` only as display text, so a status added later cannot cause a stale figure to be shown. It SHALL NOT render the same treatment for more than one of these outcomes, and SHALL show no number in any state but the first.
-
-#### Scenario: Unavailable range names its reason
-- **WHEN** `/range` responds `200` with a null `range_5s_pct` and a non-empty `reasons`
-- **THEN** the card shows a message naming the reason from the response and no percentage
-
-#### Scenario: Unavailable range without a reason
-- **WHEN** `/range` responds `200` with a null `range_5s_pct` and no `reasons`
-- **THEN** the card shows a generic "range unavailable for this ticker" message and no percentage
-
-#### Scenario: Not-loaded state is distinguishable
-- **WHEN** the range request responds `404`
-- **THEN** the card shows that the ticker has not been loaded yet, in wording distinct from the unavailable and failed messages
-
-#### Scenario: Server failure is distinguishable
-- **WHEN** the range request responds with a `5xx` status
-- **THEN** the card shows a failure message distinct from the not-loaded and unavailable messages
-
-### Requirement: Range display shows no daily sigma, direction, or point forecast
-The dashboard SHALL NOT render `sigma_daily_pct`, any signed or direction-coloured figure, or any single predicted price or return derived from the range, anywhere in the UI, including tooltips and hidden text. The range SHALL be drawn and written symmetrically about the last close and SHALL use no positive or negative (up or down) colour. This replaces the Rule 2 log-return conversion requirement: no endpoint the dashboard calls returns a log return.
-
-#### Scenario: Daily sigma is never rendered
-- **WHEN** `/range` responds with both `sigma_daily_pct` and `range_5s_pct`
-- **THEN** only `range_5s_pct` appears in the DOM, and the value of `sigma_daily_pct` appears nowhere on the page
-
-#### Scenario: No signed or directional figure
-- **WHEN** the range card is rendered for any available range
-- **THEN** its figure carries no `+` or `-` sign and no up/down data attribute or colour class
-
-### Requirement: Loading a ticker refreshes its chart and range
-When `POST /tickers/{ticker}/load` succeeds from the dashboard — whether
-triggered by a Refresh action or by search — the system SHALL invalidate
-that ticker's catalog entry, `/history` and `/range` data so the chart, the
-range band and the range display reflect the newly-loaded data without a
-manual page refresh or a separate user action. A ticker that is not
-selected SHALL NOT have `/range` or `/history` fetched as a result; they are
-fetched when it is next selected.
-
-#### Scenario: Successful load refreshes chart and range automatically
-- **WHEN** a load action for the selected ticker completes successfully
-  from the dashboard, whether via search or Refresh
-- **THEN** the chart panel and the range display for that ticker fetch and
-  reflect the newly loaded data without the user reloading the page or
-  taking a separate action
-
-#### Scenario: A load for an unselected ticker fetches nothing per-ticker
-- **WHEN** a load completes for a ticker that is not selected
-- **THEN** only the catalog is refetched
+## ADDED Requirements
 
 ### Requirement: Dashboard layout is a fixed topbar over a Rail, a Stage and a sticky Verdict panel
 The dashboard SHALL render a fixed topbar (brand, the one ticker search, a theme toggle) over exactly three zones: the **Rail** (the ticker list), the **Stage** (the symbol header, the chart history control, the chart card and the Debate matrix) and the **Verdict** panel. No fourth zone SHALL sit beside them, and no ticker list SHALL sit above the chart. At 1440 px and up the zones SHALL sit side by side with the Rail `--rail-w` (232 px) wide and sticky, and the Verdict panel `--verdict-w` (340 px) wide and sticky; each sticky zone SHALL scroll on its own and sit `--topbar-h` (52 px) plus `--space-4` below the top of the viewport. The chart card SHALL be at least `--chart-h` (440 px) high at 1144 px and up, growing to 56vh. Page padding SHALL be `--space-6` at 1440 px and up and `--space-4` below, with `--space-4` between zones and `--space-5` between sections inside the Stage. The page SHALL expose the landmarks `header`, `nav` (the Rail), `main` and `aside` (the Verdict panel) and one `h1`, the selected ticker (or "No ticker selected").
@@ -471,3 +377,73 @@ Every interactive element SHALL show a 2 px solid accent outline with a 2 px off
 #### Scenario: Keyboard-only walkthrough
 - **WHEN** a keyboard user, starting at the topbar, selects a ticker, presses Analyse and expands an agent card
 - **THEN** each step is reachable with Tab, Shift+Tab, Enter, Space and the arrow keys, and no step needs a pointer
+
+## MODIFIED Requirements
+
+### Requirement: Chart panel shows an OHLCV legend for the hovered or most recent session
+The chart panel SHALL display a fixed-position legend showing that
+session's Open, High, Low, Close, and Volume values. The legend SHALL
+reflect the session currently under the crosshair; when the crosshair is
+not positioned over the chart, the legend SHALL show the most recent
+(rightmost) session's values instead of appearing blank. The legend's
+five values SHALL render in the primary ink, with a small colour swatch
+beside them in the candle colour of that session (Close ≥ Open → up, else
+down); the candle colours SHALL NOT be used as text (they reach 3:1 as marks,
+not the 4.5:1 text needs); the legend SHALL NOT introduce a different
+up/down comparison.
+
+#### Scenario: Legend defaults to the most recent session
+- **WHEN** the chart panel renders for a selected ticker and the
+  crosshair is not positioned over the chart
+- **THEN** the legend shows the most recent session's Open, High, Low,
+  Close, and Volume values
+
+#### Scenario: Legend updates to the hovered session
+- **WHEN** a user positions the crosshair over a specific candle
+- **THEN** the legend shows that candle's Open, High, Low, Close, and
+  Volume values, replacing whatever it showed before
+
+#### Scenario: Legend values are inked, with a swatch matching the session's direction
+- **WHEN** the legend displays a session whose Close is greater than or
+  equal to its Open
+- **THEN** the legend's O/H/L/C/Volume values render in the primary ink
+  (at least 4.5:1 against the card surface in both themes) beside a swatch
+  in the up candle colour, and beside a swatch in the down candle colour
+  for a session whose Close is below its Open
+
+#### Scenario: Legend reflects only real historical data
+- **WHEN** the chart panel renders a range band (per the "Chart panel
+  renders OHLCV, volume and the 5-session range band, with the band label
+  and no derived indicator" requirement)
+- **THEN** the legend never displays a band bound as if it were a real
+  session's OHLCV
+
+## REMOVED Requirements
+
+### Requirement: Ticker panel shows the fixed set plus search for any real ticker
+**Reason**: The ticker panel (a wrapping grid of chips above the chart, a separate "Searched tickers" list and a "Load" button) is replaced by the Rail and the one topbar search. The requirement also still said the fixed set was the 9 `TRAINING_TICKERS`, while the shipped list is every loaded catalog entry.
+**Migration**: "Rail lists the loaded catalog, sorted by Symbol or Last loaded, and filtered by the topbar search", "One topbar search filters the Rail and selects or loads a symbol" and "Rail rows show the symbol, loaded age, a refresh control and an ineligibility tag, and no direction cue".
+
+### Requirement: Range display shows the typical 5-session move and its measured coverage
+**Reason**: The range card becomes the range block at the top of the Verdict panel, with two decimals, the "Range hit-rate" label, a "Not calibrated" case and the wording "Not enough history to check the range".
+**Migration**: "Verdict panel's range block states the typical 5-session move, its range check and its coverage".
+
+### Requirement: Dashboard issues no per-ticker requests for tickers that are not selected
+**Reason**: It spoke of ticker chips; the Rail row, the topbar search and the new controls replace them, and the budget now also bounds the catalog request's latency.
+**Migration**: "Page load and selection issue only the requests the budget allows".
+
+### Requirement: Range display shows explicit placeholders when no ticker is selected
+**Reason**: The card it described is now the range block of the Verdict panel, which keeps the same no-ticker shape.
+**Migration**: The "No ticker selected keeps the block's shape" scenario of "Verdict panel's range block states the typical 5-session move, its range check and its coverage".
+
+### Requirement: Chart panel renders OHLCV plus a 5-session range band, no derived-indicator overlay
+**Reason**: The band is drawn in the accent colour (it was the chart's neutral ink) and labelled with its percentage, and the chart now has a history control and a theme. The shape rule (one position, no path) is kept.
+**Migration**: "Chart panel renders OHLCV, volume and the 5-session range band, with the band label and no derived indicator".
+
+### Requirement: Disclaimer stays visible with the debate panel and range card, with no visibility control
+**Reason**: The debate panel and the range card no longer exist as separate components; the disclaimer is now required at the Verdict panel and at the Debate matrix.
+**Migration**: "Disclaimer stays visible with the Verdict panel, the Debate matrix and the range block, with no visibility control".
+
+### Requirement: Dashboard renders the debate panel for the selected ticker
+**Reason**: It named a side-panel region whose layout was "unchanged"; that region is replaced by the Verdict panel and the Debate matrix.
+**Migration**: "Dashboard renders the Verdict panel and the Debate matrix for the selected ticker".
