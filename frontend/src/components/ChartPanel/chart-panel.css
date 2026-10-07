@@ -1,5 +1,5 @@
 /* Hallmark · component: chart-panel · genre: modern-minimal (data-dense financial dashboard)
- * states: default(=loaded) · loading · error · success(=predicted point shown) — see overlay states below
+ * states: default(=loaded) · loading · error · success(=range band shown when a range is served) — see overlay states below
  * contrast: pass (46-50)
  */
 

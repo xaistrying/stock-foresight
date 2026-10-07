@@ -3,9 +3,9 @@ import { fetchTickers } from '../api/tickers'
 import { queryKeys } from '../lib/queryClient'
 
 /**
- * GET /tickers — the fixed 9 TRAINING_TICKERS with load status
- * (tasks.md 7.1). Searched-in tickers are not part of this response;
- * see useSearchedTickers for how they're tracked client-side.
+ * GET /tickers — the universe-derived catalog with each ticker's load status. It is the
+ * dashboard's only request on page load. Searched-in tickers are not part of this response
+ * until they are loaded; see useSearchedTickers for how they're tracked client-side.
  */
 export function useTickers() {
   return useQuery({

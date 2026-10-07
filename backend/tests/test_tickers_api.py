@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.api.tickers as tickers_api
-import app.main as main_module
 import app.ml.feature_engineering as feature_engineering
 import app.services.ohlcv_quality_gate as ohlcv_quality_gate
 import app.services.ticker_ingestion as ticker_ingestion
@@ -79,23 +78,35 @@ def test_load_endpoint_succeeds_on_first_load_and_reload(client):
     assert reload_response.json()["rows_loaded"] == 2
 
 
-def test_startup_fails_when_model_file_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr(main_module, "MODEL_PATH", tmp_path / "missing_model.json")
+def test_app_boots_without_model_artifact(monkeypatch, tmp_path):
+    from app.db import connection
 
-    with pytest.raises(Exception):
-        with TestClient(app):
-            pass
+    # An empty data/models directory: nothing the app starts up with may need a model file.
+    monkeypatch.setattr(connection, "DB_PATH", tmp_path / "app.db")
+    (tmp_path / "models").mkdir()
+
+    with TestClient(app) as test_client:
+        response = test_client.get("/tickers")
+
+        assert response.status_code == 200
+        assert not hasattr(app.state, "model")
 
 
-def test_startup_loads_model_and_reuses_it_across_requests(client):
-    assert app.state.model is not None
-    loaded_model = app.state.model
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("get", "/tickers/VIB/prediction"),
+        ("get", "/tickers/VIB/insight"),
+        ("post", "/tickers/VIB/backtest"),
+    ],
+)
+def test_removed_routes_are_gone(client, method, path):
+    response = getattr(client, method)(path)
 
-    client.post("/tickers/VIB/load")
-    assert app.state.model is loaded_model
-
-    client.post("/tickers/VIB/load")
-    assert app.state.model is loaded_model
+    # FastAPI's own "no such route" body; a handler's 404 (e.g. "Ticker has not been loaded")
+    # would read differently.
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
 
 def _seed_universe(db_path, rows):

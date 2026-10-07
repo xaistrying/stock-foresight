@@ -14,10 +14,9 @@ import './ticker-panel.css'
  * Selecting a ticker (chip or search) is reported via `onSelectTicker` for
  * the rest of the dashboard to consume.
  *
- * Watchlist now shows every ticker that has been loaded (loaded: true)
- * rather than only the original 9 TRAINING_TICKERS. This makes all 208
- * modelling-universe tickers accessible as chips once loaded, matching
- * the multi-agent debate panel's broader ticker coverage.
+ * Watchlist shows every ticker that has been loaded (loaded: true), so all 208
+ * modelling-universe tickers are accessible as chips once loaded. Chips issue no
+ * request of their own; a ticker's history and range are fetched when it is selected.
  *
  * Tickers not yet loaded are reachable via the search box, which resolves
  * against the full catalog and loads on demand.
@@ -71,8 +70,7 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
       addSearchedTicker(ticker)
       queryClient.invalidateQueries({ queryKey: queryKeys.tickers })
       queryClient.invalidateQueries({ queryKey: queryKeys.history(ticker) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.prediction(ticker) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.insight(ticker) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.range(ticker) })
       onSelectTicker(ticker)
     },
   })
@@ -165,25 +163,6 @@ export function TickerPanel({ selectedTicker, onSelectTicker }) {
       <p className="ticker-panel__sr-only" aria-live="polite">
         {liveRegionText}
       </p>
-
-      {/* Freshness legend (post-ship revision) — chips show a color dot
-          instead of a "Fresh"/"Stale"/"Loading" text label; this spells out
-          the mapping visibly so it isn't color-only (WCAG color-not-only),
-          without needing to hover every chip's dot to find out. */}
-      <div className="ticker-panel__legend" aria-hidden="true">
-        <span className="ticker-panel__legend-item">
-          <span className="ticker-chip__dot" data-freshness="fresh" />
-          Fresh
-        </span>
-        <span className="ticker-panel__legend-item">
-          <span className="ticker-chip__dot" data-freshness="stale" />
-          Stale
-        </span>
-        <span className="ticker-panel__legend-item">
-          <span className="ticker-chip__dot ticker-panel__legend-dot--loading" />
-          Loading
-        </span>
-      </div>
     </section>
   )
 }

@@ -1,11 +1,9 @@
 import { QueryClient } from '@tanstack/react-query'
 
-// Single shared QueryClient for the app (tasks.md 6.2). Defaults kept
-// conservative — the dashboard's data (prices, predictions, insight) is
-// only as fresh as the last `/load`, so we don't want React Query silently
-// refetching on every window focus and masking staleness that the ticker
-// panel's own Fresh/Stale state (design.md Decision 10) is responsible for
-// surfacing explicitly.
+// Single shared QueryClient for the app. Defaults kept conservative — the
+// dashboard's data (prices, range) is only as fresh as the last `/load`, so
+// React Query must not silently refetch on every window focus and hide how
+// old the stored data is (each chip says "Loaded Nd ago").
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -16,11 +14,10 @@ export const queryClient = new QueryClient({
 })
 
 // Centralized query keys so invalidation (design.md Decision 5's
-// write-then-invalidate flow: load -> invalidate prediction/history/insight)
+// write-then-invalidate flow: load -> invalidate catalog/history/range)
 // stays consistent across hooks instead of ad-hoc key arrays per call site.
 export const queryKeys = {
   tickers: ['tickers'],
   history: (ticker) => ['ticker-history', ticker],
-  prediction: (ticker) => ['ticker-prediction', ticker],
-  insight: (ticker) => ['ticker-insight', ticker],
+  range: (ticker) => ['ticker-range', ticker],
 }

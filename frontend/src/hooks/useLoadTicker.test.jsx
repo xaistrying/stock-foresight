@@ -73,7 +73,7 @@ describe('useIsTickerLoading', () => {
 })
 
 describe('useLoadTicker', () => {
-  it('invalidates tickers/history/prediction/insight on a successful load', async () => {
+  it('invalidates tickers/history/range on a successful load', async () => {
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'ok', rows_loaded: 300 })
 
     const queryClient = new QueryClient({
@@ -96,8 +96,7 @@ describe('useLoadTicker', () => {
       expect.arrayContaining([
         ['tickers'],
         ['ticker-history', 'TCB'],
-        ['ticker-prediction', 'TCB'],
-        ['ticker-insight', 'TCB'],
+        ['ticker-range', 'TCB'],
       ]),
     )
   })

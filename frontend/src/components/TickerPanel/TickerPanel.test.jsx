@@ -5,32 +5,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TickerPanel } from './TickerPanel'
 import * as tickersApi from '../../api/tickers'
 
-// Mirrors GET /tickers/{ticker}/prediction and /history enough for the
-// freshness computation (useTickerFreshness) to resolve deterministically
-// in tests, without a real backend. Also mocks /insight — TickerChip now
-// prefetches it the same way (adjacent fix, see useTickerInsight.js) — so
-// existing tests don't hit the network for a query they don't care about.
-function mockFreshData() {
-  vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-    ticker: 'TCB',
-    as_of: '2026-08-10',
-    status: 'ok',
-    predicted_log_return: 0.01,
-  })
-  vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-    ticker: 'TCB',
-    rows: [{ date: '2026-08-10', open: 1, high: 1, low: 1, close: 1, volume: 1 }],
-  })
-  vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-    ticker: 'TCB',
-    confidence_score: 0.55,
-    confidence_basis: '60-prediction backtested hit-rate.',
-    sentiment_proxy: 'bullish',
-    sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-    advice_text: 'HOLD',
-  })
-}
-
 function renderPanel(props = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -57,7 +31,6 @@ describe('TickerPanel', () => {
         { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-11' },
       ],
     })
-    mockFreshData()
 
     renderPanel()
 
@@ -80,7 +53,6 @@ describe('TickerPanel', () => {
         })),
       ],
     })
-    mockFreshData()
 
     renderPanel()
 
@@ -109,7 +81,6 @@ describe('TickerPanel', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     const loadSpy = vi.spyOn(tickersApi, 'loadTicker')
 
     const { onSelectTicker } = renderPanel()
@@ -125,7 +96,6 @@ describe('TickerPanel', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
 
     const { onSelectTicker } = renderPanel()
@@ -143,7 +113,6 @@ describe('TickerPanel', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'rate_limited' })
 
     const { onSelectTicker } = renderPanel()
@@ -161,7 +130,6 @@ describe('TickerPanel', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     const loadSpy = vi.spyOn(tickersApi, 'loadTicker')
 
     const { onSelectTicker } = renderPanel()
@@ -229,38 +197,19 @@ describe('TickerPanel', () => {
     expect(await screen.findByText(/unlikely to help/i)).toBeInTheDocument()
   })
 
-  it('shows a freshness dot with an accessible label instead of visible "Fresh" text', async () => {
+  it('renders chips with no freshness dot and no legend', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
 
     renderPanel()
 
     const chip = await screen.findByRole('button', { name: /^TCB/ })
-    await waitFor(() => {
-      expect(chip.querySelector('.ticker-chip__dot')).toHaveAttribute('data-freshness', 'fresh')
-    })
-    // No bare "Fresh" text label inside the chip anymore...
-    expect(chip).not.toHaveTextContent('Fresh')
-    // ...but the dot itself carries the same meaning accessibly (WCAG
-    // color-not-only: color alone must not be the only signal).
-    const dot = chip.querySelector('.ticker-chip__dot')
-    expect(dot).toHaveAccessibleName(/fresh/i)
-  })
-
-  it('renders a freshness legend explaining the dot colors, without duplicating the accessibility tree', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
-    })
-    mockFreshData()
-
-    renderPanel()
-    await screen.findByRole('button', { name: /^TCB/ })
-
-    expect(screen.getByText('Fresh')).toBeInTheDocument()
-    expect(screen.getByText('Stale')).toBeInTheDocument()
-    expect(screen.getByText('Loading')).toBeInTheDocument()
+    expect(chip.closest('.ticker-chip')).not.toHaveAttribute('data-freshness')
+    expect(document.querySelector('.ticker-chip__dot')).toBeNull()
+    expect(document.querySelector('.ticker-panel__legend')).toBeNull()
+    expect(screen.queryByText('Fresh')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stale')).not.toBeInTheDocument()
   })
 
   it('marks the selected ticker distinctly from unselected ones', async () => {
@@ -270,7 +219,6 @@ describe('TickerPanel', () => {
         { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
       ],
     })
-    mockFreshData()
 
     renderPanel({ selectedTicker: 'TCB' })
 
@@ -310,7 +258,6 @@ describe('TickerPanel selected-chip visibility', () => {
   it('scrolls the selected chip into view, nearest edge only', async () => {
     const scrollIntoView = installScrollSpy()
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue(twoTickers)
-    mockFreshData()
 
     renderPanel({ selectedTicker: 'VIB' })
     await screen.findByRole('button', { name: /^VIB/ })
@@ -330,7 +277,6 @@ describe('TickerPanel selected-chip visibility', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
 
     // FPT is selected from the start; it only exists as a Searched row
@@ -348,7 +294,6 @@ describe('TickerPanel selected-chip visibility', () => {
   it('does not scroll anything when no ticker is selected', async () => {
     const scrollIntoView = installScrollSpy()
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue(twoTickers)
-    mockFreshData()
 
     renderPanel({ selectedTicker: null })
     await screen.findByRole('button', { name: /^VIB/ })
@@ -370,7 +315,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
 
     renderPanel()
@@ -391,7 +335,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
 
     renderPanel()
     await screen.findByRole('button', { name: /^TCB/ })
@@ -403,7 +346,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockImplementation((ticker) =>
       Promise.resolve({ ticker, status: 'ok', rows_loaded: 300 }),
     )
@@ -446,7 +388,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
         { ticker: 'HPG', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
       ],
     })
-    mockFreshData()
 
     renderPanel()
     await screen.findByRole('button', { name: /^TCB/ })
@@ -463,7 +404,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
 
     renderPanel()
     await screen.findByRole('button', { name: /^TCB/ })
@@ -482,7 +422,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
         { ticker: 'HPG', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
       ],
     })
-    mockFreshData()
 
     renderPanel()
     await screen.findByRole('button', { name: /^TCB/ })
@@ -496,7 +435,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
 
     renderPanel()
@@ -528,7 +466,6 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
           { ticker: 'FPT', in_training_set: false, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
         ],
       })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
 
     renderPanel()
@@ -569,45 +506,26 @@ describe('TickerPanel Watchlist / searched-tickers split', () => {
   })
 })
 
-// Adjacent fix (found live, not caused by redesign-dashboard-visual-look):
-// AIInsightPanel's first fetch for any given ticker was always cold —
-// unlike Prediction/Chart, nothing warmed `useTickerInsight`'s cache ahead
-// of selection — forcing a visible loading-placeholder flash on that
-// ticker's first selection. TickerChip now prefetches insight the same
-// way it already prefetches prediction/history for freshness.
-describe('TickerPanel insight prefetch', () => {
-  it('prefetches AI insight for every Watchlist ticker on render, not just the selected one', async () => {
+// Request budget (retire-direction-model): a chip is a button, not a data source. The page
+// load is one request (GET /tickers); history and range are fetched for the selected ticker
+// only, by the chart and the range card.
+describe('TickerPanel request budget', () => {
+  it('renders chips and issues no per-chip request', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [
         { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
         { ticker: 'VIB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' },
       ],
     })
-    mockFreshData()
-    const insightSpy = tickersApi.fetchTickerInsight
+    const historySpy = vi.spyOn(tickersApi, 'fetchTickerHistory')
+    const rangeSpy = vi.spyOn(tickersApi, 'fetchTickerRange')
 
     renderPanel({ selectedTicker: null })
+    await screen.findByRole('button', { name: /^VIB/ })
+    await new Promise((resolve) => setTimeout(resolve, 50))
 
-    await waitFor(() => {
-      expect(insightSpy).toHaveBeenCalledWith('TCB')
-      expect(insightSpy).toHaveBeenCalledWith('VIB')
-    })
-  })
-
-  it('does not prefetch insight for a ticker that is not loaded', async () => {
-    // An unloaded ticker does not appear as a chip, so it is never selected
-    // and no prefetch is triggered. Verify by rendering with only an unloaded
-    // entry and asserting the insight API is not called.
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
-    })
-    const insightSpy = vi.spyOn(tickersApi, 'fetchTickerInsight')
-
-    renderPanel()
-    // Allow any async work to settle
-    await new Promise((r) => setTimeout(r, 50))
-
-    expect(insightSpy).not.toHaveBeenCalled()
+    expect(historySpy).not.toHaveBeenCalled()
+    expect(rangeSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -621,7 +539,6 @@ describe('TickerPanel refresh action', () => {
         { ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null },
       ],
     })
-    mockFreshData()
 
     renderPanel()
 
@@ -633,7 +550,6 @@ describe('TickerPanel refresh action', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     const loadSpy = vi
       .spyOn(tickersApi, 'loadTicker')
       .mockResolvedValue({ ticker: 'TCB', status: 'ok', rows_loaded: 300 })
@@ -650,7 +566,6 @@ describe('TickerPanel refresh action', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     let resolveLoad
     vi.spyOn(tickersApi, 'loadTicker').mockReturnValue(
       new Promise((resolve) => {
@@ -672,7 +587,6 @@ describe('TickerPanel refresh action', () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'rate_limited' })
 
     renderPanel()
@@ -682,11 +596,10 @@ describe('TickerPanel refresh action', () => {
     expect(await screen.findByText(/try again in a moment/i)).toBeInTheDocument()
   })
 
-  it('does not invalidate history/prediction/insight when Refresh completes with a non-ok status', async () => {
+  it('does not invalidate history/range when Refresh completes with a non-ok status', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'rate_limited' })
 
     const queryClient = new QueryClient({
@@ -700,18 +613,17 @@ describe('TickerPanel refresh action', () => {
     )
 
     const refreshButton = await screen.findByRole('button', { name: 'Refresh TCB' })
-    invalidateSpy.mockClear() // ignore invalidations from the initial catalog/freshness fetch
+    invalidateSpy.mockClear() // ignore invalidations from the initial catalog fetch
     await userEvent.click(refreshButton)
 
     await screen.findByText(/try again in a moment/i)
     expect(invalidateSpy).not.toHaveBeenCalled()
   })
 
-  it('invalidates history/prediction/insight identically to a first-time load when Refresh succeeds', async () => {
+  it('invalidates tickers/history/range identically to a first-time load when Refresh succeeds', async () => {
     vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
       tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
     })
-    mockFreshData()
     vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'TCB', status: 'ok', rows_loaded: 300 })
 
     const queryClient = new QueryClient({
@@ -733,8 +645,7 @@ describe('TickerPanel refresh action', () => {
         expect.arrayContaining([
           ['tickers'],
           ['ticker-history', 'TCB'],
-          ['ticker-prediction', 'TCB'],
-          ['ticker-insight', 'TCB'],
+          ['ticker-range', 'TCB'],
         ]),
       )
     })
@@ -746,10 +657,37 @@ describe('TickerPanel refresh action', () => {
         { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: new Date().toISOString() },
       ],
     })
-    mockFreshData()
 
     renderPanel()
 
     expect(await screen.findByText(/^Loaded /)).toBeInTheDocument()
+  })
+})
+
+describe('TickerPanel search-load invalidation', () => {
+  it('invalidates tickers, history and range for the searched-in ticker, and no insight or prediction key', async () => {
+    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers: [] })
+    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TickerPanel selectedTicker={null} onSelectTicker={vi.fn()} />
+      </QueryClientProvider>,
+    )
+
+    await userEvent.type(await screen.findByLabelText(/search ticker/i), 'FPT')
+    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
+
+    await waitFor(() => {
+      const invalidatedKeys = invalidateSpy.mock.calls.map((call) => call[0].queryKey)
+      expect(invalidatedKeys).toEqual(
+        expect.arrayContaining([['tickers'], ['ticker-history', 'FPT'], ['ticker-range', 'FPT']]),
+      )
+      expect(invalidatedKeys).toHaveLength(3)
+    })
   })
 })

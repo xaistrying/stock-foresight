@@ -21,6 +21,7 @@ vi.mock('./chartTheme', () => ({
     ink3: 'rgb(100, 100, 100)',
     positive: 'rgb(0, 128, 0)',
     negative: 'rgb(200, 0, 0)',
+    ink: 'rgb(20, 20, 20)',
     accent: 'rgb(0, 0, 200)',
   }),
 }))
@@ -33,6 +34,10 @@ vi.mock('./chartTheme', () => ({
 // namespace) is required here — Vitest can't redefine an ESM named export
 // directly, but a mock factory wrapping the real module works.
 const lineSeriesDataCalls = []
+// Primitives attached to the candle series (the range band)
+// (their draw code cannot run in jsdom; the band geometry and state are what is asserted).
+const attachedPrimitives = []
+const detachedPrimitives = []
 const volumeSeriesDataCalls = []
 let fitContentCallCount = 0
 const setAutoScaleCalls = []
@@ -100,6 +105,16 @@ vi.mock('lightweight-charts', async () => {
         }
         if (definition === actual.CandlestickSeries) {
           candleSeriesInstance = series
+          const originalAttach = series.attachPrimitive.bind(series)
+          series.attachPrimitive = (primitive) => {
+            attachedPrimitives.push(primitive)
+            return originalAttach(primitive)
+          }
+          const originalDetach = series.detachPrimitive.bind(series)
+          series.detachPrimitive = (primitive) => {
+            detachedPrimitives.push(primitive)
+            return originalDetach(primitive)
+          }
           const originalPriceScale = series.priceScale.bind(series)
           series.priceScale = () => {
             const priceScale = originalPriceScale()
@@ -181,6 +196,21 @@ async function waitForCountToStabilize(readCount) {
   }
 }
 
+function rangeBody(overrides = {}) {
+  return {
+    ticker: 'TCB',
+    as_of: '2026-08-10',
+    status: 'ok',
+    reasons: [],
+    sigma_daily_pct: 1.4,
+    range_5s_pct: 5,
+    range_k: 1.1,
+    range_coverage: 0.68,
+    range_hit_rate: { rate: 0.7, n: 48 },
+    ...overrides,
+  }
+}
+
 function renderPanel(ticker) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -195,6 +225,8 @@ function renderPanel(ticker) {
 beforeEach(() => {
   vi.restoreAllMocks()
   lineSeriesDataCalls.length = 0
+  attachedPrimitives.length = 0
+  detachedPrimitives.length = 0
   volumeSeriesDataCalls.length = 0
   fitContentCallCount = 0
   setAutoScaleCalls.length = 0
@@ -238,7 +270,7 @@ describe('ChartPanel', () => {
 
   it('shows a loading message while history is in flight', () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockReturnValue(new Promise(() => {}))
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockReturnValue(new Promise(() => {}))
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockReturnValue(new Promise(() => {}))
 
     const { unmount } = renderPanel('TCB')
 
@@ -253,7 +285,7 @@ describe('ChartPanel', () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockRejectedValue(
       new ApiError('Ticker not found', { status: 404 }),
     )
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockRejectedValue(
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockRejectedValue(
       new ApiError('Ticker has not been loaded', { status: 404 }),
     )
 
@@ -267,7 +299,7 @@ describe('ChartPanel', () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockRejectedValue(
       new ApiError('Internal error', { status: 500 }),
     )
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockRejectedValue(
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockRejectedValue(
       new ApiError('Feature computation failed', { status: 503 }),
     )
 
@@ -279,7 +311,7 @@ describe('ChartPanel', () => {
     unmount()
   })
 
-  it('renders no overlay once history and prediction load successfully', async () => {
+  it('renders no overlay once history and range load successfully', async () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
       rows: [
@@ -287,12 +319,7 @@ describe('ChartPanel', () => {
         { date: '2026-08-10', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 },
       ],
     })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: 0.02,
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
 
     const { unmount } = renderPanel('TCB')
 
@@ -304,7 +331,7 @@ describe('ChartPanel', () => {
     unmount()
   })
 
-  it('draws exactly two VALUED points (last close, predicted price), plus whitespace-only points reserving the intermediate sessions', async () => {
+  it('attaches one band primitive whose bounds are close x (1 +/- r/100) at the t+5 date', async () => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
       rows: [
@@ -313,43 +340,79 @@ describe('ChartPanel', () => {
         { date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 },
       ],
     })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-07-29',
-      status: 'ok',
-      predicted_log_return: 0.02,
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29', range_5s_pct: 5 }))
 
     const { unmount } = renderPanel('TCB')
 
-    await waitFor(() => {
-      const lastCall = lineSeriesDataCalls[lineSeriesDataCalls.length - 1]
-      expect(lastCall).toHaveLength(6) // last close + 4 whitespace + predicted point
+    await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
+
+    expect(attachedPrimitives).toHaveLength(1)
+    const { time, upper, lower } = attachedPrimitives[0].band
+    expect(time).toBe('2026-08-05')
+    expect(upper).toBeCloseTo(11.55, 10)
+    expect(lower).toBeCloseTo(10.45, 10)
+    unmount()
+  })
+
+  it('draws the band in the neutral ink colour, never the positive or negative candle colours', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
     })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29' }))
+
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
+
+    expect(attachedPrimitives[0].color).toBe('rgb(20, 20, 20)')
+    expect(attachedPrimitives[0].color).not.toBe('rgb(0, 128, 0)')
+    expect(attachedPrimitives[0].color).not.toBe('rgb(200, 0, 0)')
+    unmount()
+  })
+
+  it('makes the price scale include both bounds through autoscaleInfo', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29', range_5s_pct: 20 }))
+
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
+
+    const info = attachedPrimitives[0].autoscaleInfo(0, 100)
+    expect(info.priceRange.maxValue).toBeCloseTo(13.2, 10)
+    expect(info.priceRange.minValue).toBeCloseTo(8.8, 10)
+    unmount()
+  })
+
+  it('gives no valued point to any series between the last close and t+5; only whitespace reserves the axis slots', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [
+        { date: '2026-07-28', open: 10, high: 11, low: 9, close: 10.5, volume: 100 },
+        { date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 },
+      ],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29' }))
+
+    const { unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(lineSeriesDataCalls.some((call) => call.length > 0)).toBe(true))
 
     const finalData = lineSeriesDataCalls[lineSeriesDataCalls.length - 1]
-    // Point 1: the most recent historical close, unchanged.
-    expect(finalData[0]).toEqual({ time: '2026-07-29', value: 11 })
-    // Points 2-5: whitespace only (no `value` key) at the 4 intermediate
-    // weekday sessions — reserve x-axis width, never plotted or connected
-    // by the line (design.md Decision 8: no fabricated intermediate value).
-    const intermediates = finalData.slice(1, 5)
-    expect(intermediates.map((p) => p.time)).toEqual([
+    expect(finalData.map((point) => point.time)).toEqual([
       '2026-07-30',
       '2026-07-31',
       '2026-08-03',
       '2026-08-04',
+      '2026-08-05',
     ])
-    for (const point of intermediates) {
-      expect(point).not.toHaveProperty('value')
+    for (const call of lineSeriesDataCalls) {
+      for (const point of call) expect(point).not.toHaveProperty('value')
     }
-    // Point 6: the predicted price, strictly ascending after all prior
-    // points — never equal (would crash lightweight-charts).
-    const predictedPoint = finalData[5]
-    expect(predictedPoint.time).toBe('2026-08-05')
-    expect(predictedPoint.time > intermediates[3].time).toBe(true)
-    expect(predictedPoint.value).toBeCloseTo(11 * Math.exp(0.02), 5)
-
     unmount()
   })
 
@@ -366,11 +429,7 @@ describe('ChartPanel', () => {
         { date: '2026-08-10', open: 10, high: 10.2, low: 9.9, close: 10, volume: 1500 },
       ],
     })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'near_gap',
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
 
     const { unmount } = renderPanel('TCB')
 
@@ -395,28 +454,43 @@ describe('ChartPanel', () => {
     unmount()
   })
 
-  it('clears the predicted-point line entirely when the prediction is unavailable (near_gap)', async () => {
+  it.each([
+    ['a null range_5s_pct', () => vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ status: 'ineligible', range_5s_pct: null }))],
+    ['a 404', () => vi.spyOn(tickersApi, 'fetchTickerRange').mockRejectedValue(new ApiError('nope', { status: 404 }))],
+    ['a 5xx', () => vi.spyOn(tickersApi, 'fetchTickerRange').mockRejectedValue(new ApiError('boom', { status: 503 }))],
+  ])('clears the band and reserves no future slots on %s', async (_name, arrange) => {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
       ticker: 'TCB',
       rows: [{ date: '2026-08-10', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
     })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'near_gap',
-    })
+    arrange()
 
     const { unmount } = renderPanel('TCB')
 
-    await waitFor(() => {
-      expect(lineSeriesDataCalls.length).toBeGreaterThan(0)
-    })
-    // Every call (including the final one) must be empty — no predicted
-    // point rendered for a near_gap prediction.
-    for (const call of lineSeriesDataCalls) {
-      expect(call).toEqual([])
-    }
+    await waitFor(() => expect(candleSeriesInstance).not.toBeNull())
+    await waitFor(() => expect(lineSeriesDataCalls.length).toBeGreaterThan(0))
+    await waitForCountToStabilize(() => lineSeriesDataCalls.length)
 
+    expect(attachedPrimitives[0].band).toBeNull()
+    expect(attachedPrimitives[0].autoscaleInfo(0, 100)).toBeNull()
+    for (const call of lineSeriesDataCalls) expect(call).toEqual([])
+    unmount()
+  })
+
+  it('never lists a band bound in the OHLCV legend', async () => {
+    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
+      ticker: 'TCB',
+      rows: [{ date: '2026-07-29', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
+    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody({ as_of: '2026-07-29', range_5s_pct: 5 }))
+
+    const { container, unmount } = renderPanel('TCB')
+
+    await waitFor(() => expect(attachedPrimitives[0]?.band).not.toBeNull())
+
+    const legend = container.querySelector('.chart-panel__legend')
+    expect(legend.textContent).not.toContain('11.55')
+    expect(legend.textContent).not.toContain('10.45')
     unmount()
   })
 
@@ -426,7 +500,7 @@ describe('ChartPanel', () => {
     unmountEmpty()
 
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockReturnValue(new Promise(() => {}))
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockReturnValue(new Promise(() => {}))
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockReturnValue(new Promise(() => {}))
     const { unmount: unmountLoading } = renderPanel('TCB')
     expect(screen.queryByRole('button', { name: /reset zoom/i })).not.toBeInTheDocument()
     unmountLoading()
@@ -437,11 +511,7 @@ describe('ChartPanel', () => {
       ticker: 'TCB',
       rows: [{ date: '2026-08-10', open: 10.5, high: 11.5, low: 10, close: 11, volume: 120 }],
     })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'near_gap',
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
 
     const { unmount } = renderPanel('TCB')
 
@@ -480,11 +550,7 @@ describe('ChartPanel', () => {
   it('opens on the most recent ~60 sessions (not the full history) when more than that is available', async () => {
     const rows = generateRows(750)
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: rows[rows.length - 1].date,
-      status: 'near_gap',
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
 
     const { unmount } = renderPanel('TCB')
 
@@ -506,11 +572,7 @@ describe('ChartPanel', () => {
   it('falls back to fitContent() when there are fewer rows than the default window', async () => {
     const rows = generateRows(10)
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: rows[rows.length - 1].date,
-      status: 'near_gap',
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
 
     const { unmount } = renderPanel('TCB')
 
@@ -523,11 +585,7 @@ describe('ChartPanel', () => {
   it('reset-zoom restores the same default recent-activity window, not the full history', async () => {
     const rows = generateRows(750)
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: rows[rows.length - 1].date,
-      status: 'near_gap',
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
 
     const { unmount } = renderPanel('TCB')
 
@@ -581,11 +639,7 @@ describe('ChartPanel OHLCV legend', () => {
 
   function mockHistoryAndPrediction() {
     vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({ ticker: 'TCB', rows })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: rows[rows.length - 1].date,
-      status: 'near_gap',
-    })
+    vi.spyOn(tickersApi, 'fetchTickerRange').mockResolvedValue(rangeBody())
   }
 
   it('shows the most recent session\'s OHLCV by default, before any crosshair event', async () => {

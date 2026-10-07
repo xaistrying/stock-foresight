@@ -4,26 +4,22 @@ import {
   ColorType,
   HistogramSeries,
   LineSeries,
-  LineStyle,
   createChart,
 } from 'lightweight-charts'
 import { useTickerHistory } from '../../hooks/useTickerHistory'
-import { useTickerPrediction } from '../../hooks/useTickerPrediction'
-import {
-  approximateTargetDate,
-  intermediateSessionDates,
-  logReturnToPrice,
-} from '../../lib/logReturn'
+import { useTickerRange } from '../../hooks/useTickerRange'
+import { intermediateSessionDates, rangeBand } from '../../lib/sessionDates'
 import { ApiError } from '../../api/client'
 import { readChartTheme } from './chartTheme'
+import { RangeBandPrimitive } from './rangeBandPrimitive'
 import './chart-panel.css'
 
 // Default zoom (post-ship revision): opening a ticker used to fitContent()
 // the entire 750-session history, squeezing the recent candles (and the
-// predicted point) into a thin sliver at the right edge. This instead
+// range band) into a thin sliver at the right edge. This instead
 // shows the most recent DEFAULT_VISIBLE_SESSIONS candles, with a few extra
-// logical slots of right margin so the dashed prediction line/point isn't
-// flush against the canvas edge. Same window "Reset zoom" restores.
+// logical slots of right margin so the t+5 range band isn't flush against
+// the canvas edge. Same window "Reset zoom" restores.
 const DEFAULT_VISIBLE_SESSIONS = 60
 const RIGHT_MARGIN_SESSIONS = 5
 
@@ -38,12 +34,12 @@ const PRICE_PANE_STRETCH_FACTOR = 3
 const VOLUME_PANE_STRETCH_FACTOR = 1
 
 /**
- * Chart panel (tasks.md section 8): OHLC candles from `GET
- * /tickers/{ticker}/history`, no indicator overlay (8.2), plus exactly
- * one predicted point at t+5 joined to the last close by a single
- * straight dashed line when the selected ticker's prediction has
- * `status: "ok"` (8.3, design.md Decision 8). Distinct states for no
- * selection / loading / never-loaded (404) / error (8.1, 8.4).
+ * Chart panel: OHLC candles from `GET /tickers/{ticker}/history`, no
+ * indicator overlay, plus exactly one range band at t+5 — dashed upper and
+ * lower bounds with a light fill, symmetric about the last close, in a
+ * neutral colour — when `GET /tickers/{ticker}/range` serves a numeric
+ * `range_5s_pct`. Distinct states for no selection / loading / never-loaded
+ * (404) / error.
  *
  * The chart canvas container stays mounted across all states — the chart
  * instance is created once and never torn down just to show an overlay
@@ -60,7 +56,8 @@ export function ChartPanel({ ticker }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleSeriesRef = useRef(null)
-  const predictionSeriesRef = useRef(null)
+  const bandSeriesRef = useRef(null)
+  const bandPrimitiveRef = useRef(null)
   const volumeSeriesRef = useRef(null)
   // Latest history rows, mirrored into a ref (add-chart-ohlcv-legend
   // Decision 2) so the crosshair-move handler registered once in the
@@ -71,7 +68,7 @@ export function ChartPanel({ ticker }) {
   const [legend, setLegend] = useState(null)
 
   const historyQuery = useTickerHistory(ticker)
-  const predictionQuery = useTickerPrediction(ticker)
+  const rangeQuery = useTickerRange(ticker)
 
   // Builds the legend's displayed strings from one OHLCV row, using each
   // series' own `priceFormatter()` (add-chart-ohlcv-legend Decision 3) so
@@ -156,15 +153,17 @@ export function ChartPanel({ ticker }) {
       wickDownColor: theme.negative,
     })
 
-    const predictionSeries = chart.addSeries(LineSeries, {
-      color: theme.accent,
-      lineWidth: 2,
-      lineStyle: LineStyle.Dashed,
-      pointMarkersVisible: true,
+    // Whitespace-only: it only reserves the t+1..t+5 slots on the time axis. The band itself is
+    // a primitive attached once to the CANDLE series and fed through setBand (see the effect
+    // below): a series with no data cannot convert a price to a coordinate, so the primitive
+    // lives on the one that has data and shares the price scale.
+    const bandSeries = chart.addSeries(LineSeries, {
       lastValueVisible: false,
       priceLineVisible: false,
       crosshairMarkerVisible: false,
     })
+    const bandPrimitive = new RangeBandPrimitive(theme.ink)
+    candleSeries.attachPrimitive(bandPrimitive)
 
     // Volume histogram (design.md Decision 7) — its own pane (index 1)
     // below the price pane, not overlaid into the candlesticks' price
@@ -182,7 +181,8 @@ export function ChartPanel({ ticker }) {
 
     chartRef.current = chart
     candleSeriesRef.current = candleSeries
-    predictionSeriesRef.current = predictionSeries
+    bandSeriesRef.current = bandSeries
+    bandPrimitiveRef.current = bandPrimitive
     volumeSeriesRef.current = volumeSeries
 
     // OHLCV legend (add-chart-ohlcv-legend Decision 2): fires on every
@@ -191,7 +191,7 @@ export function ChartPanel({ ticker }) {
     // — that's the one condition meaning "show the default," not a
     // separate mouseleave handler. `param.seriesData.get(series)` can
     // also come back empty for a real `param.time` that only the
-    // whitespace-only prediction-line points cover (design.md Risk 1) —
+    // whitespace-only band-slot points cover (design.md Risk 1) —
     // guarded below by falling back the same way.
     const handleCrosshairMove = (param) => {
       const candleData = param.time && param.seriesData.get(candleSeries)
@@ -218,7 +218,8 @@ export function ChartPanel({ ticker }) {
       chart.remove()
       chartRef.current = null
       candleSeriesRef.current = null
-      predictionSeriesRef.current = null
+      bandSeriesRef.current = null
+      bandPrimitiveRef.current = null
       volumeSeriesRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -226,9 +227,8 @@ export function ChartPanel({ ticker }) {
 
   // Sets the time scale to the default "recent activity" window — the
   // most recent DEFAULT_VISIBLE_SESSIONS candles, plus a few logical slots
-  // of right margin so the dashed prediction line/point (drawn a few
-  // sessions past the last candle, see the effect below) isn't flush
-  // against the canvas edge. Falls back to fitContent() for a short
+  // of right margin so the range band (drawn a few sessions past the last
+  // candle, see the effect below) isn't flush against the canvas edge. Falls back to fitContent() for a short
   // history (fewer candles than the default window) — nothing to crop.
   const setDefaultVisibleRange = useCallback((candleCount) => {
     const chart = chartRef.current
@@ -248,8 +248,8 @@ export function ChartPanel({ ticker }) {
   // derived indicator — dashboard-ui spec's "no derived-indicator overlay"
   // requirement, design.md Decision 7). Opens on the recent-activity
   // window (above) rather than fitting the entire history, so a fresh
-  // ticker selection doesn't squeeze months of candles (and the predicted
-  // point) into a sliver at the right edge.
+  // ticker selection doesn't squeeze months of candles (and the range
+  // band) into a sliver at the right edge.
   useEffect(() => {
     const series = candleSeriesRef.current
     const volumeSeries = volumeSeriesRef.current
@@ -295,7 +295,7 @@ export function ChartPanel({ ticker }) {
   // without reselecting the ticker. Restores the same default recent-
   // activity window the initial load opens on, plus resets the price
   // scale's auto-scale — both the candlestick pane's (candleSeriesRef,
-  // since the predicted-point line series shares the same right-side
+  // since the band's whitespace series shares the same right-side
   // price scale) and the volume pane's own independent price scale
   // (design.md Decision 8) — a manual drag/zoom on the volume pane's
   // y-axis specifically wasn't undone by this button before. Also
@@ -311,59 +311,50 @@ export function ChartPanel({ ticker }) {
     chartRef.current?.panes()[1]?.setStretchFactor(VOLUME_PANE_STRETCH_FACTOR)
   }
 
-  // Single predicted point (8.3, design.md Decision 8) — exactly two DATA
-  // points with a value (last historical close, t+5 predicted price), so
-  // the line series draws one straight segment with nothing interpolated
-  // between them — the model produces one scalar, never a day-by-day
-  // trajectory, and this must never imply otherwise.
+  // The range band: ONE position (t+5), never a path. The whitespace-only line series carries
+  // the t+1..t+5 slots — lightweight-charts' time scale only reserves x-axis width for
+  // timestamps it has actually seen (real bars or explicit whitespace points), so without them
+  // t+5 would be drawn right next to the last bar, reading as "tomorrow". A whitespace point is
+  // `{time}` with no `value`: it reserves axis space and plots nothing, so no series receives a
+  // valued point between the last close and t+5. The band's bounds go to the primitive, which
+  // draws them and reports them to the price scale.
   //
-  // Separately, lightweight-charts' time scale only reserves x-axis width
-  // for timestamps it has actually seen (real bars or explicit whitespace
-  // points) — with only 2 data points, it collapsed the 4 intervening
-  // trading sessions and drew the predicted point immediately adjacent to
-  // the last bar, reading as "tomorrow" instead of "5 sessions out". Fixed
-  // by also passing t+1..t+4 as whitespace-only points ({time}, no
-  // `value`) — these reserve axis space but carry no plotted value and are
-  // never connected by the line, so they don't add a fabricated
-  // intermediate value/point in violation of Decision 8, only correct
-  // where the real predicted point sits on the axis.
-  //
-  // Cleared entirely for near_gap / 404 / 5xx (dashboard-ui spec: "No
-  // predicted point when prediction is unavailable").
+  // Cleared entirely when `range_5s_pct` is not a number (any refusing status), on 404 and on
+  // 5xx. The decision keys on the number, not on `status`, so a status added later cannot leave
+  // a stale band on screen.
   useEffect(() => {
-    const series = predictionSeriesRef.current
-    if (!series) return
+    const series = bandSeriesRef.current
+    const primitive = bandPrimitiveRef.current
+    if (!series || !primitive) return
+
+    const clearBand = () => {
+      series.setData([])
+      primitive.setBand(null)
+    }
 
     const rows = historyQuery.data?.rows ?? []
     const lastRow = rows[rows.length - 1]
-    const prediction = predictionQuery.data
+    const range = rangeQuery.data
 
-    if (!lastRow || !prediction || prediction.status !== 'ok') {
-      series.setData([])
+    if (!lastRow || !range || !Number.isFinite(range.range_5s_pct)) {
+      clearBand()
       return
     }
 
-    const predictedPrice = logReturnToPrice(prediction.predicted_log_return, lastRow.close)
-    const targetDate = approximateTargetDate(prediction.as_of)
+    const band = rangeBand(lastRow.close, range.as_of, range.range_5s_pct)
 
-    // lightweight-charts requires strictly ascending times; guard against
-    // the (should-be-rare) case where the approximated target date lands
-    // on or before the last historical bar rather than crashing setData.
-    if (targetDate <= lastRow.date) {
-      series.setData([])
+    // lightweight-charts requires strictly ascending times; guard against the (should-be-rare)
+    // case where the approximated t+5 date lands on or before the last historical bar rather
+    // than crashing setData.
+    if (band.time <= lastRow.date) {
+      clearBand()
       return
     }
 
-    const intermediateDates = intermediateSessionDates(prediction.as_of).filter(
-      (date) => date > lastRow.date && date < targetDate,
-    )
-
-    series.setData([
-      { time: lastRow.date, value: lastRow.close },
-      ...intermediateDates.map((time) => ({ time })),
-      { time: targetDate, value: predictedPrice },
-    ])
-  }, [historyQuery.data, predictionQuery.data])
+    const slots = [...intermediateSessionDates(range.as_of), band.time].filter((date) => date > lastRow.date)
+    series.setData(slots.map((time) => ({ time })))
+    primitive.setBand(band)
+  }, [historyQuery.data, rangeQuery.data])
 
   const notLoaded = historyQuery.isError && historyQuery.error instanceof ApiError && historyQuery.error.status === 404
   const genericError = historyQuery.isError && !notLoaded

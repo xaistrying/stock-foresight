@@ -18,6 +18,7 @@ export function readChartTheme() {
   return {
     paper: readToken('--color-paper'),
     border: readToken('--color-border'),
+    ink: readToken('--color-ink'),
     ink2: readToken('--color-ink-2'),
     ink3: readToken('--color-ink-3'),
     positive: readToken('--color-positive'),

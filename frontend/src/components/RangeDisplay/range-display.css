@@ -1,0 +1,124 @@
+/* Hallmark · component: range-display · genre: modern-minimal (data-dense financial dashboard)
+ * states: no-ticker · loading · available · unavailable · not-loaded · failed
+ * The figure is a size, never a direction: no up/down colour anywhere in this file.
+ */
+
+.range-display {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.range-display__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-style: normal;
+  font-size: var(--text-lg);
+  color: var(--color-ink);
+  letter-spacing: -0.01em;
+}
+
+.range-display__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+/* Genuinely numeric values use --font-mono for real tabular alignment: this is the card's most
+   prominent number. Neutral ink, deliberately not --color-positive / --color-negative. */
+.range-display__percent {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+
+/* No-ticker placeholder ("N/A"): same font-size, family and weight as a real figure, muted only
+   by colour, so it reads as a deliberate "no value" state and can never be mistaken for data. */
+.range-display__percent--placeholder {
+  color: var(--color-border-strong);
+}
+
+.range-display__label {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+
+.range-display__line {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-ink-3);
+}
+
+.range-display__hit-rate {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-2);
+}
+
+/* A hit-rate that could not be measured is plain words, not a figure. */
+.range-display__hit-rate[data-measured='false'] {
+  font-family: inherit;
+  color: var(--color-ink-3);
+}
+
+.range-display__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.range-display__message {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--color-ink-2);
+}
+
+.range-display__state[data-kind='failed'] .range-display__message {
+  color: var(--color-negative);
+}
+
+/* Unavailable is a data refusal, not a fault: the warning weight, with its own words. */
+.range-display__state[data-kind='unavailable'] .range-display__message {
+  color: var(--color-warning);
+}
+
+/* Rule 6: the disclaimer sits in the card, beside the coverage figures, in every state. */
+.range-display__disclaimer {
+  margin: 0;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+  line-height: 1.4;
+}
+
+.range-display__spinner {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: range-display-spin 0.7s linear infinite;
+}
+
+@keyframes range-display-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .range-display__spinner {
+    animation-duration: 1.4s;
+  }
+}

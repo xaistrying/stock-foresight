@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { describeLoadStatus } from '../hooks/useLoadTicker'
+import * as tickersApi from './tickers'
 
 // Smoke test for the test harness itself (Vitest + jsdom), and a first
 // real check on the load-status messaging (tasks.md 6.5) — each status
@@ -26,5 +27,28 @@ describe('describeLoadStatus', () => {
       describeLoadStatus(status, 'ABC'),
     )
     expect(new Set(messages).size).toBe(messages.length)
+  })
+})
+
+describe('fetchTickerRange', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('calls GET /tickers/{ticker}/range and returns the body', async () => {
+    const body = { ticker: 'TCB', as_of: '2026-10-06', status: 'ok', range_5s_pct: 3.2 }
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await tickersApi.fetchTickerRange('TCB')
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/tickers\/TCB\/range$/)
+    expect(result).toEqual(body)
+  })
+
+  it('exports no fetcher for the retired prediction, insight or backtest endpoints', () => {
+    expect(tickersApi.fetchTickerPrediction).toBeUndefined()
+    expect(tickersApi.fetchTickerInsight).toBeUndefined()
+    expect(tickersApi.backtestTicker).toBeUndefined()
   })
 })

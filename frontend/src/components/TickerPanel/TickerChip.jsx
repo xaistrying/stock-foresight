@@ -1,37 +1,21 @@
 import { useEffect, useRef } from 'react'
-import { FRESHNESS, useTickerFreshness } from '../../hooks/useTickerFreshness'
-import { useTickerInsight } from '../../hooks/useTickerInsight'
 import { describeLoadStatus, useLoadTicker, useIsTickerLoading } from '../../hooks/useLoadTicker'
 import { formatLastLoadedAt } from '../../lib/relativeTime'
 import { ApiError } from '../../api/client'
-
-// Accessible name/description for each freshness state — the dot alone
-// (color-not-only, WCAG) never carries the meaning by itself. Exposed via
-// aria-label/title on the dot so it's reachable by screen reader and mouse
-// hover alike; TickerPanel's legend spells the same mapping out visibly
-// for sighted users who haven't hovered yet.
-const FRESHNESS_DESCRIPTION = {
-  [FRESHNESS.LOADING]: 'Loading',
-  [FRESHNESS.FRESH]: 'Fresh — up to date with the latest trading session',
-  [FRESHNESS.STALE]: 'Stale — a newer trading session is available',
-  [FRESHNESS.UNKNOWN]: null,
-}
 
 /**
  * One selectable ticker chip (tasks.md 7.1/7.3/7.4/7.5/7.6). A not-yet-
  * loaded chip triggers `POST /tickers/{ticker}/load` on click (same flow
  * search uses) and selects the ticker once the load succeeds — clicking
  * an unloaded chip is itself the "load" action, not a separate control.
- * Shows Loading/Fresh/Stale (design.md Decision 10) as a color dot (post-
- * ship revision — the words previously sat in the status slot as visible
- * text; a legend in TickerPanel now explains the color mapping instead),
- * or a load-failure message distinct per status (Decision 4/7) as real
- * text if the load fails — those failure/not-loaded messages carry
- * information a dot can't express and are unaffected by this change.
+ * Shows "Loaded Nd ago" in the footer, or a load-failure message distinct
+ * per status (Decision 4/7) as real text if the load fails. A chip issues
+ * no query of its own: the page load is one request (`GET /tickers`), and
+ * a ticker's history and range are fetched only once it is selected.
  *
  * The chip's root is a non-interactive container with two sibling
  * interactive children (ticker-manual-refresh tasks.md 1.1): the select
- * button (symbol + freshness dot + status text, everything this
+ * button (symbol + status text, everything this
  * component already did) and a Refresh button, shown only when the
  * ticker is already loaded. A `<button>` cannot nest another `<button>`
  * (invalid HTML, breaks keyboard/screen-reader semantics — design.md
@@ -69,26 +53,6 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
     if (isSelected && variant === 'chip') rootRef.current?.scrollIntoView?.({ block: 'nearest' })
   }, [isSelected, variant])
 
-  const { freshness } = useTickerFreshness(ticker, {
-    enabled: isLoaded && !featuresFailed,
-  })
-
-  // Warms `useTickerInsight`'s cache for this ticker the same way the
-  // freshness check above already warms `prediction`/`history` — a
-  // pre-existing gap (found live, adjacent to but not caused by
-  // redesign-dashboard-visual-look) meant AIInsightPanel's first fetch
-  // for any given ticker was always cold, forcing a real loading-
-  // placeholder-to-populated DOM swap (and its fade-in animation) on
-  // that ticker's first selection, while Prediction/Chart — reading the
-  // now-cached prediction/history — painted instantly. The return value
-  // is intentionally unused here; this call exists purely to populate
-  // React Query's cache under the same `['ticker-insight', ticker]` key
-  // AIInsightPanel itself reads, so its own `useTickerInsight(ticker)`
-  // call finds warm data on a ticker's first real selection too.
-  useTickerInsight(ticker, { enabled: isLoaded && !featuresFailed })
-
-  const effectiveFreshness = isTickerLoading ? FRESHNESS.LOADING : freshness
-  const freshnessDescription = FRESHNESS_DESCRIPTION[effectiveFreshness]
   const lastLoadedText = formatLastLoadedAt(catalogEntry?.last_loaded_at)
 
   const mutationOutcomeText = (() => {
@@ -112,13 +76,10 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
 
   let statusText = null
   let statusKind = 'neutral'
-  let showFreshnessDot = false
-  if (isRefreshOutcome) {
-    // Selection status slot stays on the ticker's steady-state (freshness
-    // dot) while refresh reports its own outcome separately.
-    if (freshnessDescription) showFreshnessDot = true
-  } else if (loadMutation.isPending) {
-    showFreshnessDot = true
+  // While refresh reports its own outcome, or a load is in flight, the select button's status
+  // slot stays on the steady-state footer.
+  if (isRefreshOutcome || loadMutation.isPending) {
+    // no status text
   } else if (mutationOutcomeText) {
     statusText = mutationOutcomeText
     statusKind = 'error'
@@ -127,8 +88,6 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
   } else if (featuresFailed) {
     statusText = 'Feature computation failed'
     statusKind = 'error'
-  } else if (freshnessDescription) {
-    showFreshnessDot = true
   }
 
   function handleSelectClick() {
@@ -165,7 +124,6 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
       className="ticker-chip"
       data-variant={variant}
       data-selected={isSelected || undefined}
-      data-freshness={effectiveFreshness}
       data-status={statusKind}
     >
       <button
@@ -177,15 +135,6 @@ export function TickerChip({ ticker, catalogEntry, isSelected, onSelect, variant
       >
         <span className="ticker-chip__top">
           <span className="ticker-chip__symbol">{ticker}</span>
-          {showFreshnessDot && (
-            <span
-              className="ticker-chip__dot"
-              data-freshness={effectiveFreshness}
-              role="img"
-              aria-label={freshnessDescription}
-              title={freshnessDescription}
-            />
-          )}
         </span>
         {footerText && (
           <span

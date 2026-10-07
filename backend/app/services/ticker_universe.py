@@ -2,7 +2,7 @@
 
 The universe is what the system *knows about*, which is deliberately not the
 same set as `tickers` (what has been loaded) or `TRAINING_TICKERS` (what the
-model was trained on). Design rationale:
+retired direction model was trained on). Design rationale:
 `openspec/changes/hose-universe-ingestion/design.md` Decisions 1 and 2.
 """
 
@@ -349,11 +349,10 @@ def record_ingestion_result(
 # most symbols sit at the ~2,000-session tier ceiling and a small tail is very
 # short — so there is no natural gap to cut at. What is defensible is the
 # arithmetic of the pipeline itself: 78 sessions vanish to the indicator
-# warm-up (`HARD_FLAG_BLACKOUT_SESSIONS` / Senkou Span B), Advice needs a
-# 60-session volatility window, and a single-ticker backtest needs 30 clean
-# rows (`SINGLE_TICKER_BACKTEST_MIN_ROWS`). 250 sessions — about one trading
-# year — leaves ~170 usable rows after warm-up, enough for all three with
-# room to spare.
+# warm-up (`HARD_FLAG_BLACKOUT_SESSIONS` / Senkou Span B) and the HAR-RV
+# volatility model needs 65 sessions of closes plus 78 of warm-up. 250 sessions
+# — about one trading year — leaves ~170 usable rows after warm-up, enough for
+# both with room to spare.
 #
 # New threshold — implements no domain rule 1-6. Symbols below it are flagged,
 # never deleted, so this is re-tunable without re-ingesting.

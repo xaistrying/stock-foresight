@@ -1,25 +1,21 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import * as tickersApi from './api/tickers'
+import { INLINE_DISCLAIMER } from './lib/disclaimer'
 
-// Dashboard assembly (tasks.md section 11): TickerPanel, ChartPanel,
-// PredictionDisplay, and AIInsightPanel all driven by the same
-// `selectedTicker` state owned by App. These tests exercise the real
-// composed tree — no props are injected directly into the child panels —
-// so they cover 11.1 (one selection drives all four panels) and 11.2 (the
-// load -> auto-predict -> invalidate -> refetch flow, end to end) the way
-// a user would actually trigger them.
+// Dashboard assembly: TickerPanel, ChartPanel, RangeDisplay and DebatePanel all driven by the
+// same `selectedTicker` state owned by App. These tests exercise the real composed tree — no
+// props are injected into the child panels — so they cover "one selection drives every
+// ticker-scoped panel", the load -> invalidate -> refetch flow, and the request budget the way
+// a user would trigger them.
 //
-// A fresh QueryClient per render (not the app's `lib/queryClient` singleton)
-// — same convention every other test file in this repo uses. Reusing the
-// singleton across test files leaked cache/retry state between them when
-// run in the same suite (observed as TickerPanel's tests hanging on the
-// loading skeleton when run alongside this file).
+// A fresh QueryClient per render (not the app's `lib/queryClient` singleton) — same convention
+// every other test file in this repo uses, so cache and retry state do not leak between files.
 function renderApp() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -31,70 +27,65 @@ function renderApp() {
   )
 }
 
+const TCB_ENTRY = { ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }
+const TCB_HISTORY = {
+  ticker: 'TCB',
+  rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
+}
+const rangeFor = (ticker, overrides = {}) => ({
+  ticker,
+  as_of: '2026-08-10',
+  status: 'ok',
+  reasons: [],
+  sigma_daily_pct: 1.37,
+  range_5s_pct: 3.2,
+  range_k: 1.1,
+  range_coverage: 0.68,
+  range_hit_rate: { rate: 0.75, n: 48 },
+  ...overrides,
+})
+
+// Every function api/tickers.js exports as a fetcher, spied so a test can count calls.
+function spyOnEveryFetcher({ tickers = [TCB_ENTRY] } = {}) {
+  return {
+    fetchTickers: vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers }),
+    fetchTickerHistory: vi
+      .spyOn(tickersApi, 'fetchTickerHistory')
+      .mockImplementation(async (ticker) => ({ ...TCB_HISTORY, ticker })),
+    fetchTickerRange: vi.spyOn(tickersApi, 'fetchTickerRange').mockImplementation(async (ticker) => rangeFor(ticker)),
+    loadTicker: vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 }),
+    runDebateAnalysis: vi.spyOn(tickersApi, 'runDebateAnalysis'),
+    getDebateProgress: vi.spyOn(tickersApi, 'getDebateProgress'),
+  }
+}
+
 beforeEach(() => {
   vi.restoreAllMocks()
 })
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 describe('App (dashboard assembly)', () => {
-  it('shows dash placeholders in both panels (not an empty message) before any ticker is selected', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers: [] })
+  it('shows N/A placeholders in the range card (not an empty message) before any ticker is selected', async () => {
+    spyOnEveryFetcher({ tickers: [] })
 
     renderApp()
 
-    // design.md Decision 13 (revised): both panels always render their full
-    // layout — no shared "select a ticker" message is shown for either.
-    expect(
-      screen.queryByText(/select a ticker to see its prediction and ai insight/i),
-    ).not.toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: 'Prediction' })).toBeInTheDocument()
-    // AIInsightPanel's Confidence/Technical Signal/Advice headings are
-    // static section titles, not data — they render immediately, even with
-    // no ticker selected (design.md Decision 13's third revision, after a
-    // follow-up report that a real geometry/label-swap flash was still
-    // happening on a ticker's first selection each session). Only each
-    // item's value is a placeholder here, not the label.
-    expect(screen.getByRole('heading', { name: 'Confidence' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Technical Signal' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Advice' })).toBeInTheDocument()
-    // Disclaimer renders unconditionally, even with no ticker selected.
-    expect(
-      screen.getByText(/technical observation from a backtested model/i),
-    ).toBeInTheDocument()
-    // Prediction's own N/A placeholder, plus AIInsightPanel's loading-
-    // placeholder N/A values (reused for the no-ticker state too).
+    expect(await screen.findByRole('heading', { name: /5-session range/i })).toBeInTheDocument()
     expect(screen.getAllByText('N/A').length).toBeGreaterThan(0)
+    expect(screen.getByText('As of —')).toBeInTheDocument()
+    // The disclaimer renders unconditionally, in the range card and in the debate panel.
+    expect(screen.getAllByText(INLINE_DISCLAIMER)).toHaveLength(2)
+    expect(screen.getByText(/select a ticker to run debate analysis/i)).toBeInTheDocument()
   })
 
   it('names the selected ticker in a heading above the panels, and says so when none is selected', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-      ticker: 'TCB',
-      rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: 0.02,
-    })
-    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      confidence_score: 0.75,
-      confidence_basis: '60-prediction backtested hit-rate.',
-      sentiment_proxy: 'bullish',
-      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-      advice_text: 'up',
-      note: null,
-    })
+    spyOnEveryFetcher()
 
     renderApp()
 
-    // Always rendered (same layout-stability rule as the panels' own
-    // placeholders), so selecting a ticker never shifts the page.
     expect(await screen.findByRole('heading', { name: 'No ticker selected' })).toBeInTheDocument()
 
     await userEvent.click(await screen.findByRole('button', { name: /^TCB/ }))
@@ -103,224 +94,137 @@ describe('App (dashboard assembly)', () => {
     expect(screen.queryByRole('heading', { name: 'No ticker selected' })).not.toBeInTheDocument()
   })
 
-  it('selecting a ticker replaces the dash placeholders with per-panel states', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-      ticker: 'TCB',
-      rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: 0.02,
-    })
-    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      confidence_score: 0.75,
-      confidence_basis: '60-prediction backtested hit-rate.',
-      sentiment_proxy: 'bullish',
-      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-      advice_text: 'up',
-      note: null,
-    })
+  it('selecting a chip replaces the placeholders with the range for that ticker and drives the chart and debate panel', async () => {
+    spyOnEveryFetcher()
 
     renderApp()
-
-    // N/A placeholders shown before any ticker is selected — Prediction's
-    // title and AIInsightPanel's Confidence/Technical Signal/Advice
-    // headings are all static titles, visible immediately.
-    expect(await screen.findByRole('heading', { name: 'Prediction' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Confidence' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /5-session range/i })).toBeInTheDocument()
     expect(screen.getAllByText('N/A').length).toBeGreaterThan(0)
 
-    const chip = await screen.findByRole('button', { name: /^TCB/ })
-    await userEvent.click(chip)
+    await userEvent.click(await screen.findByRole('button', { name: /^TCB/ }))
 
-    expect(await screen.findByText(/\+2\.02%/)).toBeInTheDocument()
+    expect(await screen.findByText('±3.2%')).toBeInTheDocument()
     expect(screen.queryByText('N/A')).not.toBeInTheDocument()
-  })
-
-  it('selecting an already-loaded chip drives the chart, prediction, and AI insight panel for that ticker', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-      ticker: 'TCB',
-      rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: 0.02,
-    })
-    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      confidence_score: 0.75,
-      confidence_basis: '60-prediction backtested hit-rate.',
-      sentiment_proxy: 'bullish',
-      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-      advice_text: 'up',
-      note: null,
-    })
-
-    renderApp()
-
-    const chip = await screen.findByRole('button', { name: /^TCB/ })
-    await userEvent.click(chip)
-
-    // Prediction display for TCB.
-    expect(await screen.findByText(/\+2\.02%/)).toBeInTheDocument()
-    // AI insight panel for the same ticker.
-    expect(await screen.findByText('75%')).toBeInTheDocument()
-    expect(screen.getByText('Technical Signal')).toBeInTheDocument()
-    expect(screen.getByText('Signal: up')).toBeInTheDocument()
-    // Chart panel dropped its "select a ticker" empty state.
     expect(screen.queryByText(/select a ticker to see its chart/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Analyse TCB' })).toBeInTheDocument()
   })
 
-  it('searching and loading an unloaded ticker auto-predicts without a manual refresh or separate action', async () => {
-    // Unloaded tickers are now reached via search (not chip click).
-    // Once loaded via search, prediction/insight should fire automatically.
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
+  it('searching and loading an unloaded ticker drives the chart and range without a manual refresh', async () => {
+    const spies = spyOnEveryFetcher({
       tickers: [{ ticker: 'VIB', in_training_set: true, loaded: false, features_computed: null, last_loaded_at: null }],
     })
-    const loadSpy = vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'VIB', status: 'ok', rows_loaded: 300 })
-    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-      ticker: 'VIB',
-      rows: [{ date: '2026-08-10', open: 20, high: 21, low: 19, close: 20.5, volume: 200 }],
-    })
-    const predictionSpy = vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'VIB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: -0.01,
-    })
-    const insightSpy = vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-      ticker: 'VIB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      confidence_score: null,
-      confidence_basis: 'No backtested predictions for this ticker yet.',
-      sentiment_proxy: 'neutral',
-      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-      advice_text: 'HOLD',
-      note: null,
-    })
 
     renderApp()
 
-    // Load via search — same end state as the old chip-click flow.
-    const input = await screen.findByLabelText(/search ticker/i)
-    await userEvent.type(input, 'VIB')
+    await userEvent.type(await screen.findByLabelText(/search ticker/i), 'VIB')
     await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
 
-    // The catalog lists VIB as unloaded, so search must actually call /load
-    // — selecting it without loading would still fire the prediction query.
-    await waitFor(() => expect(loadSpy).toHaveBeenCalledWith('VIB'))
-
-    // No separate user action requests the prediction/insight — loading
-    // via search alone is enough for both to fetch and render.
-    await waitFor(() => expect(predictionSpy).toHaveBeenCalledWith('VIB'))
-    await waitFor(() => expect(insightSpy).toHaveBeenCalledWith('VIB'))
-    expect(await screen.findByText('N/A')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /backtest this ticker/i })).toBeInTheDocument()
+    await waitFor(() => expect(spies.loadTicker).toHaveBeenCalledWith('VIB'))
+    await waitFor(() => expect(spies.fetchTickerHistory).toHaveBeenCalledWith('VIB'))
+    await waitFor(() => expect(spies.fetchTickerRange).toHaveBeenCalledWith('VIB'))
+    expect(await screen.findByText('±3.2%')).toBeInTheDocument()
   })
 
-  it('searching a ticker not yet in the DB loads it, then drives chart/prediction/insight the same way a chip would', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers: [] })
-    vi.spyOn(tickersApi, 'loadTicker').mockResolvedValue({ ticker: 'FPT', status: 'ok', rows_loaded: 300 })
-    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-      ticker: 'FPT',
-      rows: [{ date: '2026-08-10', open: 30, high: 31, low: 29, close: 30.5, volume: 300 }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'FPT',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: 0.0,
-    })
-    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-      ticker: 'FPT',
-      as_of: '2026-08-10',
-      status: 'ok',
-      confidence_score: null,
-      confidence_basis: 'No backtested predictions for this ticker yet.',
-      sentiment_proxy: 'neutral',
-      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-      advice_text: 'HOLD',
-      note: null,
-    })
+  it('renders the debate panel with no environment variable set, and no retired panel exists', async () => {
+    vi.stubEnv('VITE_DEBATE_PANEL_ENABLED', '')
+    spyOnEveryFetcher()
 
     renderApp()
+    await userEvent.click(await screen.findByRole('button', { name: /^TCB/ }))
+    await screen.findByText('±3.2%')
 
-    const input = await screen.findByLabelText(/search ticker/i)
-    await userEvent.type(input, 'FPT')
-    await userEvent.click(screen.getByRole('button', { name: /^load$/i }))
-
-    expect(await screen.findByRole('button', { name: /^FPT/ })).toBeInTheDocument()
-    expect(await screen.findByText(/\+0\.00%/)).toBeInTheDocument()
-    expect(await screen.findByText('Technical Signal')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Analyse TCB' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /^confidence$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /^advice$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /backtest this ticker/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument()
   })
 
   it('carries no leftover horizon-adjustment, advice-style, or disclaimer-visibility control anywhere on the page', async () => {
-    vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({
-      tickers: [{ ticker: 'TCB', in_training_set: true, loaded: true, features_computed: true, last_loaded_at: '2026-08-10' }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerHistory').mockResolvedValue({
-      ticker: 'TCB',
-      rows: [{ date: '2026-08-10', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
-    })
-    vi.spyOn(tickersApi, 'fetchTickerPrediction').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      predicted_log_return: 0.02,
-    })
-    vi.spyOn(tickersApi, 'fetchTickerInsight').mockResolvedValue({
-      ticker: 'TCB',
-      as_of: '2026-08-10',
-      status: 'ok',
-      confidence_score: 0.75,
-      confidence_basis: 'Hit-rate over recent predictions.',
-      sentiment_proxy: 'neutral',
-      sentiment_inputs: ['RSI', 'MACD', 'Ichimoku position'],
-      advice_text: 'HOLD',
-      note: null,
-    })
+    spyOnEveryFetcher()
 
     renderApp()
-    const chip = await screen.findByRole('button', { name: /^TCB/ })
-    await userEvent.click(chip)
-    // "Technical Signal" is a static label, present immediately — wait on
-    // the real value instead to know TCB's data has actually loaded.
-    await screen.findByText('Neutral')
+    await userEvent.click(await screen.findByRole('button', { name: /^TCB/ }))
+    await screen.findByText('±3.2%')
 
-    // design.md Decision 9: horizonDays slider, adviceStyle dropdown, and a
-    // showDisclaimer toggle were all reviewed and dropped, not relocated.
+    // design.md Decision 9 of the original dashboard: horizonDays slider, adviceStyle dropdown
+    // and a showDisclaimer toggle were reviewed and dropped, not relocated.
     expect(screen.queryByRole('slider')).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByText(/horizon.*day/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText(INLINE_DISCLAIMER).length).toBeGreaterThan(0)
+  })
+
+  it('renders the hit-rate wording in the range card only, not in the chart panel or the debate panel', async () => {
+    spyOnEveryFetcher()
+
+    renderApp()
+    await userEvent.click(await screen.findByRole('button', { name: /^TCB/ }))
+    await screen.findByText('±3.2%')
+
+    const hitRate = /36 of the last 48 five-session moves/
+    expect(screen.getAllByText(hitRate)).toHaveLength(1)
+    const rangeCard = screen.getByText('±3.2%').closest('section')
+    expect(within(rangeCard).getByText(hitRate)).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: /price chart/i })).queryByText(hitRate)).not.toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: /debate analysis/i })).queryByText(hitRate)).not.toBeInTheDocument()
   })
 
   it('fills the viewport width — .app-shell no longer caps width to a centered column (design.md Decision 14)', () => {
-    // jsdom doesn't compute real layout from stylesheets, so a rendered
-    // pixel-width assertion wouldn't be meaningful here — read App.css's
-    // actual rule text instead, per task 11.4's own suggested check.
+    // jsdom doesn't compute real layout from stylesheets, so a rendered pixel-width assertion
+    // wouldn't be meaningful here — read App.css's actual rule text instead.
     const css = readFileSync(join(process.cwd(), 'src/App.css'), 'utf-8')
     const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
     const appShellRule = cssWithoutComments.match(/\.app-shell\s*\{[^}]*\}/)[0]
 
     expect(appShellRule).not.toMatch(/max-width/)
     expect(appShellRule).not.toMatch(/margin:\s*0\s+auto/)
+  })
+})
+
+describe('App request budget', () => {
+  it('exports no fetcher for the retired endpoints', () => {
+    const exported = Object.keys(tickersApi)
+
+    expect(exported.filter((name) => /prediction|insight|backtest/i.test(name))).toEqual([])
+  })
+
+  it('makes exactly one request on mount: GET /tickers, whatever the catalog size', async () => {
+    const tickers = Array.from({ length: 40 }, (_, i) => ({
+      ticker: `T${String(i).padStart(2, '0')}`,
+      in_training_set: false,
+      loaded: true,
+      features_computed: true,
+      last_loaded_at: '2026-08-10',
+    }))
+    const spies = spyOnEveryFetcher({ tickers })
+
+    renderApp()
+    await screen.findByRole('button', { name: /^T39/ })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(spies.fetchTickers).toHaveBeenCalledTimes(1)
+    for (const [name, spy] of Object.entries(spies)) {
+      if (name !== 'fetchTickers') expect(spy, name).not.toHaveBeenCalled()
+    }
+  })
+
+  it('selecting a chip adds one history and one range request for that ticker only', async () => {
+    const spies = spyOnEveryFetcher({
+      tickers: [TCB_ENTRY, { ...TCB_ENTRY, ticker: 'VIB' }, { ...TCB_ENTRY, ticker: 'HPG' }],
+    })
+
+    renderApp()
+    await userEvent.click(await screen.findByRole('button', { name: /^VIB/ }))
+    await screen.findByText('±3.2%')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(spies.fetchTickers).toHaveBeenCalledTimes(1)
+    expect(spies.fetchTickerHistory.mock.calls).toEqual([['VIB']])
+    expect(spies.fetchTickerRange.mock.calls).toEqual([['VIB']])
+    expect(spies.loadTicker).not.toHaveBeenCalled()
+    expect(spies.runDebateAnalysis).not.toHaveBeenCalled()
   })
 })

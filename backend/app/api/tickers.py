@@ -1,13 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.db.connection import get_connection
-from app.ml.backtest import (
-    SINGLE_TICKER_BACKTEST_MIN_ROWS,
-    load_single_ticker_features,
-    persist_backtest_predictions,
-    run_single_ticker_backtest,
-)
-from app.ml.training import TRAINING_TICKERS, filter_clean_labeled
+from app.ml.training import TRAINING_TICKERS
 from app.services.ticker_ingestion import load_ticker
 from app.services.ticker_universe import INGESTION_STATE_OK
 
@@ -46,10 +40,9 @@ def _catalog_entry(symbol: str, universe_row: tuple | None, load_row: tuple | No
     features_computed = load_row[1] if load_row else None
     return {
         "ticker": symbol,
-        # The model was trained and backtested on these
-        # (`docs/MODEL_CARD.md`); every other entry is a ticker the system
-        # merely knows about. These two sets are no longer identical, which
-        # is the whole point of the catalog no longer being TRAINING_TICKERS.
+        # Legacy marker: one of the nine tickers the retired direction model
+        # was trained on. It pins them first in the catalog and implies no
+        # validation of any kind.
         "in_training_set": symbol in TRAINING_TICKERS,
         "exchange": exchange,
         "industry_code": industry_code,
@@ -164,36 +157,4 @@ def ticker_history_endpoint(ticker: str):
             }
             for date, open_, high, low, close, volume in rows
         ],
-    }
-
-
-@router.post("/tickers/{ticker}/backtest")
-def backtest_ticker_endpoint(ticker: str):
-    """Single-ticker walk-forward backtest (design.md Decision 12 / tasks.md
-    5.1-5.3), for the "Backtest this ticker" action on a ticker outside
-    `TRAINING_TICKERS` whose Confidence is `N/A`. Gated on
-    `SINGLE_TICKER_BACKTEST_MIN_ROWS` clean+labeled feature rows — below
-    that, returns `409` rather than attempting a backtest that would
-    produce an empty or degenerate fold.
-    """
-    full_df = load_single_ticker_features(ticker)
-    clean_df = filter_clean_labeled(full_df)
-
-    if len(clean_df) < SINGLE_TICKER_BACKTEST_MIN_ROWS:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Not enough clean, labeled price history to backtest '{ticker}' yet "
-                f"— needs at least {SINGLE_TICKER_BACKTEST_MIN_ROWS} clean+labeled rows, "
-                f"has {len(clean_df)}."
-            ),
-        )
-
-    results = run_single_ticker_backtest(full_df, clean_df)
-    persist_backtest_predictions(results)
-
-    return {
-        "ticker": ticker,
-        "rows_backtested": len(results),
-        "folds": sorted(results["fold"].unique().tolist()),
     }

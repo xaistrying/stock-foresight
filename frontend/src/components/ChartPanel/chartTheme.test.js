@@ -20,6 +20,7 @@ import { readChartTheme } from './chartTheme'
 const TEST_TOKENS = {
   '--color-paper': 'oklch(99% 0.002 260)',
   '--color-border': 'oklch(88% 0.006 260)',
+  '--color-ink': 'oklch(16% 0.02 258)',
   '--color-ink-2': 'oklch(42% 0.012 260)',
   '--color-ink-3': 'oklch(58% 0.01 260)',
   '--color-positive': 'oklch(48% 0.13 155)',

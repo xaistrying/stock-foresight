@@ -29,10 +29,10 @@ export function describeLoadStatus(status, ticker) {
 
 /**
  * Wraps `POST /tickers/{ticker}/load` as a React Query mutation. On a
- * successful load (`status: "ok"`), invalidates this ticker's catalog
- * entry, history, prediction, and insight so the auto-predict-on-load flow
- * (design.md Decision 11, tasks.md 7.5) has fresh data to refetch — no
- * separate user action needed. `ticker` is fixed per hook call so its
+ * successful load (`status: "ok"`), invalidates the catalog and this
+ * ticker's history and range, so whatever is showing them refetches — no
+ * separate user action needed. An invalidated query that nothing observes
+ * (an unselected ticker) is only marked stale, not fetched. `ticker` is fixed per hook call so its
  * mutationKey can be ticker-scoped (see loadMutationKey above).
  */
 export function useLoadTicker(ticker) {
@@ -45,8 +45,7 @@ export function useLoadTicker(ticker) {
       if (result.status !== 'ok') return
       queryClient.invalidateQueries({ queryKey: queryKeys.tickers })
       queryClient.invalidateQueries({ queryKey: queryKeys.history(ticker) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.prediction(ticker) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.insight(ticker) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.range(ticker) })
     },
   })
 }

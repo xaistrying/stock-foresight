@@ -55,7 +55,7 @@
 }
 
 /* Capped like the Searched list below: the Watchlist is every loaded ticker
-   (208 today), and left unbounded it pushed the chart and prediction well
+   (208 today), and left unbounded it pushed the chart and range card well
    below the fold. 14rem shows ~3 rows plus a peek of the 4th as the scroll
    cue. The padding/negative-margin pair keeps edge chips' focus rings from
    being clipped by the scroll container without shifting the layout. */
@@ -120,30 +120,6 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
-}
-
-.ticker-panel__legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-}
-
-.ticker-panel__legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2xs);
-  font-size: var(--text-xs);
-  color: var(--color-ink-3);
-}
-
-/* Legend's Loading key is a static ring — not spinning like the live
-   in-progress dot, since it's a key label, not an actual in-flight state. */
-.ticker-panel__legend-dot--loading {
-  width: 0.75rem;
-  height: 0.75rem;
-  background: transparent;
-  border: 1.5px solid var(--color-border-strong);
-  border-top-color: var(--color-ink-3);
 }
 
 /* --- Search --- */
@@ -416,8 +392,7 @@
 
 /* Distinct visual state while the ticker's load is in flight (tasks.md
    2.4) — spins the icon so a disabled-but-silent button doesn't read as
-   broken; reuses the same rotation keyframe as the freshness dot's
-   loading ring. */
+   broken. */
 .ticker-chip__refresh[data-loading] .ticker-chip__refresh-icon {
   animation: ticker-chip-spin 0.6s linear infinite;
 }
@@ -445,44 +420,6 @@
 .ticker-chip__footer[data-status='error'] {
   color: var(--color-negative);
   font-weight: 600;
-}
-
-/* Freshness dot (replaces the old "Fresh"/"Stale"/"Loading" text label —
-   color-not-only, WCAG: the dot alone never carries the meaning, it's
-   paired with an aria-label/title on the element itself and explained
-   visibly by TickerPanel's legend). Fixed footprint (0.75rem box,
-   border-box) across every state — every chip passes through Loading
-   first while its freshness query is in flight, so a size difference
-   between the loading ring and the resting dot made each chip visibly
-   grow/shrink the moment it settled. The resting dot is centered inside
-   the same box via a 1.5px transparent border rather than shrinking the
-   box itself. */
-.ticker-chip__dot {
-  box-sizing: border-box;
-  width: 0.75rem;
-  height: 0.75rem;
-  flex-shrink: 0;
-  border-radius: 50%;
-  border: 1.5px solid transparent;
-  background: var(--color-ink-3);
-  background-clip: content-box;
-}
-
-.ticker-chip__dot[data-freshness='fresh'] {
-  background: var(--color-positive);
-  background-clip: content-box;
-}
-
-.ticker-chip__dot[data-freshness='stale'] {
-  background: var(--color-warning);
-  background-clip: content-box;
-}
-
-.ticker-chip__dot[data-freshness='loading'] {
-  background: transparent;
-  border-color: var(--color-border-strong);
-  border-top-color: var(--color-ink-3);
-  animation: ticker-chip-spin 0.6s linear infinite;
 }
 
 .ticker-chip--skeleton {
@@ -527,7 +464,6 @@
     animation: none;
   }
 
-  .ticker-chip__dot[data-freshness='loading'],
   .ticker-chip__refresh[data-loading] .ticker-chip__refresh-icon {
     animation-duration: 1.2s;
   }
