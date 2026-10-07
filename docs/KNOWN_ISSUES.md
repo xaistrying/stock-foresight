@@ -383,3 +383,22 @@ rebuild script). Deleting `app.db` is safe for the log; deleting the log is not.
 **Not done**: an automatic backup or export; it was out of scope.
 
 **Status**: open; a standing caution, not a task.
+
+---
+
+## A long market closure (Tet) makes every ticker read stale
+
+**Found**: `debate-data-guards` design Decision 1; recorded in
+`backend/app/services/data_eligibility.py` (`_age_sessions`).
+
+**Symptom**: `age_sessions` counts weekdays since the newest stored session.
+During a multi-day closure such as Tet no ticker is refreshed with a new
+session, so after 3 weekdays every ticker is "stale" and `/range` and the
+debate return `INSUFFICIENT_DATA` until the market reopens and a refresh
+stores the next session. Refreshing during the closure does not help.
+
+**Status**: known limitation, accepted by the owner (2026-10-07). Not
+reproduced against a real Tet closure yet.
+
+**Upgrade path**: an extra-closures list consulted by `_age_sessions`, so
+declared closure days do not count as missing sessions.

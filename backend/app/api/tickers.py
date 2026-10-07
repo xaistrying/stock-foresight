@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.db.connection import get_connection
 from app.ml.training import TRAINING_TICKERS
+from app.services.data_eligibility import assess_eligibility_many
 from app.services.ticker_ingestion import load_ticker
 from app.services.ticker_universe import INGESTION_STATE_OK
 
@@ -29,12 +30,19 @@ SELECT symbol, exchange, icb_code2, listing_status
 """
 
 
-def _catalog_entry(symbol: str, universe_row: tuple | None, load_row: tuple | None) -> dict:
+def _catalog_entry(
+    symbol: str,
+    universe_row: tuple | None,
+    load_row: tuple | None,
+    eligibility: dict | None,
+) -> dict:
     """One `GET /tickers` entry.
 
     Universe fields are null when the symbol has no universe row, rather than
     omitted — a client should not have to distinguish "field missing" from
     "value unknown" (`ticker-catalog`: null where the universe has no value).
+    `eligibility` is the summary `assess_eligibility` gives for the symbol, null
+    when the symbol is not loaded.
     """
     _, exchange, industry_code, listing_status = universe_row or (None, None, None, None)
     features_computed = load_row[1] if load_row else None
@@ -60,6 +68,7 @@ def _catalog_entry(symbol: str, universe_row: tuple | None, load_row: tuple | No
         if load_row is not None
         else None,
         "last_loaded_at": load_row[2] if load_row else None,
+        "eligibility": eligibility,
     }
 
 
@@ -72,6 +81,11 @@ def list_tickers_endpoint():
     `TRAINING_TICKERS` constant. No `load_ticker`, no `vnstock` call, and no
     write — hundreds of never-loaded symbols in the universe must not turn a
     catalog request into an ingestion run.
+
+    Each loaded entry also carries `eligibility`, the `assess_eligibility`
+    summary, computed for all loaded symbols in one batched pass so the
+    dashboard can say why a ticker cannot be analysed without a request per
+    ticker (`ticker-catalog`).
 
     Every `TRAINING_TICKERS` member appears whether or not it passes the
     universe's default filters. Deliberate deviation from a literal reading
@@ -111,9 +125,15 @@ def list_tickers_endpoint():
     ordered = list(TRAINING_TICKERS) + [
         row[0] for row in universe_rows if row[0] not in set(TRAINING_TICKERS)
     ]
+    eligibility = assess_eligibility_many(
+        [symbol for symbol in ordered if symbol in load_by_symbol]
+    )
     tickers = [
         _catalog_entry(
-            symbol, universe_by_symbol.get(symbol), load_by_symbol.get(symbol)
+            symbol,
+            universe_by_symbol.get(symbol),
+            load_by_symbol.get(symbol),
+            eligibility.get(symbol),
         )
         for symbol in ordered
     ]

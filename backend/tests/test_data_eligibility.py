@@ -347,3 +347,103 @@ def test_an_indicator_the_agent_does_not_read_is_ignored(db):
     seed(db, "AAA", weekdays(END, 80), indicators={"senkou_span_b": None})
 
     assert assess()["reasons"] == []
+
+
+# ---------------------------------------------------------------------------
+# assess_eligibility_many: one pass for a whole catalog
+# (openspec change `dashboard-rail-stage-verdict`, ticker-catalog)
+# ---------------------------------------------------------------------------
+
+def _seed_catalog(db):
+    """One market of ~100 sessions plus a ticker per reason, each at a boundary.
+
+    Returns the symbols whose reasons are asserted by hand, so the equivalence
+    test cannot pass by both implementations being wrong the same way.
+    """
+    market = weekdays(END, 100)
+    seed(db, "OK", market)
+    seed(db, "DELIST", market, status="delisted")
+    seed(db, "H64", weekdays(END, 64))
+    seed(db, "H65", weekdays(END, 65))
+    seed(db, "AGE3", weekdays("2026-10-06", 80))  # Mon, Tue... 3 stored sessions after: not stale
+    seed(db, "AGE4", weekdays("2026-10-05", 80))  # 4 stored sessions after: stale
+    for name, omitted in (("GAP2", 2), ("GAP3", 3)):
+        gone = set(market[-30:-30 + omitted])
+        seed(db, name, [d for d in market if d not in gone])
+    seed(db, "FLAGIN", market, flags=[(market[-78], "hard", "price_limit")])
+    seed(db, "FLAGOUT", market, flags=[(market[-79], "hard", "price_limit")])
+    seed(db, "SOFT", market, flags=[(market[-5], "soft", "price_limit")])
+    seed(db, "NOIND", market, indicators={"rsi": None})
+    seed(db, "NOFEAT", market, features=False)
+    seed(db, "NOUNI", market, status=None)
+    seed(db, "MANY", weekdays("2026-09-08", 80), status="delisted")  # delisted and stale
+    return {
+        "OK": [], "DELIST": ["delisted"], "H64": ["insufficient_history"], "H65": [],
+        "AGE3": [], "AGE4": ["stale"], "GAP2": [], "GAP3": ["near_gap"],
+        "FLAGIN": ["hard_quality_flag"], "FLAGOUT": [], "SOFT": [],
+        "NOIND": ["indicators_missing"], "NOFEAT": ["insufficient_history"],
+        "NOUNI": [], "MANY": ["delisted", "stale"],
+    }
+
+
+def test_assess_many_equals_the_single_ticker_assessment_for_every_reason(db):
+    from app.services.data_eligibility import assess_eligibility, assess_eligibility_many
+
+    expected = _seed_catalog(db)
+    tickers = [*expected, "NEVER"]  # a symbol with no rows at all
+
+    many = assess_eligibility_many(tickers, now=MONDAY_MORNING)
+
+    assert list(many) == tickers
+    for ticker in tickers:
+        assert many[ticker] == assess_eligibility(ticker, now=MONDAY_MORNING), ticker
+    for ticker, reasons in expected.items():
+        assert many[ticker]["reasons"] == reasons, ticker
+        assert many[ticker]["eligible"] is (not reasons), ticker
+    assert many["NEVER"] == {
+        "eligible": False, "reasons": ["insufficient_history"], "as_of": None, "age_sessions": None,
+    }
+
+
+def test_assess_many_keeps_several_reasons_in_the_fixed_order(db):
+    from app.services.data_eligibility import assess_eligibility_many
+
+    _seed_catalog(db)
+
+    result = assess_eligibility_many(["MANY"], now=MONDAY_MORNING)["MANY"]
+
+    assert result["reasons"] == ["delisted", "stale"]
+    assert result["age_sessions"] == 23  # 23 stored sessions after 2026-09-08 in the 100-session market
+
+
+def test_assess_many_of_nothing_is_empty_and_reads_nothing(db):
+    from app.services.data_eligibility import assess_eligibility_many
+
+    assert assess_eligibility_many([], now=MONDAY_MORNING) == {}
+
+
+def test_assess_many_rejects_a_naive_clock(db):
+    from app.services.data_eligibility import assess_eligibility_many
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        assess_eligibility_many(["AAA"], now=datetime(2026, 10, 12, 10, 0))
+
+
+def test_session_dates_are_scanned_once_for_a_whole_batch(db, tmp_path, monkeypatch):
+    from app.services import data_eligibility
+
+    expected = _seed_catalog(db)
+    path = db.execute("PRAGMA database_list").fetchone()[2]
+    statements: list[str] = []
+
+    def traced():
+        conn = sqlite3.connect(path)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(data_eligibility, "get_connection", traced)
+
+    data_eligibility.assess_eligibility_many(list(expected), now=MONDAY_MORNING)
+
+    scans = [s for s in statements if "SELECT DISTINCT date FROM ohlcv" in s]
+    assert len(expected) > 10 and len(scans) == 1

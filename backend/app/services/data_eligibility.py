@@ -1,7 +1,9 @@
 """Can a loaded ticker's stored data support a debate or a volatility range?
 
 `assess_eligibility` returns every reason that applies, in a fixed order, so the
-caller can show them all. It reads the database itself and imports no API module.
+caller can show them all. `assess_eligibility_many` assesses a whole catalog in one
+pass; `assess_eligibility` is its single-ticker call. Both read the database
+themselves and import no API module.
 
 Every threshold here is NEW and PROVISIONAL (openspec debate-data-guards, design
 Decision 2): none implements Rules 1-6. They are module constants, to be revisited
@@ -58,56 +60,72 @@ def _age_sessions(sessions: list[str], as_of: str, now: datetime) -> int:
     return stored_after + tail
 
 
-def assess_eligibility(ticker: str, now: datetime | None = None) -> dict:
-    """{eligible, reasons, as_of, age_sessions}; `now` is a tz-aware test clock."""
-    now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        raise ValueError("now must be timezone-aware")
+_SQL_CHUNK = 500  # well under SQLite's bound-variable limit
 
-    conn = get_connection()
-    try:
-        as_of = conn.execute(
-            "SELECT MAX(date) FROM features WHERE ticker = ?", (ticker,)
-        ).fetchone()[0]
-        if as_of is None:
-            return {
-                "eligible": False, "reasons": ["insufficient_history"],
-                "as_of": None, "age_sessions": None,
-            }
 
-        indicators = conn.execute(
-            f"SELECT {', '.join(AGENT_INDICATORS)} FROM features WHERE ticker = ? AND date = ?",
-            (ticker, as_of),
-        ).fetchone()
-        status = conn.execute(
-            "SELECT listing_status FROM ticker_universe WHERE symbol = ?", (ticker,)
-        ).fetchone()
-        priced = [
-            row[0] for row in conn.execute(
-                "SELECT date FROM ohlcv WHERE ticker = ? AND close > 0 "
-                "ORDER BY date DESC LIMIT ?",
-                (ticker, _PRICED_SESSIONS_NEEDED),
-            )
-        ]  # newest first
-        # ponytail: full scan of idx_ohlcv_date per call (~0.05 s on 1M rows). Add a
-        # short-lived cache if /range or the debate log call this in bulk.
-        sessions = [row[0] for row in conn.execute("SELECT DISTINCT date FROM ohlcv ORDER BY date")]
-        window = priced[:MIN_SESSIONS]
-        missing = (
-            bisect_right(sessions, window[0]) - bisect_left(sessions, window[-1]) - len(window)
-            if window else 0
+def _chunks(items: list[str]):
+    for index in range(0, len(items), _SQL_CHUNK):
+        yield items[index:index + _SQL_CHUNK]
+
+
+def _placeholders(items: list[str]) -> str:
+    return ", ".join("?" for _ in items)
+
+
+def _latest_features(conn, tickers: list[str]) -> dict[str, tuple]:
+    """{ticker: (as_of, *AGENT_INDICATORS)} from each ticker's newest `features` row.
+
+    SQLite returns the bare indicator columns from the row that holds MAX(date).
+    """
+    found: dict[str, tuple] = {}
+    for chunk in _chunks(tickers):
+        for ticker, *row in conn.execute(
+            f"SELECT ticker, MAX(date), {', '.join(AGENT_INDICATORS)} FROM features "
+            f"WHERE ticker IN ({_placeholders(chunk)}) GROUP BY ticker",
+            chunk,
+        ):
+            found[ticker] = tuple(row)
+    return found
+
+
+def _listing_statuses(conn, tickers: list[str]) -> dict[str, str | None]:
+    found: dict[str, str | None] = {}
+    for chunk in _chunks(tickers):
+        found.update(conn.execute(
+            f"SELECT symbol, listing_status FROM ticker_universe "
+            f"WHERE symbol IN ({_placeholders(chunk)})", chunk,
+        ))
+    return found
+
+
+def _priced_and_flag(conn, ticker: str) -> tuple[list[str], bool]:
+    """The newest `_PRICED_SESSIONS_NEEDED` priced dates (newest first) and whether
+    a hard quality flag sits inside the hard-flag window."""
+    priced = [
+        row[0] for row in conn.execute(
+            "SELECT date FROM ohlcv WHERE ticker = ? AND close > 0 "
+            "ORDER BY date DESC LIMIT ?",
+            (ticker, _PRICED_SESSIONS_NEEDED),
         )
-        hard_flag = bool(priced) and conn.execute(
-            "SELECT 1 FROM ohlcv_quality_flags WHERE ticker = ? AND flag_tier = 'hard' "
-            "AND date >= ? LIMIT 1",
-            (ticker, priced[:HARD_FLAG_BLACKOUT_SESSIONS][-1]),
-        ).fetchone() is not None
-    finally:
-        conn.close()
+    ]
+    hard_flag = bool(priced) and conn.execute(
+        "SELECT 1 FROM ohlcv_quality_flags WHERE ticker = ? AND flag_tier = 'hard' "
+        "AND date >= ? LIMIT 1",
+        (ticker, priced[:HARD_FLAG_BLACKOUT_SESSIONS][-1]),
+    ).fetchone() is not None
+    return priced, hard_flag
 
+
+def _verdict(sessions, now, latest, status, priced, hard_flag) -> dict:
+    as_of, *indicators = latest
+    window = priced[:MIN_SESSIONS]
+    missing = (
+        bisect_right(sessions, window[0]) - bisect_left(sessions, window[-1]) - len(window)
+        if window else 0
+    )
     age = _age_sessions(sessions, as_of, now)
     found = {
-        "delisted": status is not None and status[0] == "delisted",
+        "delisted": status == "delisted",
         "insufficient_history": len(priced) < MIN_SESSIONS,
         "stale": age > MAX_AGE_SESSIONS,
         "near_gap": missing > MAX_MISSING_SESSIONS,
@@ -116,3 +134,53 @@ def assess_eligibility(ticker: str, now: datetime | None = None) -> dict:
     }
     reasons = [reason for reason, applies in found.items() if applies]  # dict keeps the fixed order
     return {"eligible": not reasons, "reasons": reasons, "as_of": as_of, "age_sessions": age}
+
+
+def assess_eligibility_many(tickers, now: datetime | None = None) -> dict[str, dict]:
+    """{ticker: {eligible, reasons, as_of, age_sessions}} for each ticker, in order.
+
+    One read of the distinct session dates, one grouped read of the latest features
+    rows and one of the universe for the whole batch; per ticker only an indexed
+    `LIMIT` read of its priced dates and a flags lookup. `now` is a tz-aware test clock.
+
+    ponytail: the per-ticker reads are two indexed lookups each (~1 ms); for a catalog
+    that outgrows that, memoise on (newest ohlcv date, now rounded to the minute).
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        return {}
+
+    conn = get_connection()
+    try:
+        latest = _latest_features(conn, tickers)
+        statuses = _listing_statuses(conn, list(latest))
+        sessions = (
+            [row[0] for row in conn.execute("SELECT DISTINCT date FROM ohlcv ORDER BY date")]
+            if latest else []
+        )
+        results: dict[str, dict] = {}
+        for ticker in tickers:
+            if ticker not in latest:
+                results[ticker] = {
+                    "eligible": False, "reasons": ["insufficient_history"],
+                    "as_of": None, "age_sessions": None,
+                }
+                continue
+            priced, hard_flag = _priced_and_flag(conn, ticker)
+            results[ticker] = _verdict(
+                sessions, now, latest[ticker], statuses.get(ticker), priced, hard_flag
+            )
+    finally:
+        conn.close()
+    return results
+
+
+def assess_eligibility(ticker: str, now: datetime | None = None) -> dict:
+    """{eligible, reasons, as_of, age_sessions}; `now` is a tz-aware test clock.
+
+    The single-ticker call of `assess_eligibility_many`, so the two cannot differ.
+    """
+    return assess_eligibility_many([ticker], now)[ticker]

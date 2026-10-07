@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 import app.api.tickers as tickers_api
 import app.ml.feature_engineering as feature_engineering
+import app.services.data_eligibility as data_eligibility
 import app.services.ohlcv_quality_gate as ohlcv_quality_gate
 import app.services.ticker_ingestion as ticker_ingestion
 import app.services.ticker_universe as ticker_universe
@@ -39,6 +40,7 @@ def client(monkeypatch, tmp_path):
         ticker_ingestion,
         feature_engineering,
         tickers_api,
+        data_eligibility,
         ohlcv_quality_gate,
         ticker_universe,
     ):
@@ -322,6 +324,78 @@ def test_list_tickers_makes_no_vnstock_call_and_writes_no_rows(client, monkeypat
     assert ohlcv_count == 0
     assert tickers_count == 0
     assert features_count == 0
+
+
+def test_list_tickers_entries_carry_the_single_ticker_eligibility(client):
+    """`ticker-catalog`: each loaded entry's `eligibility` equals
+    `assess_eligibility` for it; an unloaded entry's is null, never omitted."""
+    assert client.post("/tickers/VIB/load").status_code == 200
+
+    entries = {e["ticker"]: e for e in client.get("/tickers").json()["tickers"]}
+
+    loaded = entries["VIB"]
+    assert loaded["eligibility"] == data_eligibility.assess_eligibility("VIB")
+    assert set(loaded["eligibility"]) == {"eligible", "reasons", "as_of", "age_sessions"}
+    assert "eligibility" in entries["TCB"] and entries["TCB"]["loaded"] is False
+    assert entries["TCB"]["eligibility"] is None
+
+
+def test_list_tickers_eligibility_is_added_without_changing_existing_fields(client):
+    assert client.post("/tickers/VIB/load").status_code == 200
+
+    entry = next(e for e in client.get("/tickers").json()["tickers"] if e["ticker"] == "VIB")
+
+    assert set(entry) == {
+        "ticker", "in_training_set", "exchange", "industry_code", "listing_status",
+        "loaded", "features_computed", "last_loaded_at", "eligibility",
+    }
+
+
+def test_list_tickers_eligibility_batches_the_catalog_in_one_call(client, monkeypatch):
+    _seed_universe(
+        client.db_path,
+        [(f"S{i:03d}", "listed", "ok", "HSX", "2300", 0, 0) for i in range(5)],
+    )
+    conn = sqlite3.connect(client.db_path)
+    conn.executemany(
+        "INSERT INTO tickers (ticker, last_loaded_at, features_computed) VALUES (?, '2026-10-01T00:00:00', 1)",
+        [(f"S{i:03d}",) for i in range(5)],
+    )
+    conn.commit()
+    conn.close()
+    calls = []
+    real = tickers_api.assess_eligibility_many
+    monkeypatch.setattr(
+        tickers_api, "assess_eligibility_many", lambda tickers, *a, **k: calls.append(list(tickers)) or real(tickers, *a, **k)
+    )
+
+    body = client.get("/tickers").json()
+
+    assert len(calls) == 1 and sorted(calls[0]) == [f"S{i:03d}" for i in range(5)]
+    assert all(e["eligibility"] is not None for e in body["tickers"] if e["loaded"])
+
+
+def test_list_tickers_eligibility_leaves_the_tables_untouched(client, monkeypatch):
+    assert client.post("/tickers/VIB/load").status_code == 200
+    monkeypatch.setattr(
+        ticker_ingestion.mkt, "equity",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("GET /tickers must not call vnstock")),
+    )
+
+    def counts():
+        conn = sqlite3.connect(client.db_path)
+        try:
+            return [
+                conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("ohlcv", "tickers", "features", "ticker_universe")
+            ]
+        finally:
+            conn.close()
+
+    before = counts()
+
+    assert client.get("/tickers").status_code == 200
+    assert counts() == before
 
 
 def _insert_ohlcv_rows(db_path, ticker, num_rows):
