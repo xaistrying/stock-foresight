@@ -75,8 +75,26 @@
   to { transform: rotate(360deg); }
 }
 .debate-panel__loading-text {
+  margin: 0;
   font-size: var(--text-base);
   color: var(--color-ink-3);
+}
+/* Seconds since the request was submitted; tabular so the digits do not jitter. */
+.debate-panel__elapsed {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-2);
+}
+.debate-panel__error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: flex-start;
+}
+/* An unavailable key tension: said plainly, but not in the voice of the analysis. */
+.debate-panel__muted {
+  color: var(--color-ink-3);
+  font-style: italic;
 }
 
 /* Messages */
@@ -112,6 +130,14 @@
 .debate-panel__verdict--bear         { border-color: var(--color-negative); }
 .debate-panel__verdict--strong-bear  { background: var(--color-negative-bg); border-color: var(--color-negative); }
 .debate-panel__verdict--split        { background: var(--color-warning-bg); border-color: var(--color-warning); }
+.debate-panel__verdict--insufficient { border-style: dashed; border-color: var(--color-warning); }
+
+/* How old the data behind the result is, in sessions. */
+.debate-panel__data-date {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+}
 
 .debate-panel__agreement,
 .debate-panel__vol-range {
@@ -138,6 +164,8 @@
 .debate-panel__stance-chip--bull    { background: var(--color-positive-bg); border-color: var(--color-positive); }
 .debate-panel__stance-chip--neutral { border-color: var(--color-neutral-signal); }
 .debate-panel__stance-chip--bear    { background: var(--color-negative-bg); border-color: var(--color-negative); }
+/* A degraded agent has no vote: dashed + a text marker, never colour alone. */
+.debate-panel__stance-chip--degraded { background: var(--color-warning-bg); border-style: dashed; border-color: var(--color-warning); }
 
 /* Toggle buttons */
 .debate-panel__toggle {
@@ -176,6 +204,17 @@
   border-radius: var(--radius-sm);
 }
 
+.debate-panel__agent-card--degraded {
+  border-style: dashed;
+  border-color: var(--color-warning);
+}
+.debate-panel__degraded-note {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
 .debate-panel__agent-label {
   margin: 0 0 var(--space-xs);
   font-size: var(--text-sm);
@@ -209,6 +248,20 @@
   color: var(--color-ink-2);
 }
 
+/* Insufficient data: a refusal or an abstention, no verdict detail */
+.debate-panel__insufficient {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.debate-panel__reason-list {
+  margin: 0;
+  padding-left: var(--space-md);
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+  line-height: 1.5;
+}
+
 /* Level 3 */
 .debate-panel__synthesis-text {
   margin: 0;
@@ -235,6 +288,23 @@
   font-size: var(--text-xs);
   color: var(--color-ink-2);
   line-height: 1.4;
+}
+.debate-panel__about {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-2);
+  line-height: 1.4;
+}
+.debate-panel__about summary {
+  cursor: pointer;
+}
+.debate-panel__about p {
+  margin: var(--space-xs, 4px) 0 0;
+}
+.debate-panel__lm-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-ink-3);
 }
 
 @media (prefers-reduced-motion: reduce) {

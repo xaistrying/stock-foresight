@@ -5,8 +5,8 @@ LLM is used only to translate computed numeric signals into readable bullets.
 
 Signals:
 1. VN-Index 20-session price trend (slope direction)
-2. Ticker's own 20-session return relative to VN-Index (no sector index is
-   available, so this is not a sector comparison)
+2. Ticker's own 20-session return relative to VN-Index over the same two dates
+   (no sector index is available, so this is not a sector comparison)
 3. USD/VND 5-session change
 4. Market-wide foreign net buy/sell value, latest session (summed over 30 large caps);
    counted in the stance vote only once the board has settled after the close
@@ -33,12 +33,13 @@ from app.services.bulk_ingestion import _is_rate_limit_exit  # one definition of
 from app.services.debate.engine import AgentPosition, Stance
 from app.services.debate.llm_client import LLMClient
 from app.services.debate.news_feeds import ICT
+from app.services.debate.prompt_safety import DESCRIBE_ONLY, fence
 
 logger = logging.getLogger(__name__)
 
 
 def _load_ohlcv_closes(ticker: str, n: int) -> pd.Series:
-    """Load last n closes for a ticker, ascending date."""
+    """Load last n closes for a ticker, ascending date, indexed by 'YYYY-MM-DD'."""
     conn = get_connection()
     try:
         # The outer ORDER BY must name `date`: `ORDER BY rowid` on the subquery
@@ -46,7 +47,7 @@ def _load_ohlcv_closes(ticker: str, n: int) -> pd.Series:
         # the sign of every return computed from `iloc[-1] / iloc[-20]`.
         rows = conn.execute(
             """
-            SELECT close FROM (
+            SELECT date, close FROM (
                 SELECT date, close FROM ohlcv WHERE ticker = ?
                 ORDER BY date DESC LIMIT ?
             ) ORDER BY date ASC
@@ -55,7 +56,7 @@ def _load_ohlcv_closes(ticker: str, n: int) -> pd.Series:
         ).fetchall()
     finally:
         conn.close()
-    return pd.Series([r[0] for r in rows], dtype="float64")
+    return pd.Series([r[1] for r in rows], index=[r[0] for r in rows], dtype="float64")
 
 
 def _slope_sign(series: pd.Series) -> int:
@@ -77,15 +78,35 @@ MARKET_LOOKBACK_DAYS = 90
 
 
 def _market_closes(handle) -> pd.Series | None:
-    """Daily closes from a vnstock 4.x Market handle (index / forex), or None."""
+    """Daily closes from a vnstock 4.x Market handle (index / forex), or None,
+    indexed by 'YYYY-MM-DD' with one row per date.
+
+    Dates are kept so signal 2 can compare like with like. The live frame can
+    repeat the latest session (same close, two rows, measured on VNINDEX), so the
+    later row of a date wins: `series[date]` must be a scalar.
+    """
     end = date.today()
     df = handle.ohlcv(
         start=(end - timedelta(days=MARKET_LOOKBACK_DAYS)).isoformat(), end=end.isoformat()
     )
     if df is None or df.empty or "close" not in df.columns:
         return None
-    return df["close"].astype("float64").reset_index(drop=True)
+    if "time" not in df.columns:
+        # Raised, not guessed: a renamed column must show up in the log.
+        raise KeyError(f"time column missing from market frame: {list(df.columns)[:6]}")
+    closes = pd.Series(
+        df["close"].astype("float64").to_numpy(),
+        index=pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%d"),
+    )
+    return closes[~closes.index.duplicated(keep="last")]
 
+
+# Closes of the index fetched for signal 1 (last 20) and signal 2. The ticker's
+# window ends d_last up to MAX_AGE_SESSIONS (3) sessions before yesterday, and the
+# live frame may already hold today's bar: d_last is up to 5 closes from the end.
+# Its 20 closes span 19 intervals plus up to MAX_MISSING_SESSIONS (2) sessions the
+# ticker lacks, so d_first is up to 26 from the end. +1 slack.
+VNINDEX_CLOSES = 27
 
 # vnstock retries with long timeouts, so a hung source could hold a debate for
 # minutes; each fetch gets a deadline and degrades to "unavailable". (The worker
@@ -178,8 +199,8 @@ FOREIGN_FLOW_SAMPLE = (
     "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE",
 )
 # Net flow counts as inflow/outflow only beyond this share of the sample's gross
-# foreign turnover; below it the flow is "negligible" (neutral). Provisional, like
-# Rule 3's 0.5: set from judgement, not backtested.
+# foreign turnover; below it the flow is "negligible" (neutral). Provisional: set
+# from judgement, not backtested, and not covered by Rules 1-6.
 FOREIGN_FLOW_RATIO_THRESHOLD = 0.10
 
 # HOSE trades Mon-Fri 09:00-14:45 Vietnam time (matching, then ATC), with
@@ -257,7 +278,7 @@ macro signals, produce 3-4 plain-language bullet points (each starting with "- "
 explaining the macro environment. Translate the numbers into readable insights.
 Do NOT add any macro context beyond the provided values.
 A signal marked "not counted in the stance vote" is provisional: mention it as
-context, but do not infer a direction from it.
+context, but do not infer a direction from it. {describe_only}
 
 Ticker: {ticker}
 Overall macro stance: {stance}
@@ -278,6 +299,11 @@ class MacroAgent:
         """Round 1: compute four macro signals, derive stance, generate reasoning."""
         signals: dict = {}
         votes: list[int] = []  # +1 bull, -1 bear, 0 neutral
+        # Raw numbers for the outcome log, beside the prompt strings in `signals`.
+        evidence: dict = {
+            "vnindex_slope": None, "rel_vs_vnindex_pct": None, "usdvnd_change_pct": None,
+            "foreign_net_vnd": None, "foreign_gross_vnd": None, "foreign_vote_counted": False,
+        }
 
         # The market-data fetches are blocking network calls: off the event loop
         # (they froze the whole server for seconds per debate), and in parallel.
@@ -285,7 +311,7 @@ class MacroAgent:
         # read just before the settle time must not be labelled settled.
         settling = _foreign_flow_is_settling()
         vnindex, usdvnd, flow = await asyncio.gather(
-            _bounded(_get_vnindex_closes, 22),
+            _bounded(_get_vnindex_closes, VNINDEX_CLOSES),
             _bounded(_get_usd_vnd_change, 5),
             _bounded(_get_market_foreign_flow),
         )
@@ -294,24 +320,37 @@ class MacroAgent:
         if vnindex is not None and len(vnindex) >= 20:
             slope = _slope_sign(vnindex.tail(20))
             signals["vnindex_trend"] = {1: "up (+)", -1: "down (-)", 0: "flat"}[slope]
+            evidence["vnindex_slope"] = slope
             votes.append(slope)
         else:
             signals["vnindex_trend"] = "unavailable"
 
-        # Signal 2: Sector relative (placeholder — using ticker own return vs VNINDEX)
-        ticker_closes = _load_ohlcv_closes(ticker, 22)
-        if len(ticker_closes) >= 20 and vnindex is not None and len(vnindex) >= 20:
-            ticker_ret = float(ticker_closes.iloc[-1] / ticker_closes.iloc[-20] - 1) * 100
-            vnindex_ret = float(vnindex.iloc[-1] / vnindex.iloc[-20] - 1) * 100
-            rel = ticker_ret - vnindex_ret
-            signals["sector_vs_market"] = f"{rel:+.2f}% relative to VN-Index"
-            votes.append(1 if rel > 1 else (-1 if rel < -1 else 0))
+        # Signal 2: the ticker's own return vs VN-Index (no sector index exists), over
+        # the SAME two dates: the ticker's 20th-latest and latest stored closes. A
+        # stale ticker is compared with the index on its own dates, never the index's
+        # latest 20 positions; if the index lacks either date there is no vote.
+        window_note = None
+        ticker_closes = await asyncio.to_thread(_load_ohlcv_closes, ticker, 22)  # blocking SQLite
+        if len(ticker_closes) >= 20 and vnindex is not None:
+            window = ticker_closes.iloc[-20:]
+            d_first, d_last = window.index[0], window.index[-1]
+            if d_first in vnindex.index and d_last in vnindex.index:
+                ticker_ret = float(window.iloc[-1] / window.iloc[0] - 1) * 100
+                vnindex_ret = float(vnindex[d_last] / vnindex[d_first] - 1) * 100
+                rel = ticker_ret - vnindex_ret
+                evidence["rel_vs_vnindex_pct"] = rel
+                signals["sector_vs_market"] = f"{rel:+.2f}% relative to VN-Index ({d_first}..{d_last})"
+                votes.append(1 if rel > 1 else (-1 if rel < -1 else 0))
+            else:
+                window_note = f"ticker window {d_first}..{d_last} not covered by the VN-Index data"
+                signals["sector_vs_market"] = f"unavailable ({window_note})"
         else:
             signals["sector_vs_market"] = "unavailable"
 
         # Signal 3: USD/VND change
         if usdvnd is not None:
             signals["usdvnd_change"] = f"{usdvnd:+.2f}%"
+            evidence["usdvnd_change_pct"] = usdvnd
             # Stronger USD = weaker VND = mildly bearish for stocks
             votes.append(-1 if usdvnd > 0.5 else (1 if usdvnd < -0.5 else 0))
         else:
@@ -322,6 +361,7 @@ class MacroAgent:
         if flow is not None:
             net, gross = flow
             share = net / gross if gross else 0.0
+            evidence.update(foreign_net_vnd=net, foreign_gross_vnd=gross, foreign_vote_counted=not settling)
             note = (
                 "provisional: session in progress or just closed, not counted in the stance vote"
                 if settling
@@ -336,15 +376,23 @@ class MacroAgent:
         else:
             signals["foreign_flow"] = "unavailable"
 
-        # Majority vote
-        if votes:
-            total = sum(votes)
-            stance: Stance = "bull" if total > 0 else ("bear" if total < 0 else "neutral")
-        else:
-            stance = "neutral"
+        # No counted signal is no stance at all, not a neutral one (design Decision 4).
+        if not votes:
+            return AgentPosition(
+                agent_id="macro",
+                stance="neutral",
+                reasoning=["No macro signal was available — none of the four signals could be counted."],
+                degraded_reason="no_input",
+            )
+
+        total = sum(votes)
+        stance: Stance = "bull" if total > 0 else ("bear" if total < 0 else "neutral")
 
         reasoning = await self._generate_reasoning(ticker, stance, signals)
-        return AgentPosition(agent_id="macro", stance=stance, reasoning=reasoning)
+        # The LLM may not repeat a mismatch note, and the spec says the reasoning does.
+        if window_note and window_note not in " ".join(reasoning):
+            reasoning = [*reasoning, f"Relative performance vs VN-Index not counted: {window_note}."]
+        return AgentPosition(agent_id="macro", stance=stance, reasoning=reasoning, evidence=evidence)
 
     async def respond(self, ticker: str, round1: dict) -> AgentPosition:
         """Round 2: review other positions and maintain/update macro stance."""
@@ -354,17 +402,19 @@ class MacroAgent:
             f"- {k.capitalize()} agent ({v.stance}): {'; '.join(v.reasoning[:2])}"
             for k, v in others.items()
         )
+        peers = fence("PEERS", other_lines)  # the peers' bullets can quote scraped headlines
         prompt = f"""\
 You are the Macro agent. Your Round 1 stance was: {my_r1.stance if my_r1 else "neutral"}.
 Your Round 1 reasoning: {'; '.join(my_r1.reasoning[:3]) if my_r1 else "N/A"}
 
 Other agents' positions:
-{other_lines}
+{peers}
 
 Maintain your stance unless a specific counter-argument from the other agents
 is compelling. A position resting on provisional or partial data must not move it
 (and must not move yours). Respond: first line = bull/bear/neutral, then 3-4
 bullet points.
+{DESCRIBE_ONLY}
 """
         response = await self._llm.chat([
             {"role": "system", "content": "You are a disciplined macro analyst."},
@@ -385,6 +435,7 @@ bullet points.
             usdvnd_change=signals.get("usdvnd_change", "unavailable"),
             foreign_flow=signals.get("foreign_flow", "unavailable"),
             sample=len(FOREIGN_FLOW_SAMPLE),
+            describe_only=DESCRIBE_ONLY,
         )
         try:
             response = await self._llm.chat([

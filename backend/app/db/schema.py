@@ -46,18 +46,6 @@ CREATE TABLE IF NOT EXISTS features (
 )
 """
 
-CREATE_BACKTEST_PREDICTIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS backtest_predictions (
-    ticker TEXT NOT NULL,
-    date TEXT NOT NULL,
-    fold INTEGER NOT NULL,
-    predicted REAL NOT NULL,
-    actual REAL NOT NULL,
-    hit INTEGER NOT NULL,
-    PRIMARY KEY (ticker, date)
-)
-"""
-
 # Universe of symbols the system knows about, as distinct from `tickers`,
 # which means "something we have loaded" (design Decision 1). A universe row
 # exists for symbols never fetched and for symbols whose fetch failed, so the
@@ -112,6 +100,12 @@ CREATE TABLE IF NOT EXISTS ohlcv_quality_flags (
     flagged_at TEXT NOT NULL,
     PRIMARY KEY (ticker, date)
 )
+"""
+
+# The market calendar (`SELECT DISTINCT date FROM ohlcv`, data_eligibility.py) is
+# read on every debate: without this the scan takes ~0.5 s on 1M rows, with it ~0.05 s.
+CREATE_OHLCV_DATE_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_ohlcv_date ON ohlcv (date)
 """
 
 CREATE_OHLCV_QUALITY_FLAGS_TIER_INDEX = """

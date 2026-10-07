@@ -10,12 +10,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
 
 from app.services.debate import macro as macro_mod
+
+
+def _sessions(end, count):
+    """`count` weekday date strings ending on `end` (inclusive), oldest first."""
+    days, day = [], date.fromisoformat(end)
+    while len(days) < count:
+        if day.weekday() < 5:
+            days.append(day.isoformat())
+        day -= timedelta(days=1)
+    return days[::-1]
+
+
+def _dated(values, end="2026-10-02"):
+    """A close series indexed by date, like `_load_ohlcv_closes` / `_market_closes` return."""
+    return pd.Series(values, index=_sessions(end, len(values)), dtype="float64")
 
 
 def _fake_market(closes, *, error=None, calls=None):
@@ -30,7 +45,8 @@ def _fake_market(closes, *, error=None, calls=None):
                 raise error
             if calls is not None:
                 calls.append((self.kind, self.symbol, start, end))
-            return pd.DataFrame({"time": range(len(closes)), "close": closes})
+            times = pd.to_datetime(_sessions(date.today().isoformat(), len(closes)))
+            return pd.DataFrame({"time": times, "close": closes})
 
     class _FakeMarket:
         def index(self, symbol=None, **kwargs):
@@ -152,8 +168,8 @@ async def test_relative_performance_is_described_as_the_tickers_own_return_not_a
     # No sector index exists (_get_sector_closes is a placeholder), so this signal
     # is the ticker's own return against the index. Labelling it "sector" made the
     # LLM report "SAB's sector is outperforming".
-    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: pd.Series([100.0 + i for i in range(n)]))
-    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([100.0 + 3 * i for i in range(n)]))
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: _dated([100.0 + i for i in range(n)]))
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: _dated([100.0 + 3 * i for i in range(n)]))
     monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: 0.0)
     monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: None)
     agent = macro_mod.MacroAgent()
@@ -250,11 +266,10 @@ async def test_macro_agent_survives_a_rate_limit_exit_with_every_signal_unavaila
 
     monkeypatch.setattr(agent._llm, "chat", llm_stub)
 
-    position = await agent.run("SAB")
+    position = await agent.run("SAB")  # must not raise or end the process
 
-    assert position.stance == "neutral"
-    assert "VN-Index 20-session trend: unavailable" in seen[0]
-    assert "USD/VND 5-session change: unavailable" in seen[0]
+    assert position.degraded_reason == "no_input"
+    assert seen == []  # nothing to explain, so no LLM call
 
 
 # ---------------------------------------------------------------------------
@@ -346,11 +361,11 @@ def test_foreign_flow_swallows_vnais_rate_limit_exit(monkeypatch):
     assert macro_mod._get_market_foreign_flow() is None
 
 
-async def _macro_prompt(monkeypatch, flow, *, in_session=False):
+async def _macro_prompt(monkeypatch, flow, *, in_session=False, usdvnd=None):
     monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: in_session)
     monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: None)
     monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([], dtype="float64"))
-    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: None)
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: usdvnd)
     monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: flow)
     agent = macro_mod.MacroAgent()
     seen = []
@@ -385,7 +400,7 @@ async def test_market_foreign_flow_votes_by_its_share_of_foreign_turnover(monkey
 
 @pytest.mark.asyncio
 async def test_unavailable_foreign_flow_casts_no_vote(monkeypatch):
-    position, prompt = await _macro_prompt(monkeypatch, None)
+    position, prompt = await _macro_prompt(monkeypatch, None, usdvnd=0.0)  # one other signal keeps it live
 
     assert position.stance == "neutral"
     assert "Market-wide foreign net flow, latest session (30 large caps): unavailable" in prompt
@@ -408,7 +423,7 @@ async def test_a_market_data_source_that_hangs_cannot_stall_the_agent(monkeypatc
         time.sleep(1.0)
 
     monkeypatch.setattr(macro_mod, "_get_vnindex_closes", hangs)
-    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: None)
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: 0.0)
     monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: None)
     monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([], dtype="float64"))
     agent = macro_mod.MacroAgent()
@@ -432,9 +447,9 @@ async def test_foreign_flow_during_the_session_is_shown_but_casts_no_vote(monkey
     # -15% of foreign turnover would vote bearish, but mid-session the figure keeps
     # moving: the same debate re-run an hour later flipped a verdict (-9.2% at
     # 14:35, -18.4% at 15:48, -24.5% at the close). Partial data is context, not a vote.
-    position, prompt = await _macro_prompt(monkeypatch, (-90e9, 600e9), in_session=True)
+    position, prompt = await _macro_prompt(monkeypatch, (-90e9, 600e9), in_session=True, usdvnd=0.0)
 
-    assert position.stance == "neutral"  # no other signal votes in this scenario
+    assert position.stance == "neutral"  # the only vote is a flat USD/VND
     assert "-90B VND net foreign out of 600B gross turnover" in prompt
     assert "session in progress" in prompt and "not counted in the stance vote" in prompt
 
@@ -524,3 +539,153 @@ async def test_the_round_two_prompt_says_provisional_data_must_not_move_the_stan
     await agent.respond("SAB", round1)
 
     assert "provisional" in seen[0].lower() and "not" in seen[0].lower()
+
+
+# ---------------------------------------------------------------------------
+# Signal 2 compares the same two dates; the index frame keeps its dates
+# ---------------------------------------------------------------------------
+
+def test_market_closes_keep_their_dates_and_one_row_per_date():
+    # The live VN-Index frame repeats the latest session (same close, two rows).
+    frame = pd.DataFrame({
+        "time": pd.to_datetime(["2026-10-05 07:00", "2026-10-06 07:00", "2026-10-06 07:00"]),
+        "close": [1753.2, 1759.0, 1759.08],
+    })
+
+    class _Handle:
+        def ohlcv(self, **kwargs):
+            return frame
+
+    closes = macro_mod._market_closes(_Handle())
+
+    assert list(closes.index) == ["2026-10-05", "2026-10-06"]
+    assert closes["2026-10-06"] == 1759.08  # the later row wins
+
+
+def test_a_frame_without_a_time_column_is_reported_not_guessed(monkeypatch, no_stored_vnindex, caplog):
+    class _Handle:
+        def ohlcv(self, **kwargs):
+            return pd.DataFrame({"close": [1.0, 2.0]})
+
+    class _Market:
+        def index(self, symbol=None, **kwargs):
+            return _Handle()
+
+    monkeypatch.setattr(macro_mod, "Market", _Market)
+
+    with caplog.at_level(logging.WARNING):
+        assert macro_mod._get_vnindex_closes(22) is None
+
+    assert "time" in caplog.text
+
+
+async def _signal2(monkeypatch, vnindex, ticker, *, llm_reply="- stub"):
+    """Run the agent with USD/VND at -1% (one bullish vote) and return (position, prompt)."""
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: vnindex)
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: ticker)
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: -1.0)
+    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: None)
+    agent = macro_mod.MacroAgent()
+    seen = []
+
+    async def llm_stub(messages):
+        seen.append(messages[-1]["content"])
+        return llm_reply
+
+    monkeypatch.setattr(agent._llm, "chat", llm_stub)
+    return await agent.run("SAB"), seen[0]
+
+
+@pytest.mark.asyncio
+async def test_relative_return_uses_the_tickers_two_dates_not_the_indexs_last_20_positions(monkeypatch):
+    # The stored ticker ends 2026-10-02; the live index runs 3 sessions further.
+    ticker = _dated([100.0 + i for i in range(22)], end="2026-10-02")
+    index = _dated([1000.0 + j ** 2 for j in range(25)], end="2026-10-07")
+    d_first, d_last = ticker.index[-20], ticker.index[-1]
+
+    _, prompt = await _signal2(monkeypatch, index, ticker)
+
+    # by date: ticker +18.63%, index 2 -> 21: +43.53%  => -24.90%
+    # by position (the old bug): index 5 -> 24: +53.76% => -35.13%
+    assert "-24.90% relative to VN-Index" in prompt
+    assert "-35.13" not in prompt
+    assert f"{d_first}..{d_last}" in prompt  # the signal text names both dates
+
+
+@pytest.mark.asyncio
+async def test_an_index_that_misses_an_endpoint_casts_no_vote_and_says_so(monkeypatch):
+    ticker = _dated([100.0 + i for i in range(22)], end="2026-10-02")
+    index = _dated([1000.0 + j for j in range(10)], end="2026-10-02")  # starts after d_first
+    d_first, d_last = ticker.index[-20], ticker.index[-1]
+    note = f"ticker window {d_first}..{d_last} not covered by the VN-Index data"
+
+    position, prompt = await _signal2(monkeypatch, index, ticker)
+
+    assert note in prompt
+    assert any(note in bullet for bullet in position.reasoning)  # not left to the LLM's wording
+    assert position.stance == "bull" and position.degraded_reason is None  # only USD/VND voted
+
+
+@pytest.mark.asyncio
+async def test_a_missing_endpoint_is_stated_once_even_when_the_llm_is_down(monkeypatch):
+    ticker = _dated([100.0 + i for i in range(22)], end="2026-10-02")
+    index = _dated([1000.0 + j for j in range(10)], end="2026-10-02")
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: index)
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: ticker)
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: -1.0)
+    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: None)
+    agent = macro_mod.MacroAgent()
+
+    async def llm_down(messages):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(agent._llm, "chat", llm_down)
+
+    position = await agent.run("SAB")
+
+    assert sum("not covered by the VN-Index data" in bullet for bullet in position.reasoning) == 1
+
+
+# ---------------------------------------------------------------------------
+# No counted signal: degraded, not neutral
+# ---------------------------------------------------------------------------
+
+async def _run_with(monkeypatch, *, vnindex=None, usdvnd=None, flow=None, settling=False):
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: settling)
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: vnindex)
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([], dtype="float64"))
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: usdvnd)
+    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: flow)
+    agent = macro_mod.MacroAgent()
+    calls = []
+
+    async def llm_stub(messages):
+        calls.append(messages)
+        return "- stub"
+
+    monkeypatch.setattr(agent._llm, "chat", llm_stub)
+    return await agent.run("SAB"), calls
+
+
+@pytest.mark.asyncio
+async def test_every_fetch_failing_degrades_macro_with_no_input(monkeypatch):
+    position, calls = await _run_with(monkeypatch)
+
+    assert position.degraded_reason == "no_input"
+    assert "no macro signal was available" in position.reasoning[0].lower()
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_provisional_foreign_flow_alone_counts_for_nothing(monkeypatch):
+    position, _ = await _run_with(monkeypatch, flow=(-90e9, 600e9), settling=True)
+
+    assert position.degraded_reason == "no_input"
+
+
+@pytest.mark.asyncio
+async def test_one_counted_signal_keeps_macro_live(monkeypatch):
+    position, calls = await _run_with(monkeypatch, usdvnd=-1.0)
+
+    assert (position.stance, position.degraded_reason) == ("bull", None)
+    assert len(calls) == 1

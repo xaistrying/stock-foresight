@@ -2,8 +2,8 @@ import sqlite3
 from pathlib import Path
 
 from app.db.schema import (
-    CREATE_BACKTEST_PREDICTIONS_TABLE,
     CREATE_FEATURES_TABLE,
+    CREATE_OHLCV_DATE_INDEX,
     CREATE_OHLCV_QUALITY_FLAGS_TABLE,
     CREATE_OHLCV_QUALITY_FLAGS_TIER_INDEX,
     CREATE_OHLCV_TABLE,
@@ -19,6 +19,11 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def open_readonly(db_path: Path = DB_PATH) -> sqlite3.Connection:
+    """Connection that cannot write (mode=ro), for analysis and training scripts."""
+    return sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)  # as_uri quotes # ? %
 
 
 def _migrate_tickers_features_computed(conn: sqlite3.Connection) -> None:
@@ -45,9 +50,9 @@ def init_db() -> None:
     conn = get_connection()
     try:
         conn.execute(CREATE_OHLCV_TABLE)
+        conn.execute(CREATE_OHLCV_DATE_INDEX)
         conn.execute(CREATE_TICKERS_TABLE)
         conn.execute(CREATE_FEATURES_TABLE)
-        conn.execute(CREATE_BACKTEST_PREDICTIONS_TABLE)
         conn.execute(CREATE_TICKER_UNIVERSE_TABLE)
         conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TABLE)
         conn.execute(CREATE_OHLCV_QUALITY_FLAGS_TIER_INDEX)

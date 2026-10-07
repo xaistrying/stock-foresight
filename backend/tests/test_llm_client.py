@@ -11,14 +11,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.services.debate import llm_client
-from app.services.debate.llm_client import LLMClient
+from app.services.debate.llm_client import (
+    DebateConfigError,
+    LLMCallTimeout,
+    LLMClient,
+    check_debate_config,
+    close_llm_clients,
+)
 
 # Behaviour is switched by FAKE_CLAUDE_MODE; every call records what it was
 # given (argv, stdin, cwd and what is in it) to FAKE_CLAUDE_LOG.
@@ -27,6 +37,10 @@ import json, os, sys, time
 
 mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 stdin = sys.stdin.read()
+with open(os.environ["FAKE_CLAUDE_LOG"] + ".count", "a") as f:
+    f.write("x")  # one mark per attempt
+with open(os.environ["FAKE_CLAUDE_LOG"] + ".count") as f:
+    attempt = len(f.read())
 with open(os.environ["FAKE_CLAUDE_LOG"], "w") as f:
     json.dump(
         {
@@ -49,13 +63,20 @@ if mode == "descendant":
     with open(os.environ["FAKE_CLAUDE_LOG"] + ".helper", "w") as f:
         f.write(str(helper.pid))
     time.sleep(10)
+if mode == "orphan":
+    # The CLI itself exits at once, but a helper it forked keeps our stdout/stderr pipes open.
+    import subprocess
+    helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    with open(os.environ["FAKE_CLAUDE_LOG"] + ".helper", "w") as f:
+        f.write(str(helper.pid))
+    sys.exit(0)
 if mode == "badjson":
     print("this is not json")
     sys.exit(0)
 if mode == "jsonlist":
     print("[1, 2]")
     sys.exit(0)
-if mode == "error":
+if mode == "error" or (mode == "flaky" and attempt == 1):
     print(json.dumps({"is_error": True, "result": "There's an issue with the selected model (x)."}))
     sys.exit(1)
 if mode == "error_nodetail":
@@ -85,8 +106,22 @@ def fake_claude(tmp_path, monkeypatch):
     monkeypatch.setenv("DEBATE_LLM_PROVIDER", "claude_cli")
     monkeypatch.delenv("DEBATE_LLM_MODEL", raising=False)
     monkeypatch.delenv("DEBATE_LLM_EFFORT", raising=False)
+    monkeypatch.delenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("FAKE_CLAUDE_MODE", raising=False)
+    monkeypatch.setattr(llm_client, "CLAUDE_CLI_RETRY_DELAY_SECONDS", 0.05)  # keep retry tests fast
     return lambda: json.loads(log.read_text())
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_sdk_clients():
+    llm_client._clients.clear()
+    yield
+    llm_client._clients.clear()
+
+
+def _attempts() -> int:
+    """How many times the fake `claude` was started (one mark per attempt)."""
+    return len(Path(os.environ["FAKE_CLAUDE_LOG"] + ".count").read_text())
 
 
 def _alive(pid: int) -> bool:
@@ -282,11 +317,13 @@ async def test_claude_cli_prompt_with_a_nul_byte_is_cleaned_not_fatal(fake_claud
 @pytest.mark.asyncio
 async def test_claude_cli_timeout_raises_instead_of_hanging(fake_claude, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "slow")
-    monkeypatch.setattr(llm_client, "CLAUDE_CLI_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "0.5")
 
-    with pytest.raises(RuntimeError, match="timed out"):
+    started = time.monotonic()
+    with pytest.raises(LLMCallTimeout, match="timed out"):
         await LLMClient().chat(MESSAGES)
 
+    assert time.monotonic() - started < 3  # the ceiling plus a small margin, not the fake's 10 s
     assert await _all_dead_within([fake_claude()["pid"]])
 
 
@@ -298,15 +335,29 @@ async def test_claude_cli_timeout_kills_descendants_and_does_not_wait_for_them(
     # pipes open: on asyncio that stalls the call until the helper exits, on
     # uvloop it orphans the helper. Both are avoided by killing the group.
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "descendant")
-    monkeypatch.setattr(llm_client, "CLAUDE_CLI_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "0.5")
 
     started = time.monotonic()
-    with pytest.raises(RuntimeError, match="timed out"):
+    with pytest.raises(LLMCallTimeout, match="timed out"):
         await LLMClient().chat(MESSAGES)
     assert time.monotonic() - started < 5  # not "as long as the helper lives" (10s)
 
     helper_pid = int((tmp_path / "call.json.helper").read_text())
     assert await _all_dead_within([fake_claude()["pid"], helper_pid])
+
+
+@pytest.mark.asyncio
+async def test_claude_cli_timeout_kills_a_helper_that_outlives_the_cli_itself(fake_claude, monkeypatch, tmp_path):
+    # The CLI has already exited (returncode set) but a descendant holds the pipes, so the call
+    # hangs until the ceiling: the group must be killed even then, not only while the CLI is alive.
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "orphan")
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "0.5")
+
+    with pytest.raises(LLMCallTimeout):
+        await LLMClient().chat(MESSAGES)
+
+    helper_pid = int((tmp_path / "call.json.helper").read_text())
+    assert await _all_dead_within([helper_pid])
 
 
 @pytest.mark.asyncio
@@ -347,3 +398,278 @@ async def test_unknown_provider_error_lists_claude_cli(monkeypatch):
 
     with pytest.raises(ValueError, match="claude_cli"):
         await LLMClient().chat(MESSAGES)
+
+
+# ===========================================================================
+# harden-debate-runtime: ceiling, retries, client reuse, configuration check
+# ===========================================================================
+
+
+def test_the_call_ceiling_defaults_to_60_seconds_and_is_configurable(monkeypatch):
+    monkeypatch.delenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", raising=False)
+    assert LLMClient().call_timeout == 60
+
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "20")
+    assert LLMClient().call_timeout == 20
+
+
+def test_the_timeout_error_is_a_runtime_error_so_callers_that_catch_it_keep_working():
+    assert issubclass(LLMCallTimeout, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_is_not_retried(fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "slow")
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "0.5")
+
+    with pytest.raises(LLMCallTimeout):
+        await LLMClient().chat(MESSAGES)
+
+    assert _attempts() == 1
+
+
+@pytest.mark.asyncio
+async def test_a_fast_failure_is_retried_once_and_the_second_attempts_text_returned(
+    fake_claude, monkeypatch, caplog
+):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "flaky")  # exits 1 on the first attempt only
+
+    with caplog.at_level(logging.WARNING, logger=llm_client.logger.name):
+        text = await LLMClient().chat(MESSAGES)
+
+    assert text == "bull\n- RSI 62 supports momentum"
+    assert _attempts() == 2
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "claude_cli" in warnings[0] and "attempt 1" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_at_most_two_attempts_and_the_final_failure_is_logged_without_the_prompt(
+    fake_claude, monkeypatch, caplog
+):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "error")
+
+    with caplog.at_level(logging.WARNING, logger=llm_client.logger.name):
+        with pytest.raises(RuntimeError, match="issue with the selected model"):
+            await LLMClient().chat(MESSAGES)
+
+    assert _attempts() == 2
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2  # the retry and the final failure
+    assert "attempt 2" in warnings[1]
+    assert not any("Ticker: SAB" in w or "Be terse." in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_a_missing_binary_is_not_retried(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", "claude_cli")
+    monkeypatch.setattr(llm_client, "CLAUDE_CLI_RETRY_DELAY_SECONDS", 5)  # a retry would cost 5 s
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="Claude Code"):
+        await LLMClient().chat(MESSAGES)
+
+    assert time.monotonic() - started < 2
+
+
+def _install_fake_sdk(monkeypatch, provider, hang=False):
+    """Replace the `openai` / `anthropic` module with a stub; returns the clients it built."""
+    built = []
+
+    async def create(**_kwargs):
+        if hang:
+            await asyncio.sleep(30)
+        if provider == "openai":
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="sdk reply"))])
+        return SimpleNamespace(content=[SimpleNamespace(text="sdk reply")])
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.closed = False
+            endpoint = SimpleNamespace(create=create)
+            self.chat = SimpleNamespace(completions=endpoint)  # openai
+            self.messages = endpoint  # anthropic
+            built.append(self)
+
+        async def close(self):
+            self.closed = True
+
+    module_name, class_name = ("openai", "AsyncOpenAI") if provider == "openai" else ("anthropic", "AsyncAnthropic")
+    monkeypatch.setitem(sys.modules, module_name, SimpleNamespace(**{class_name: FakeClient}))
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", provider)
+    return built
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+async def test_two_calls_share_one_sdk_client_built_with_the_ceiling_and_one_retry(monkeypatch, provider):
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "20")
+    built = _install_fake_sdk(monkeypatch, provider)
+
+    assert await LLMClient().chat(MESSAGES) == "sdk reply"
+    assert await LLMClient().chat(MESSAGES) == "sdk reply"  # a second instance, as each agent has its own
+
+    assert len(built) == 1
+    assert built[0].kwargs == {"timeout": httpx.Timeout(20.0, connect=5.0), "max_retries": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_different_ceiling_gets_its_own_client(monkeypatch):
+    built = _install_fake_sdk(monkeypatch, "openai")
+
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "20")
+    await LLMClient().chat(MESSAGES)
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "30")
+    await LLMClient().chat(MESSAGES)
+
+    assert len(built) == 2
+
+
+@pytest.mark.asyncio
+async def test_closing_the_clients_closes_each_and_the_next_call_builds_a_new_one(monkeypatch):
+    built = _install_fake_sdk(monkeypatch, "openai")
+    await LLMClient().chat(MESSAGES)
+
+    await close_llm_clients()
+
+    assert built[0].closed
+    await LLMClient().chat(MESSAGES)
+    assert len(built) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+async def test_a_hung_sdk_call_is_cut_off_at_the_ceiling(monkeypatch, provider):
+    monkeypatch.setenv("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "0.3")
+    _install_fake_sdk(monkeypatch, provider, hang=True)
+
+    started = time.monotonic()
+    with pytest.raises(LLMCallTimeout, match="timed out"):
+        await LLMClient().chat(MESSAGES)
+
+    assert time.monotonic() - started < 3
+
+
+# --- configuration check ----------------------------------------------------
+
+FAKE_KEY = "sk-test-fake-0123456789"
+SETTINGS = (
+    "DEBATE_LLM_PROVIDER", "DEBATE_LLM_MODEL", "DEBATE_LLM_EFFORT", "DEBATE_MAX_TOKENS_PER_CALL",
+    "DEBATE_LLM_CALL_TIMEOUT_SECONDS", "DEBATE_RUN_TIMEOUT_SECONDS", "DEBATE_MAX_CONCURRENT_RUNS",
+    "DEBATE_POST_RUN_HOOK_TIMEOUT_SECONDS", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+)
+
+
+@pytest.fixture
+def configured(monkeypatch):
+    """A valid OpenAI setup: every debate setting at its default, a fake credential present."""
+    for name in SETTINGS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
+
+
+def _error_of(check) -> str:
+    with pytest.raises(DebateConfigError) as caught:
+        check()
+    return str(caught.value)
+
+
+def test_a_valid_configuration_passes(configured):
+    check_debate_config()
+
+
+def test_the_config_error_is_a_value_error_so_existing_handlers_keep_working():
+    assert issubclass(DebateConfigError, ValueError)
+
+
+COUNT_SETTINGS = ("DEBATE_MAX_TOKENS_PER_CALL", "DEBATE_MAX_CONCURRENT_RUNS")  # whole numbers
+SECONDS_SETTINGS = (  # fractional values are fine
+    "DEBATE_LLM_CALL_TIMEOUT_SECONDS", "DEBATE_RUN_TIMEOUT_SECONDS", "DEBATE_POST_RUN_HOOK_TIMEOUT_SECONDS",
+)
+BAD_NUMBERS = ["abc", "0", "-1", "nan", "inf"]
+BAD_SETTINGS = [(name, value) for name in (*COUNT_SETTINGS, *SECONDS_SETTINGS) for value in BAD_NUMBERS] + [
+    (name, "2.5") for name in COUNT_SETTINGS
+]
+
+
+@pytest.mark.parametrize("name, value", BAD_SETTINGS)
+def test_a_bad_number_is_refused_with_the_variable_named_and_no_credential(configured, monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+
+    message = _error_of(check_debate_config)
+
+    assert name in message
+    assert FAKE_KEY not in message
+
+
+def test_a_blank_number_means_the_default(configured, monkeypatch):
+    monkeypatch.setenv("DEBATE_RUN_TIMEOUT_SECONDS", "  ")
+
+    check_debate_config()
+
+
+def test_an_invalid_effort_is_refused_for_claude_cli(fake_claude, monkeypatch):
+    monkeypatch.setenv("DEBATE_LLM_EFFORT", "turbo")
+
+    assert "DEBATE_LLM_EFFORT" in _error_of(check_debate_config)
+
+
+def test_an_unknown_provider_is_refused_instead_of_becoming_a_neutral_verdict(configured, monkeypatch):
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", "opneai")
+
+    message = _error_of(check_debate_config)
+
+    assert "DEBATE_LLM_PROVIDER" in message and FAKE_KEY not in message
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_a_missing_openai_key_is_named_and_no_value_is_printed(configured, monkeypatch, blank):
+    if blank is None:
+        monkeypatch.delenv("OPENAI_API_KEY")
+    else:
+        monkeypatch.setenv("OPENAI_API_KEY", blank)
+
+    assert "OPENAI_API_KEY" in _error_of(check_debate_config)
+
+
+def test_anthropic_accepts_either_credential_and_names_both_when_neither_is_set(configured, monkeypatch):
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", "anthropic")
+    monkeypatch.delenv("OPENAI_API_KEY")
+
+    message = _error_of(check_debate_config)
+    assert "ANTHROPIC_API_KEY" in message and "ANTHROPIC_AUTH_TOKEN" in message
+
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", FAKE_KEY)
+    check_debate_config()
+
+
+def test_claude_cli_needs_the_binary_on_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", "claude_cli")
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert "claude" in _error_of(check_debate_config)
+
+
+def test_claude_cli_passes_when_the_binary_is_present(fake_claude):
+    check_debate_config()
+
+
+@pytest.mark.parametrize(
+    "name, value, provider",
+    [
+        ("DEBATE_LLM_EFFORT", "turbo", "claude_cli"),
+        ("DEBATE_MAX_TOKENS_PER_CALL", "abc", "openai"),
+        ("DEBATE_LLM_CALL_TIMEOUT_SECONDS", "0", "openai"),
+    ],
+)
+def test_constructing_the_client_with_a_bad_value_raises_the_config_error(
+    configured, monkeypatch, name, value, provider
+):
+    monkeypatch.setenv("DEBATE_LLM_PROVIDER", provider)
+    monkeypatch.setenv(name, value)
+
+    assert name in _error_of(LLMClient)
