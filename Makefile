@@ -43,6 +43,9 @@ down:
 		fi; \
 	done
 
+restart:
+	make down && make up
+
 $(RUN_DIR):
 	@mkdir -p $@
 
