@@ -8,7 +8,7 @@ next, so a later session can continue without redoing it.
 
 **Status**: open. Nothing here is implemented except one read-only study script and its tests
 (`backend/scripts/evaluate_fibonacci_levels.py`, `backend/tests/test_evaluate_fibonacci_levels.py`),
-untracked at the time of writing. Items that change a rule or the shape of the product are
+committed on 2026-10-09. Three proposals are drafted but not applied; see "Proposals created". Items that change a rule or the shape of the product are
 `/opsx:propose` territory (`CLAUDE.md`: ask before changing a domain rule).
 
 **How to read the numbers.** Everything marked *measured* came from read-only queries, live
@@ -819,9 +819,59 @@ wait for it to be applied.
   read-only script, its own spec requirement, and the kill criterion and pass level stated before
   running.
 
-**Before starting.** Commit this note, the Fibonacci script and its tests (untracked at the last
-check, 2026-10-09), so branches and worktrees contain them and P1's proposal can read this note.
-One branch per change. Archive P1 before P2b is applied.
+**Before starting.** Done: this note, the Fibonacci script and its tests were committed on
+2026-10-09 (`fbc2e5f`, `fdadcae`), so branches and worktrees contain them. One branch per change.
+Archive P1 before P2b is applied.
+
+## Proposals created (2026-10-09)
+
+P1, P2a and S1 were drafted by three agents in parallel (one each), validated with
+`openspec validate --strict`, and spot-checked by the assistant. Nothing is applied: 0 of 56, 38
+and 26 tasks done. No change edits another's capability specs. The only textual overlap at apply
+time is `docs/KNOWN_ISSUES.md` and `docs/DATA_DICTIONARY.md` (P1 and P2a, different sections);
+P2a imports private names from `news_feeds.py` and `bulk_ingestion.py`, which P1 leaves alone.
+
+| Change | Artifacts |
+|---|---|
+| P1 `retire-debate-round-two-and-model-prose` | proposal, design, 56 tasks, delta specs for 11 capabilities |
+| P2a `add-company-feed-news-and-events` | proposal, design, 38 tasks, new capability `company-feed` (15 ADDED requirements) |
+| S1 `evaluate-band-coverage-by-market-regime` | proposal, design, 26 tasks, new capability `band-coverage-regime-evaluation` (7 ADDED requirements) |
+
+**Departures from this note (all accepted by the owner on 2026-10-09, taking the recommended
+defaults, including keeping S1's year-adjusted condition)**
+
+- **P1, scoring split.** `score_debates.py` splits verdict statistics by vote basis (older rows
+  carry `r2_*` stances, newer rows none), not by `code_rev` as "Constraints for the proposal's
+  design" says: `code_rev` is an unordered git hash and cannot say which side of the change a
+  row is on. `code_rev` values are printed per group.
+- **P1, disclaimer text.** The disclaimer says a model "revises their positions in a second
+  round", which is false after P1. P1's design proposes a one-sentence correction in
+  `docs/DISCLAIMER.md` and its two guarded copies. It is a text fix, not a rule edit.
+  Resolved 2026-10-09: the owner said the disclaimer is not important (personal use), so it is
+  applied as proposed with no sign-off step.
+- **P1, side effects.** "Analysis takes about 45 seconds" becomes an overstatement (a measured
+  figure is an apply-time task). Technical and Macro lose their model calls, so a model outage
+  now degrades only News and the verdict is a two-agent vote instead of `INSUFFICIENT_DATA`.
+- **P2a, trigger.** A manual script (`backend/scripts/snapshot_company_feed.py`), not a debate
+  hook or a Refresh trigger. Reasons: vnai's rate limiter ends the process with `SystemExit`
+  (`vnai/beam/quota.py:313`; `macro.py` documents that this ends the server from a worker
+  thread), and the hook budget is 10 s. Cost: the snapshot clock ticks only when someone runs the
+  script (daily after the close is recommended) and the app has no scheduler. Default tickers:
+  `--from-debate-log` plus explicit ones.
+- **P2a, vendor frame.** It uses the Unified UI `Reference().company(sym).news(source="vci")`;
+  that this frame matches the measured legacy `Company(source="vci")` frame is unverified, and
+  task 4.1 settles it from one live frame at apply time. The project `vnstock` skill names
+  `vnstock.core.quota.RateLimitExceeded`, which does not exist in 4.0.5 (it is in
+  `vnai/beam/quota.py`).
+- **S1, index fetch.** Reimplemented in the script with an explicit count instead of reusing
+  `macro.py`'s helper (decision 7), because that helper takes its start from a module constant
+  (`MARKET_LOOKBACK_DAYS`) and P1 edits that file. Same vendor call. The series is cached as a
+  gitignored CSV (adds a `.gitignore` line), never in `app.db`.
+- **S1, depth and conditions.** Depth floor about 7 years, not 6 (the 271-session warm-up leaves
+  the early half too short at 6). Conditions beyond decision 8: same sign in both halves, a
+  year-adjusted gap separable from zero, at least 24 months per half, 8 per third and 99% of
+  test dates with an index close, and a month-block bootstrap with a quarter-block check printed
+  beside it. The owner may drop the year-adjusted condition.
 
 ## Open questions for the owner or the next session
 
