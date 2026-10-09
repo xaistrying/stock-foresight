@@ -1,6 +1,21 @@
 fastapi
 uvicorn[standard]
-vnstock
+# vnstock and vnai are pinned exactly: vnai is what wrote the AI-config files that
+# app/vnstock_guard.py neutralises, and a silent upgrade of either could move that
+# write path. A bump is deliberate, never `pip install -U`:
+#  1. change both pins together in a branch (vnstock requires vnai>=2.5.2; check the new metadata);
+#  2. build a fresh venv from this file and run backend/tests/test_vnstock_guard.py, including
+#     the sandboxed-HOME test, and the control run without the guard (all seven files must
+#     still be written) to prove the guard still bites;
+#  3. read the new vnai/beam/agents.py and vnstock/__init__.py for any write path the guard's
+#     _WRITER_TARGETS do not name;
+#  4. run backend/scripts/snapshot_company_feed.py --dry-run on one ticker (its required-columns
+#     check turns a changed frame into an error);
+#  5. record the date, versions and result in docs/KNOWN_ISSUES.md.
+# Not known whether 4.0.5 is the latest release (pip index could not list versions here):
+# the pin is to what is installed and tested.
+vnstock==4.0.5
+vnai==2.5.5
 pandas
 numpy
 pytest

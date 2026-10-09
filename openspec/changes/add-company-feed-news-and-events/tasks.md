@@ -1,14 +1,14 @@
 ## 1. Preflight (no code)
 
-- [ ] 1.1 Invoke the project's `vnstock` skill (`.claude/skills/vnstock`) before any vendor-facing work and follow it: Unified UI (`Reference().company(symbol).news(source="vci")`, `.events(source="vci")`), no hand-rolled URL, no private `_fetch_*` method, no `vnstock_data`. Nothing in this change calls the vendor any other way.
-- [ ] 1.2 Confirm the venv matches the pins before they are written: `backend/.venv/bin/pip freeze | grep -i -E '^(vnstock|vnai)=='` shows `vnstock==4.0.5` and `vnai==2.5.5`.
-- [ ] 1.3 Baseline: `git status` is clean apart from this change; run only `pytest backend/tests/test_vnstock_guard.py backend/tests/test_news_feeds.py` (green). Do not run the whole suite yet: it runs `init_db()` on the real `app.db` (see the memory note on the test suite).
-- [ ] 1.4 Check whether P1 (`retire-debate-round-two-and-model-prose`) has been applied or is open on the same branch; if it touched `conftest.py`, `news_feeds.py` or `bulk_ingestion.py`, re-read the names listed in design Decision 2 before relying on them.
+- [x] 1.1 Invoke the project's `vnstock` skill (`.claude/skills/vnstock`) before any vendor-facing work and follow it: Unified UI (`Reference().company(symbol).news(source="vci")`, `.events(source="vci")`), no hand-rolled URL, no private `_fetch_*` method, no `vnstock_data`. Nothing in this change calls the vendor any other way.
+- [x] 1.2 Confirm the venv matches the pins before they are written: `backend/.venv/bin/pip freeze | grep -i -E '^(vnstock|vnai)=='` shows `vnstock==4.0.5` and `vnai==2.5.5`.
+- [x] 1.3 Baseline: `git status` is clean apart from this change; run only `pytest backend/tests/test_vnstock_guard.py backend/tests/test_news_feeds.py` (green). Do not run the whole suite yet: it runs `init_db()` on the real `app.db` (see the memory note on the test suite).
+- [x] 1.4 Check whether P1 (`retire-debate-round-two-and-model-prose`) has been applied or is open on the same branch; if it touched `conftest.py`, `news_feeds.py` or `bulk_ingestion.py`, re-read the names listed in design Decision 2 before relying on them.
 
 ## 2. The pin (tests first)
 
-- [ ] 2.1 Test in `backend/tests/test_company_feed_pin.py`: `backend/requirements.txt` contains the lines `vnstock==4.0.5` and `vnai==2.5.5` and no other `vnstock` or `vnai` requirement; a `>=`, `~=` or bare entry fails it (mutate a copy in `tmp_path`). Red first.
-- [ ] 2.2 Edit `backend/requirements.txt`: replace the bare `vnstock` with the two exact pins and add a short comment with the bump procedure (design Decision 11: both pins together, fresh venv, guard tests including the sandboxed-`HOME` test and the control run, read the new `vnai` and `vnstock` write paths, one-ticker dry run, record in `docs/KNOWN_ISSUES.md`). State in the comment that it is not known whether 4.0.5 is the latest. Test 2.1 turns green; `pip install -r backend/requirements.txt` changes nothing in the existing venv.
+- [x] 2.1 Test in `backend/tests/test_company_feed_pin.py`: `backend/requirements.txt` contains the lines `vnstock==4.0.5` and `vnai==2.5.5` and no other `vnstock` or `vnai` requirement; a `>=`, `~=` or bare entry fails it (mutate a copy in `tmp_path`). Red first.
+- [x] 2.2 Edit `backend/requirements.txt`: replace the bare `vnstock` with the two exact pins and add a short comment with the bump procedure (design Decision 11: both pins together, fresh venv, guard tests including the sandboxed-`HOME` test and the control run, read the new `vnai` and `vnstock` write paths, one-ticker dry run, record in `docs/KNOWN_ISSUES.md`). State in the comment that it is not known whether 4.0.5 is the latest. Test 2.1 turns green; `pip install -r backend/requirements.txt` changes nothing in the existing venv.
 
 ## 3. The log file and schema (tests first)
 
