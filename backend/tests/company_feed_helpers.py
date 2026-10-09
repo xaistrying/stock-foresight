@@ -4,6 +4,10 @@ synthetic values. Nothing here calls the vendor."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+from email.utils import format_datetime
+
+import httpx
 import numpy as np
 import pandas as pd
 
@@ -73,3 +77,39 @@ def many_events(count: int, *, prefix: str = "Sự kiện") -> pd.DataFrame:
         events_row(event_title_vi=f"{prefix} số {i}", public_date=f"2026-05-{1 + i % 28:02d}T00:00:00")
         for i in range(count)
     ))
+
+
+# --- RSS ---------------------------------------------------------------------------------------
+
+FEED_A, FEED_B, FEED_C = (
+    "https://vnexpress.net/rss/kinh-doanh.rss",
+    "https://cafef.vn/thi-truong-chung-khoan.rss",
+    "https://vietstock.vn/830/chung-khoan/co-phieu.rss",
+)
+
+
+def rss_body(*items) -> str:
+    """items: (title, published datetime, description)"""
+    body = "".join(
+        f"<item><title>{title}</title><pubDate>{format_datetime(published)}</pubDate>"
+        f"<description><![CDATA[{description}]]></description></item>"
+        for title, published, description in items
+    )
+    return f'<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>{body}</channel></rss>'
+
+
+def rss_items(count: int, *, prefix: str, start):
+    return [(f"{prefix} {i}", start - timedelta(minutes=10 * i), f"Mô tả {prefix} {i}") for i in range(count)]
+
+
+def feed_client(feeds: dict):
+    """An httpx client serving `feeds`: url -> RSS body, an int HTTP status, or an exception to raise."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        result = feeds.get(str(request.url), 404)
+        if isinstance(result, BaseException):
+            raise result
+        if isinstance(result, int):
+            return httpx.Response(result)
+        return httpx.Response(200, content=result.encode())
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))

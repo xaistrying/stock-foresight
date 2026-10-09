@@ -46,6 +46,14 @@ class FetchRow:
 
 
 @dataclass(frozen=True)
+class PlannedFetch:
+    """A fetch attempt and the item versions it produced, ready for `record_fetch`."""
+
+    row: FetchRow
+    records: tuple[ItemRecord, ...] = ()
+
+
+@dataclass(frozen=True)
 class StoredFetch:
     fetch_id: int
     items_new: int

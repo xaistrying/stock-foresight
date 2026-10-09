@@ -37,8 +37,8 @@
 
 ## 7. RSS snapshot (tests first)
 
-- [ ] 7.1 Tests in `backend/tests/test_company_feed_rss.py` (an injected client and stubbed `_fetch_feed`, as `test_news_feeds.py` does): three feeds of 60, 50 and 20 items give item rows with `kind = 'rss'`, `ticker = ''`, UTC `published_at` and the snippet in `fields`, and three fetch rows; one feed raising a timeout gives an `error` row while the others are stored; all three down gives three `error` rows; an edited snippet is a new version with the same `item_id`; `fetch_headlines` returns the same lines as before the change.
-- [ ] 7.2 Implement `backend/app/services/company_feed/rss.py` over `news_feeds._fetch_feed`, `FEEDS`, `HEADERS`, `TIMEOUT` and `MAX_REDIRECTS` with the same client construction as `fetch_headlines`; no new HTTP code, no ticker or age filter, no edit to `news_feeds.py`.
+- [x] 7.1 Tests in `backend/tests/test_company_feed_rss.py` (an injected client and stubbed `_fetch_feed`, as `test_news_feeds.py` does): three feeds of 60, 50 and 20 items give item rows with `kind = 'rss'`, `ticker = ''`, UTC `published_at` and the snippet in `fields`, and three fetch rows; one feed raising a timeout gives an `error` row while the others are stored; all three down gives three `error` rows; an edited snippet is a new version with the same `item_id`; `fetch_headlines` returns the same lines as before the change.
+- [x] 7.2 Implement `backend/app/services/company_feed/rss.py` over `news_feeds._fetch_feed`, `FEEDS`, `HEADERS`, `TIMEOUT` and `MAX_REDIRECTS` with the same client construction as `fetch_headlines`; no new HTTP code, no ticker or age filter, no edit to `news_feeds.py`.
 
 ## 8. Snapshot run (tests first)
 
