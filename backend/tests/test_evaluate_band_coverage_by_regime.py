@@ -238,3 +238,396 @@ def test_depth_only_exits_non_zero_on_a_rate_limit(monkeypatch, tmp_path):
 
     assert exit_info.value.code not in (0, None)
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# regime: trailing percentile of the index's 20-session volatility, in thirds (tasks 2.1, 2.2)
+# ---------------------------------------------------------------------------
+
+
+def _closes(n: int, seed: int = 1, vol: float = 0.01) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range("2018-10-11", periods=n).strftime("%Y-%m-%d")
+    return pd.Series(100 * np.exp(np.cumsum(rng.normal(0, vol, n))), index=dates)
+
+
+def test_changing_an_index_close_after_t_leaves_the_regime_at_t_and_earlier_unchanged():
+    closes = _closes(600)
+    changed = closes.copy()
+    changed.iloc[401:] = changed.iloc[401:] * 3.0  # a jump on session 401, nothing before it differs
+
+    before, after = ebr.regime_labels(closes), ebr.regime_labels(changed)
+
+    assert before.iloc[:401].equals(after.iloc[:401])
+    assert after.iloc[401] == ebr.VOLATILE  # the jump is visible on its own session
+
+
+def test_400_closes_give_129_sessions_with_a_regime_and_the_first_271_have_none():
+    labels = ebr.regime_labels(_closes(400))
+
+    assert len(labels) == 400
+    assert labels.iloc[:271].isna().all()
+    assert labels.iloc[271:].notna().all()
+    assert labels.notna().sum() == 129
+
+
+def test_200_closes_give_no_regime_at_all():
+    labels = ebr.regime_labels(_closes(200))
+
+    assert len(labels) == 200
+    assert labels.isna().all()
+
+
+def test_the_index_volatility_is_the_std_of_the_last_20_daily_log_returns():
+    closes = _closes(60)
+    expected = np.log(closes / closes.shift(1)).rolling(20).std()
+
+    sigma = ebr.index_volatility(closes)
+
+    assert sigma.iloc[:20].isna().all()  # 20 returns need 21 closes
+    pd.testing.assert_series_equal(sigma, expected, check_names=False)
+
+
+def _window_ending_at_rank(rank: int) -> pd.Series:
+    """252 volatility values 1..252 whose last one has exactly `rank` values at or below it."""
+    values = [v for v in range(1, 253) if v != rank] + [rank]
+    return pd.Series(np.array(values, float), index=pd.bdate_range("2020-01-01", periods=252).strftime("%Y-%m-%d"))
+
+
+@pytest.mark.parametrize(
+    "rank, expected",
+    [(1, "calm"), (84, "calm"), (85, "middle"), (168, "middle"), (169, "volatile"), (252, "volatile")],
+)
+def test_thirds_split_at_one_third_and_two_thirds_of_the_percentile(rank, expected):
+    percentile = ebr.trailing_percentile(_window_ending_at_rank(rank))
+
+    assert percentile.iloc[-1] == pytest.approx(rank / 252)
+    assert ebr.label_thirds(percentile).iloc[-1] == expected
+
+
+def test_the_percentile_counts_ties_as_at_or_below():
+    flat = pd.Series(np.ones(252), index=pd.bdate_range("2020-01-01", periods=252).strftime("%Y-%m-%d"))
+
+    assert ebr.trailing_percentile(flat).iloc[-1] == 1.0
+
+
+def test_the_percentile_has_no_value_before_252_volatility_values():
+    percentile = ebr.trailing_percentile(_window_ending_at_rank(100).iloc[:251])
+
+    assert percentile.isna().all()
+
+
+def test_the_expanding_variant_uses_every_prior_value_but_needs_at_least_252():
+    values = np.array([1000.0] * 60 + list(range(1, 241)))  # 300 values, the last is 240
+    sigma = pd.Series(values, index=pd.bdate_range("2020-01-01", periods=300).strftime("%Y-%m-%d"))
+
+    trailing, expanding = ebr.trailing_percentile(sigma), ebr.expanding_percentile(sigma)
+
+    assert expanding.iloc[:251].isna().all() and expanding.iloc[251:].notna().all()
+    assert expanding.iloc[251] == trailing.iloc[251]  # the same 252 values
+    assert expanding.iloc[-1] == pytest.approx(240 / 300)  # all 300 prior values
+    assert trailing.iloc[-1] == pytest.approx(240 / 252)  # the last 252 only (12 of the 1000s have left)
+
+
+def test_a_stock_window_whose_date_has_no_index_close_is_excluded_and_counted():
+    labels = pd.Series({"2020-01-02": "calm", "2020-01-03": "volatile", "2020-01-06": np.nan})
+    windows = pd.DataFrame({
+        "date": ["2020-01-02", "2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"],
+        "hit": [True, False, True, True, False],
+    })
+
+    kept, exclusions = ebr.attach_regime(windows, labels)
+
+    assert list(kept["regime"]) == ["calm", "calm", "volatile"]
+    assert exclusions["windows"] == 5
+    assert exclusions["no_index_close"] == 1  # 2020-01-07 has no index close
+    assert exclusions["warm_up"] == 1  # 2020-01-06 has a close but no regime yet
+    assert exclusions["with_regime"] == 3
+    assert exclusions["index_match"] == pytest.approx(3 / 4)  # 3 of the 4 distinct dates have an index close
+
+
+# ---------------------------------------------------------------------------
+# the outcome rule: one test per spec scenario (tasks 2.3, 2.4)
+# ---------------------------------------------------------------------------
+
+
+def _half(gap, lo, hi, months=36, calm_months=20, volatile_months=20):
+    return {"gap": gap, "ci": (lo, hi), "months": months, "calm_months": calm_months, "volatile_months": volatile_months}
+
+
+def _year_adjusted(gap, lo, hi):
+    return {"gap": gap, "ci": (lo, hi)}
+
+
+def _decide(early, late, year_adjusted=None, index_match=1.0):
+    return ebr.decide_outcome(early, late, year_adjusted, index_match)
+
+
+def test_both_halves_clear_the_level_and_the_year_adjusted_gap_agrees_is_a_pass():
+    result = _decide(
+        _half(0.07, 0.02, 0.12), _half(0.06, 0.01, 0.11), _year_adjusted(0.055, 0.005, 0.105)
+    )
+
+    assert result["outcome"] == "PASS"
+    assert result["reasons"] == []
+
+
+def test_one_half_below_the_level_is_a_kill_whatever_the_intervals():
+    result = _decide(_half(0.07, 0.02, 0.12), _half(0.03, -0.05, 0.11), _year_adjusted(0.05, 0.01, 0.09))
+
+    assert result["outcome"] == "KILL"
+
+
+def test_opposite_signs_are_a_kill():
+    result = _decide(_half(0.06, 0.01, 0.11), _half(-0.06, -0.11, -0.01), _year_adjusted(0.0, -0.05, 0.05))
+
+    assert result["outcome"] == "KILL"
+    assert any("opposite" in reason for reason in result["reasons"])
+
+
+def test_a_large_gap_whose_interval_includes_zero_is_inconclusive_and_says_it_is_not_evidence_of_no_effect():
+    result = _decide(_half(0.07, 0.02, 0.12), _half(0.06, -0.03, 0.15), _year_adjusted(0.065, 0.01, 0.12))
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("late interval" in reason for reason in result["reasons"])
+    assert any("not evidence" in note for note in result["notes"])
+
+
+def test_a_gap_not_separable_from_the_by_year_variation_is_inconclusive():
+    result = _decide(_half(0.07, 0.02, 0.12), _half(0.06, 0.01, 0.11), _year_adjusted(0.05, -0.02, 0.12))
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("year-adjusted" in reason for reason in result["reasons"])
+
+
+def test_no_year_with_both_thirds_populated_leaves_the_year_adjusted_gap_unavailable():
+    result = _decide(_half(0.07, 0.02, 0.12), _half(0.06, 0.01, 0.11), None)
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("year-adjusted" in reason for reason in result["reasons"])
+
+
+def test_a_year_adjusted_gap_of_the_opposite_sign_is_inconclusive():
+    result = _decide(_half(0.07, 0.02, 0.12), _half(0.06, 0.01, 0.11), _year_adjusted(-0.06, -0.11, -0.01))
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("year-adjusted" in reason and "sign" in reason for reason in result["reasons"])
+
+
+def test_a_half_with_14_months_is_not_evaluable_whatever_the_late_half_shows():
+    early = _half(0.07, 0.02, 0.12, months=14)
+    late = _half(0.0, -0.04, 0.04)  # would be a KILL if it were reached
+
+    result = _decide(early, late, _year_adjusted(0.05, 0.01, 0.09))
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("early half is not evaluable" in reason for reason in result["reasons"])
+
+
+def test_a_third_with_too_few_months_makes_the_half_not_evaluable():
+    result = _decide(_half(0.07, 0.02, 0.12, volatile_months=7), _half(0.06, 0.01, 0.11), _year_adjusted(0.05, 0.01, 0.09))
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("early half is not evaluable" in reason for reason in result["reasons"])
+
+
+def test_a_half_with_no_windows_is_not_evaluable():
+    nothing = {"gap": None, "ci": (None, None), "months": 0, "calm_months": 0, "volatile_months": 0}
+
+    result = _decide(nothing, nothing, None)
+
+    assert result["outcome"] == "INCONCLUSIVE"
+
+
+def test_an_index_match_below_99_percent_is_inconclusive():
+    result = _decide(
+        _half(0.07, 0.02, 0.12), _half(0.06, 0.01, 0.11), _year_adjusted(0.055, 0.005, 0.105), index_match=0.98
+    )
+
+    assert result["outcome"] == "INCONCLUSIVE"
+    assert any("index close" in reason for reason in result["reasons"])
+
+
+def test_a_gap_of_exactly_five_points_meets_the_level():
+    result = _decide(_half(0.05, 0.01, 0.09), _half(0.05, 0.01, 0.09), _year_adjusted(0.05, 0.01, 0.09))
+
+    assert result["outcome"] == "PASS"
+
+
+def test_a_kill_whose_interval_reaches_the_level_says_it_is_not_evidence_of_no_effect():
+    result = _decide(_half(0.07, 0.02, 0.12), _half(0.03, -0.01, 0.07), _year_adjusted(0.05, 0.01, 0.09))
+
+    assert result["outcome"] == "KILL"
+    assert any("not evidence" in note for note in result["notes"])
+
+
+def test_the_constants_equal_the_specs_values():
+    assert ebr.PASS_GAP == 0.05
+    assert ebr.SPLIT_DATE == "2023-01-01"
+    assert ebr.VOL_WINDOW == 20
+    assert ebr.PERCENTILE_WINDOW == 252
+    assert ebr.CONFIDENCE == 0.95
+    assert ebr.MIN_MONTHS_PER_HALF == 24
+    assert ebr.MIN_MONTHS_PER_CELL == 8
+    assert ebr.MIN_DATES_PER_YEAR_CELL == 20
+    assert ebr.MIN_INDEX_MATCH == 0.99
+    assert (ebr.BOOTSTRAP_RESAMPLES, ebr.SEED) == (2000, 0)
+
+
+# ---------------------------------------------------------------------------
+# gaps, intervals and cell statistics (tasks 2.5, 2.6)
+# ---------------------------------------------------------------------------
+
+DATES_PER_MONTH = 10
+REGIME_BY_DATE_IN_MONTH = [ebr.CALM] * 3 + [ebr.MIDDLE] * 4 + [ebr.VOLATILE] * 3  # one regime per date
+
+
+def _cells(p_calm, p_volatile, months=30, start="2020-01", n=300, seed=0, p_middle=0.68):
+    """Per-date, per-regime hit counts: every date has one regime, as an index date does."""
+    rng = np.random.default_rng(seed)
+    probability = {ebr.CALM: p_calm, ebr.MIDDLE: p_middle, ebr.VOLATILE: p_volatile}
+    rows = []
+    for period in pd.period_range(start, periods=months, freq="M"):
+        for day, regime in enumerate(REGIME_BY_DATE_IN_MONTH, 1):
+            rows.append((f"{period}-{day:02d}", regime, int(rng.binomial(n, probability[regime])), n))
+    return pd.DataFrame(rows, columns=["date", "regime", "hits", "n"])
+
+
+def test_a_ten_point_effect_in_every_month_gives_an_interval_that_excludes_zero():
+    result = ebr.gap_interval(_cells(0.75, 0.65))
+
+    assert result["gap"] == pytest.approx(0.10, abs=0.01)
+    assert result["ci"][0] > 0
+    assert result["half_width"] == pytest.approx((result["ci"][1] - result["ci"][0]) / 2)
+
+
+def test_equal_probabilities_give_an_interval_that_includes_zero():
+    result = ebr.gap_interval(_cells(0.68, 0.68, seed=0))
+
+    assert result["ci"][0] < 0 < result["ci"][1]
+
+
+def test_the_same_seed_gives_identical_intervals():
+    cells = _cells(0.72, 0.66, seed=5)
+
+    assert ebr.gap_interval(cells) == ebr.gap_interval(cells)
+    assert ebr.year_adjusted_gap(cells) == ebr.year_adjusted_gap(cells)
+
+
+def test_draws_with_an_empty_cell_are_dropped_and_their_share_is_reported():
+    cells = _cells(0.75, 0.65, months=6)
+    last_month = cells["date"].str[:7] == cells["date"].str[:7].max()
+    only_in_one_month = ~((cells["regime"] == ebr.VOLATILE) & ~last_month)  # volatile windows only in the last month
+
+    result = ebr.gap_interval(cells[only_in_one_month])
+
+    assert 0.1 < result["dropped_share"] < 0.9  # about 1 - (5/6)**6 of the draws miss that month
+    assert np.isfinite(result["ci"]).all()
+
+
+def test_a_sample_without_one_of_the_two_thirds_has_no_gap():
+    calm_only = _cells(0.75, 0.65)[lambda c: c["regime"] == ebr.CALM]
+
+    result = ebr.gap_interval(calm_only)
+
+    assert result["gap"] is None
+    assert result["ci"] == (None, None)
+
+
+def test_the_quarter_block_interval_runs_on_the_same_cells():
+    cells = _cells(0.75, 0.65)
+
+    month, quarter = ebr.gap_interval(cells, block="month"), ebr.gap_interval(cells, block="quarter")
+
+    assert quarter["gap"] == month["gap"]  # the same point estimate
+    assert quarter["blocks"] < month["blocks"]
+    assert quarter["ci"][0] > 0
+
+
+@pytest.mark.parametrize(
+    "month_ci, quarter_ci, flagged",
+    [((0.01, 0.09), (-0.02, 0.10), True), ((-0.02, 0.10), (0.01, 0.09), True), ((0.01, 0.09), (0.02, 0.08), False),
+     ((-0.05, 0.05), (-0.06, 0.04), False)],
+)
+def test_interval_disagreement_about_whether_zero_is_excluded_is_flagged(month_ci, quarter_ci, flagged):
+    assert ebr.interval_disagreement(month_ci, quarter_ci) is flagged
+
+
+def test_the_disagreement_flag_is_raised_on_a_constructed_sample():
+    # Eight quarters with a different gap each: months are many small blocks, quarters are few large ones,
+    # so the quarter-block interval is wider and can include zero where the month-block one does not.
+    quarter_gap = [0.20, -0.06, 0.16, -0.06, 0.14, -0.04, 0.18, -0.04]
+    rows = []
+    for index, gap in enumerate(quarter_gap):
+        for month in range(3):
+            period = pd.Period("2020-01", "M") + 3 * index + month
+            for day, regime in enumerate(REGIME_BY_DATE_IN_MONTH, 1):
+                rate = {ebr.CALM: 0.68 + gap / 2, ebr.MIDDLE: 0.68, ebr.VOLATILE: 0.68 - gap / 2}[regime]
+                rows.append((f"{period}-{day:02d}", regime, int(round(rate * 1000)), 1000))
+    cells = pd.DataFrame(rows, columns=["date", "regime", "hits", "n"])
+
+    month, quarter = ebr.gap_interval(cells, block="month"), ebr.gap_interval(cells, block="quarter")
+
+    assert ebr.interval_disagreement(month["ci"], quarter["ci"]) is True
+
+
+def test_the_year_adjusted_gap_is_the_equal_weighted_mean_of_each_years_gap():
+    cells = pd.concat([_cells(0.75, 0.65, months=24, start="2020-01", seed=1),
+                       _cells(0.73, 0.67, months=12, start="2022-01", seed=2)], ignore_index=True)
+
+    result = ebr.year_adjusted_gap(cells)
+
+    assert result["years"] == [2020, 2021, 2022]
+    assert result["gap"] == pytest.approx((0.10 + 0.10 + 0.06) / 3, abs=0.012)
+    assert result["ci"][0] > 0
+
+
+def test_a_year_where_a_third_has_windows_on_fewer_than_20_dates_does_not_enter_the_year_adjusted_gap():
+    full = _cells(0.75, 0.65, months=12, start="2020-01")
+    short = _cells(0.50, 0.90, months=2, start="2021-01")  # 6 calm and 6 volatile dates in 2021: under 20 each
+
+    result = ebr.year_adjusted_gap(pd.concat([full, short], ignore_index=True))
+
+    assert result["years"] == [2020]
+    assert result["gap"] == pytest.approx(0.10, abs=0.02)
+
+
+def test_no_qualifying_year_gives_no_year_adjusted_gap():
+    assert ebr.year_adjusted_gap(_cells(0.75, 0.65, months=2)) is None
+
+
+def test_the_year_adjusted_interval_includes_zero_when_two_years_have_opposite_gaps():
+    cells = pd.concat([_cells(0.75, 0.65, months=12, start="2020-01", seed=1),
+                       _cells(0.65, 0.75, months=12, start="2021-01", seed=2)], ignore_index=True)
+
+    result = ebr.year_adjusted_gap(cells)
+
+    assert abs(result["gap"]) < 0.01
+    assert result["ci"][0] < 0 < result["ci"][1]
+
+
+def test_cell_statistics_carry_windows_dates_months_episodes_coverage_and_per_date_spread():
+    cells = pd.DataFrame({
+        "date": ["2020-01-02", "2020-01-03", "2020-01-06", "2020-02-03"],
+        "regime": ["calm", "calm", "volatile", "calm"],
+        "hits": [80, 60, 50, 90],
+        "n": [100, 100, 100, 100],
+    })
+    labels = pd.Series({"2020-01-02": "calm", "2020-01-03": "calm", "2020-01-06": "volatile", "2020-02-03": "calm"})
+
+    stats = ebr.cell_stats(cells, labels)
+
+    calm = stats["calm"]
+    assert (calm["windows"], calm["dates"], calm["months"], calm["episodes"]) == (300, 3, 2, 2)
+    assert calm["coverage"] == pytest.approx(230 / 300)
+    assert calm["date_mean"] == pytest.approx(np.mean([0.8, 0.6, 0.9]))
+    assert calm["date_sd"] == pytest.approx(np.std([0.8, 0.6, 0.9], ddof=1))
+    assert stats["volatile"]["episodes"] == 1
+    assert stats["middle"]["windows"] == 0
+
+
+def test_episodes_are_maximal_runs_of_consecutive_sessions_in_one_third():
+    labels = pd.Series(["calm", "calm", "volatile", "volatile", "volatile", "calm", "middle"],
+                       index=pd.bdate_range("2020-01-02", periods=7).strftime("%Y-%m-%d"))
+
+    assert ebr.episode_counts(labels) == {"calm": 2, "middle": 1, "volatile": 1}

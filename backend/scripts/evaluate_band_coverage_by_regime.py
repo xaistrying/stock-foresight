@@ -43,6 +43,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # backend/, for `app`
@@ -262,6 +263,327 @@ def format_depth(history: IndexHistory, source: str | None) -> str:
     ]
     lines += [f"  call {i}: {c}" for i, c in enumerate(history.calls, 1)]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Regime: trailing percentile of the index's volatility, in thirds (design Decision 2)
+# ---------------------------------------------------------------------------
+REGIMES = (CALM, MIDDLE, VOLATILE)
+
+
+def index_volatility(closes: pd.Series) -> pd.Series:
+    """Std of the last VOL_WINDOW daily log returns at each session (the HAR feature rv20); NaN until it has 20."""
+    return np.log(closes / closes.shift(1)).rolling(VOL_WINDOW).std()
+
+
+def trailing_percentile(sigma: pd.Series) -> pd.Series:
+    """Share of the last PERCENTILE_WINDOW volatility values, the current one included, at or below the current one.
+
+    NaN until PERCENTILE_WINDOW values exist, so the first regime is the 271st session. Only values up to
+    and including each session are used (no look-ahead).
+    """
+    valid = sigma.dropna()
+    percentile = pd.Series(np.nan, index=sigma.index)
+    if len(valid) >= PERCENTILE_WINDOW:
+        windows = sliding_window_view(valid.to_numpy(), PERCENTILE_WINDOW)
+        percentile.loc[valid.index[PERCENTILE_WINDOW - 1:]] = (windows <= windows[:, -1:]).mean(axis=1)
+    return percentile
+
+
+def expanding_percentile(sigma: pd.Series) -> pd.Series:
+    """The same with every prior volatility value instead of the last PERCENTILE_WINDOW (sensitivity only)."""
+    valid = sigma.dropna()
+    values = valid.to_numpy()
+    percentile = pd.Series(np.nan, index=sigma.index)
+    for i in range(PERCENTILE_WINDOW - 1, len(values)):
+        percentile.loc[valid.index[i]] = np.count_nonzero(values[: i + 1] <= values[i]) / (i + 1)
+    return percentile
+
+
+def label_thirds(percentile: pd.Series) -> pd.Series:
+    """'calm' up to one third, 'volatile' above two thirds, else 'middle'; NaN stays NaN."""
+    labels = np.where(percentile <= 1 / 3, CALM, np.where(percentile > 2 / 3, VOLATILE, MIDDLE))
+    return pd.Series(labels, index=percentile.index, dtype=object).where(percentile.notna())
+
+
+def regime_labels(closes: pd.Series, *, expanding: bool = False) -> pd.Series:
+    """The regime of every index session ('calm', 'middle', 'volatile'), NaN while there is too little history."""
+    percentile = expanding_percentile if expanding else trailing_percentile
+    return label_thirds(percentile(index_volatility(closes)))
+
+
+def attach_regime(windows: pd.DataFrame, labels: pd.Series) -> tuple[pd.DataFrame, dict]:
+    """Windows (columns date, hit) that have a regime, and counts of those that do not and why.
+
+    A window whose date has no index close, or whose session is inside the warm-up, is excluded and
+    counted; it is never assigned a third.
+    """
+    regime = windows["date"].map(labels)
+    has_close = windows["date"].isin(labels.index)
+    distinct = windows["date"].drop_duplicates()
+    with_close = int(distinct.isin(labels.index).sum())
+    kept = windows.assign(regime=regime)[regime.notna()].reset_index(drop=True)
+    return kept, {
+        "windows": int(len(windows)), "no_index_close": int((~has_close).sum()),
+        "warm_up": int((has_close & regime.isna()).sum()), "with_regime": int(len(kept)),
+        "test_dates": int(len(distinct)), "dates_with_index_close": with_close,
+        "index_match": with_close / len(distinct) if len(distinct) else float("nan"),
+    }
+
+
+def episode_counts(labels: pd.Series) -> dict:
+    """Regime episodes: maximal runs of consecutive sessions in one third."""
+    values = labels.dropna().to_numpy(dtype=object)
+    starts = np.ones(len(values), dtype=bool)
+    starts[1:] = values[1:] != values[:-1]
+    return {regime: int((values[starts] == regime).sum()) for regime in REGIMES}
+
+
+# ---------------------------------------------------------------------------
+# Gaps, month-block intervals and cell statistics (design Decision 7)
+#
+# `cells` has one row per (date, regime): the hits and windows on that date. Every window of a date
+# shares the index's regime, so a date is one cell and a month is one block.
+# ---------------------------------------------------------------------------
+def cell_table(windows: pd.DataFrame) -> pd.DataFrame:
+    """Per-date, per-regime hits and window counts from windows with columns date, hit, regime."""
+    grouped = windows.groupby(["date", "regime"], sort=True)["hit"]
+    return pd.DataFrame({"hits": grouped.sum(), "n": grouped.size()}).reset_index()
+
+
+def split_halves(cells: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    early = cells["date"] < SPLIT_DATE
+    return {"early": cells[early].reset_index(drop=True), "late": cells[~early].reset_index(drop=True)}
+
+
+def _block_key(dates: pd.Series, block: str) -> pd.Series:
+    if block == "month":
+        return dates.str[:7]
+    if block == "quarter":
+        return dates.str[:4] + "Q" + ((dates.str[5:7].astype(int) - 1) // 3 + 1).astype(str)
+    raise ValueError(f"unknown block {block!r}")
+
+
+def _block_sums(cells: pd.DataFrame, block: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Hits and windows per block, for the calm and the volatile third, over every block that has any window."""
+    codes, blocks = pd.factorize(_block_key(cells["date"], block), sort=True)
+    hits, windows = cells["hits"].to_numpy(float), cells["n"].to_numpy(float)
+    sums = {}
+    for regime in (CALM, VOLATILE):
+        mask = (cells["regime"] == regime).to_numpy()
+        sums[regime] = (
+            np.bincount(codes[mask], weights=hits[mask], minlength=len(blocks)),
+            np.bincount(codes[mask], weights=windows[mask], minlength=len(blocks)),
+        )
+    return sums
+
+
+def _gap_draws(sums: dict, picks: np.ndarray) -> np.ndarray:
+    """The calm-minus-volatile gap of each resample (rows of block indices); NaN where a third is empty."""
+    (calm_hits, calm_n), (volatile_hits, volatile_n) = sums[CALM], sums[VOLATILE]
+    calm_windows, volatile_windows = calm_n[picks].sum(axis=1), volatile_n[picks].sum(axis=1)
+    ok = (calm_windows > 0) & (volatile_windows > 0)
+    gaps = np.full(len(picks), np.nan)
+    gaps[ok] = np.divide(calm_hits[picks[ok]].sum(axis=1), calm_windows[ok]) - np.divide(
+        volatile_hits[picks[ok]].sum(axis=1), volatile_windows[ok]
+    )
+    return gaps
+
+
+def _point_gap(sums: dict) -> float | None:
+    (calm_hits, calm_n), (volatile_hits, volatile_n) = sums[CALM], sums[VOLATILE]
+    if calm_n.sum() == 0 or volatile_n.sum() == 0:
+        return None
+    return float(calm_hits.sum() / calm_n.sum() - volatile_hits.sum() / volatile_n.sum())
+
+
+def _percentile_interval(draws: np.ndarray) -> tuple[float, float] | tuple[None, None]:
+    draws = draws[np.isfinite(draws)]
+    if len(draws) == 0:
+        return (None, None)
+    tail = (1 - CONFIDENCE) / 2 * 100
+    low, high = np.percentile(draws, [tail, 100 - tail])
+    return float(low), float(high)
+
+
+def _interval_result(gap: float | None, draws: np.ndarray | None, blocks: int) -> dict:
+    ci = _percentile_interval(draws) if draws is not None else (None, None)
+    return {
+        "gap": gap, "ci": ci, "blocks": blocks,
+        "half_width": None if ci[0] is None else (ci[1] - ci[0]) / 2,
+        "dropped_share": None if draws is None else float(np.isnan(draws).mean()),
+    }
+
+
+def gap_interval(cells: pd.DataFrame, block: str = "month") -> dict:
+    """Calm-minus-volatile coverage gap with a 95% block-bootstrap percentile interval.
+
+    Whole blocks (calendar months, or quarters for the cross-check) are resampled so every window of a
+    date moves together. Draws with an empty third are dropped and their share reported.
+    """
+    if cells.empty:
+        return _interval_result(None, None, 0)
+    sums = _block_sums(cells, block)
+    blocks = len(sums[CALM][0])
+    gap = _point_gap(sums)
+    if gap is None:
+        return _interval_result(None, None, blocks)
+    picks = np.random.default_rng(SEED).integers(0, blocks, size=(BOOTSTRAP_RESAMPLES, blocks))
+    return _interval_result(gap, _gap_draws(sums, picks), blocks)
+
+
+def interval_disagreement(month_ci: tuple, quarter_ci: tuple) -> bool:
+    """Whether the two intervals disagree about excluding zero (printed; it does not change the outcome)."""
+    return _excludes_zero(month_ci) != _excludes_zero(quarter_ci)
+
+
+def year_adjusted_gap(cells: pd.DataFrame) -> dict | None:
+    """Equal-weighted mean of each calendar year's own gap, so a gap that only restates year-to-year variation fails.
+
+    Only years in which the calmest and the most volatile third each have windows on at least
+    MIN_DATES_PER_YEAR_CELL dates enter. The interval is a month-block bootstrap stratified by year
+    (months resampled within each year). Draws with an empty third in any year are dropped.
+    """
+    if cells.empty:
+        return None
+    by_year = {}
+    for year, group in cells.groupby(cells["date"].str[:4]):
+        dates = {regime: group.loc[group["regime"] == regime, "date"].nunique() for regime in (CALM, VOLATILE)}
+        if min(dates.values()) >= MIN_DATES_PER_YEAR_CELL:
+            by_year[int(year)] = _block_sums(group, "month")
+    if not by_year:
+        return None
+    rng = np.random.default_rng(SEED)
+    year_gaps, draws = [], []
+    for sums in by_year.values():
+        year_gaps.append(_point_gap(sums))
+        months = len(sums[CALM][0])
+        draws.append(_gap_draws(sums, rng.integers(0, months, size=(BOOTSTRAP_RESAMPLES, months))))
+    mean_draws = np.mean(draws, axis=0)  # NaN where any year's draw had an empty third
+    result = _interval_result(float(np.mean(year_gaps)), mean_draws, sum(len(s[CALM][0]) for s in by_year.values()))
+    return result | {"years": sorted(by_year)}
+
+
+def cell_stats(cells: pd.DataFrame, labels: pd.Series) -> dict:
+    """Per third: windows, distinct dates and months, regime episodes, coverage, and the mean and sd of the per-date coverage."""
+    episodes = episode_counts(labels.reindex(sorted(cells["date"].unique())))
+    stats = {}
+    for regime in REGIMES:
+        cell = cells[cells["regime"] == regime]
+        windows = int(cell["n"].sum())
+        per_date = cell["hits"].to_numpy(float) / cell["n"].to_numpy(float) if len(cell) else np.array([])
+        stats[regime] = {
+            "windows": windows, "dates": int(cell["date"].nunique()), "months": int(cell["date"].str[:7].nunique()),
+            "episodes": episodes[regime],
+            "coverage": float(cell["hits"].sum() / windows) if windows else None,
+            "date_mean": float(per_date.mean()) if len(per_date) else None,
+            "date_sd": float(per_date.std(ddof=1)) if len(per_date) > 1 else None,
+        }
+    return stats
+
+
+def evaluate_half(cells: pd.DataFrame, labels: pd.Series) -> dict:
+    """Everything the outcome rule and the report need for one half."""
+    month, quarter = gap_interval(cells, "month"), gap_interval(cells, "quarter")
+    stats = cell_stats(cells, labels) if len(cells) else {regime: None for regime in REGIMES}
+    return {
+        "gap": month["gap"], "ci": month["ci"], "half_width": month["half_width"],
+        "dropped_share": month["dropped_share"],
+        "quarter_ci": quarter["ci"], "quarter_half_width": quarter["half_width"],
+        "disagreement": interval_disagreement(month["ci"], quarter["ci"]),
+        "months": int(cells["date"].str[:7].nunique()) if len(cells) else 0,
+        "calm_months": stats[CALM]["months"] if stats[CALM] else 0,
+        "volatile_months": stats[VOLATILE]["months"] if stats[VOLATILE] else 0,
+        "cells": stats,
+    }
+
+
+def evaluate_regime(windows: pd.DataFrame, labels: pd.Series) -> dict:
+    """Halves, year-adjusted gap and outcome for windows (date, hit) under one regime labelling."""
+    kept, exclusions = attach_regime(windows, labels)
+    cells = cell_table(kept) if len(kept) else pd.DataFrame({"date": [], "regime": [], "hits": [], "n": []}).astype(
+        {"date": object, "regime": object}
+    )
+    halves = {name: evaluate_half(part, labels) for name, part in split_halves(cells).items()}
+    year_adjusted = year_adjusted_gap(cells)
+    return {
+        "exclusions": exclusions, "halves": halves, "year_adjusted": year_adjusted,
+        "outcome": decide_outcome(halves["early"], halves["late"], year_adjusted, exclusions["index_match"]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# The outcome rule (spec: "The kill criterion and pass level are fixed in the spec before any result")
+# ---------------------------------------------------------------------------
+def _excludes_zero(ci: tuple) -> bool:
+    low, high = ci
+    return low is not None and (low > 0 or high < 0)
+
+
+def _points(value: float) -> str:
+    return f"{value * 100:+.1f} points"
+
+
+def _interval_text(ci: tuple) -> str:
+    return f"[{ci[0] * 100:+.1f}, {ci[1] * 100:+.1f}]"
+
+
+def _not_evaluable(half: dict) -> str | None:
+    """Why a half cannot be judged, or None when it is evaluable."""
+    if half["gap"] is None or half["ci"][0] is None:
+        return "no gap or interval could be computed (a third has no windows)"
+    if half["months"] < MIN_MONTHS_PER_HALF:
+        return f"windows in {half['months']} months, need {MIN_MONTHS_PER_HALF}"
+    for name in ("calm", "volatile"):
+        if half[f"{name}_months"] < MIN_MONTHS_PER_CELL:
+            return f"the {name} third has windows in {half[f'{name}_months']} months, need {MIN_MONTHS_PER_CELL}"
+    return None
+
+
+def decide_outcome(early: dict, late: dict, year_adjusted: dict | None, index_match: float) -> dict:
+    """PASS, KILL or INCONCLUSIVE with its reasons and notes, applying the spec's constants.
+
+    A half is a dict with gap, ci, months, calm_months and volatile_months; gaps are fractions of
+    coverage (0.05 is 5 points). `year_adjusted` is {gap, ci} or None.
+    """
+    halves = {"early": early, "late": late}
+    reasons = [f"{name} half is not evaluable: {why}" for name, half in halves.items() if (why := _not_evaluable(half))]
+    if not index_match >= MIN_INDEX_MATCH:  # also true for NaN
+        reasons.append(f"only {index_match:.1%} of test dates have an index close, need {MIN_INDEX_MATCH:.0%}")
+    if reasons:
+        return {"outcome": "INCONCLUSIVE", "reasons": reasons,
+                "notes": ["INCONCLUSIVE: the data cannot answer the question yet; it may be re-run as history grows."]}
+
+    under = {name: half for name, half in halves.items() if abs(half["gap"]) < PASS_GAP}
+    opposite = early["gap"] * late["gap"] < 0
+    if under or opposite:
+        reasons = [f"{name} half gap {_points(half['gap'])} is under the {PASS_GAP * 100:.0f}-point level" for name, half in under.items()]
+        reasons += ["the two halves' gaps have opposite signs"] if opposite else []
+        notes = [
+            f"{name} half: its interval {_interval_text(half['ci'])} reaches {PASS_GAP * 100:.0f} points, so the level is "
+            "not met but this is not evidence that no regime effect exists"
+            for name, half in under.items() if max(abs(half["ci"][0]), abs(half["ci"][1])) >= PASS_GAP
+        ]
+        return {"outcome": "KILL", "reasons": reasons, "notes": notes}
+
+    failing = [f"{name} interval {_interval_text(half['ci'])} includes zero" for name, half in halves.items()
+               if not _excludes_zero(half["ci"])]
+    if year_adjusted is None:
+        failing.append("year-adjusted gap unavailable: no year has both thirds on enough dates")
+    elif year_adjusted["gap"] * early["gap"] < 0:
+        failing.append(f"year-adjusted gap {_points(year_adjusted['gap'])} has the opposite sign to the halves")
+    elif not _excludes_zero(year_adjusted["ci"]):
+        failing.append(
+            f"year-adjusted interval {_interval_text(year_adjusted['ci'])} includes zero: not separable from the by-year variation"
+        )
+    if failing:
+        return {"outcome": "INCONCLUSIVE", "reasons": failing,
+                "notes": ["Both gaps meet the level; failing an interval is not evidence that no regime effect exists."]}
+    return {"outcome": "PASS", "reasons": [], "notes": [
+        "PASS is evidence that a later change may design a regime-aware reading. Nothing is served: any "
+        "user-facing use needs its own change (P7) and Rule 4 sign-off, because a by-regime coverage figure "
+        "is a second reliability figure."
+    ]}
 
 
 def main(argv: list[str] | None = None) -> None:
