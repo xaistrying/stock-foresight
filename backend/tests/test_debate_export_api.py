@@ -76,6 +76,19 @@ def test_the_exporters_copy_equals_the_source_file():
     assert DISCLAIMER_FULL == _disclaimer_section("Full disclaimer")
 
 
+def test_the_disclaimer_says_a_model_writes_only_the_news_agents_text_and_revises_nothing():
+    """`retire-debate-round-two-and-model-prose`, design Decision 9: a text correction, not a rule edit."""
+    from app.services.debate.export import DISCLAIMER_FULL
+
+    assert (
+        "A language model reads the news headlines and writes the News Context agent's reasoning and "
+        "position; the other two agents report computed values. Wording and positions can be wrong or "
+        "incomplete." in DISCLAIMER_FULL
+    )
+    assert "second round" not in DISCLAIMER_FULL and "revises" not in DISCLAIMER_FULL
+    assert "about 2 in 3" in DISCLAIMER_FULL  # the coverage phrase is untouched
+
+
 def test_export_agent_labels_correct(tmp_path, monkeypatch):
     """TechnicalAgent → 'Technical Signal', NewsAgent → 'News Context', Macro → 'Macro'."""
     from app.services.debate import export as export_mod

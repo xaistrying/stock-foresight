@@ -28,11 +28,11 @@ DISCLAIMER_FULL = (
     "This analysis shows technical observations, not investment advice. The verdict comes from "
     "three automated agents: one reads price indicators (RSI, MACD, Ichimoku), one reads recent "
     "Vietnamese financial headlines, and one reads market-wide data (VN-Index, USD/VND, foreign "
-    "flows). A language model writes the agents' reasoning and revises their positions in a second "
-    "round, so wording and positions can be wrong or incomplete. The range is a statistical "
-    "estimate of typical 5-session movement, sized so that about 2 in 3 past moves stayed inside "
-    "it; larger moves are possible. Nothing here is a recommendation to buy, sell or hold any "
-    "security."
+    "flows). A language model reads the news headlines and writes the News Context agent's "
+    "reasoning and position; the other two agents report computed values. Wording and positions "
+    "can be wrong or incomplete. The range is a statistical estimate of typical 5-session "
+    "movement, sized so that about 2 in 3 past moves stayed inside it; larger moves are possible. "
+    "Nothing here is a recommendation to buy, sell or hold any security."
 )
 
 AGENT_LABELS = {
