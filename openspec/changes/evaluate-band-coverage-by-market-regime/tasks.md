@@ -17,9 +17,9 @@
 
 ## 3. The band under test, out of time
 
-- [ ] 3.1 Write a failing test that on a synthetic frame built with `build_window_frame` the study's per-fold test year, window count and coverage equal those of `train_har_rv.run_validation`
-- [ ] 3.2 Implement the out-of-time windows by putting the scripts directory on `sys.path` and importing `load_frame`, `split_fold`, `fit_fold`, `RANGE_COVERAGE` and `MIN_TRAIN_ROWS` from `train_har_rv`, computing sigma with `sigma_pct` and the band with `scaled_band` (not `scalar * array`), and keeping each test window's date and hit
-- [ ] 3.3 Print the recomputed by-year coverage beside the reviewer-reported range of 0.614 to 0.741, labelled reviewer-reported and not re-verified when this change was written
+- [x] 3.1 Write a failing test that on a synthetic frame built with `build_window_frame` the study's per-fold test year, window count and coverage equal those of `train_har_rv.run_validation`
+- [x] 3.2 Implement the out-of-time windows by putting the scripts directory on `sys.path` and importing `load_frame`, `split_fold`, `fit_fold`, `RANGE_COVERAGE` and `MIN_TRAIN_ROWS` from `train_har_rv`, computing sigma with `sigma_pct` and the band with `scaled_band` (not `scalar * array`), and keeping each test window's date and hit
+- [x] 3.3 Print the recomputed by-year coverage beside the reviewer-reported range of 0.614 to 0.741, labelled reviewer-reported and not re-verified when this change was written
 
 ## 4. Assemble the read-only script, the cache and the report
 

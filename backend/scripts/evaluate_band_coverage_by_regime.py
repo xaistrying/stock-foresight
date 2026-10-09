@@ -53,6 +53,11 @@ from app.vnstock_guard import install as install_vnstock_guard  # noqa: E402
 
 install_vnstock_guard()  # must precede any vnstock import (docs/KNOWN_ISSUES.md); the fetch helpers import it lazily
 
+from app.db.connection import DB_PATH, open_readonly  # noqa: E402
+from app.ml.volatility import FEATURE_NAMES, scaled_band, sigma_pct  # noqa: E402
+from app.services.ticker_universe import modelling_universe  # noqa: E402
+from train_har_rv import MIN_TRAIN_ROWS, RANGE_COVERAGE, fit_fold, load_frame, split_fold  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # The criterion. These constants are NEW, PROVISIONAL and covered by no domain rule: none is a
 # threshold on the size of a price move (Rule 3 is not engaged). They are fixed in
@@ -584,6 +589,48 @@ def decide_outcome(early: dict, late: dict, year_adjusted: dict | None, index_ma
         "user-facing use needs its own change (P7) and Rule 4 sign-off, because a by-regime coverage figure "
         "is a second reliability figure."
     ]}
+
+
+# ---------------------------------------------------------------------------
+# The band under test, measured out of time (design Decision 6)
+# ---------------------------------------------------------------------------
+def out_of_time_windows(
+    frame: pd.DataFrame, coverage: float = RANGE_COVERAGE, min_train_rows: int = MIN_TRAIN_ROWS
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Every walk-forward test window's date and hit, and each fold's year, window count and coverage.
+
+    The folds are `train_har_rv.run_validation`'s: expanding by calendar year, HAR and `range_k` refit
+    on windows whose OUTCOME date precedes the test year (the 5-session purge). Coverage is that of the
+    served band, range_k x sqrt(5) x sigma_daily_pct(t) (a test asserts it equals the training script's).
+    """
+    pieces, folds = [], []
+    for year in sorted(int(y) for y in frame["date"].str[:4].unique()):
+        fit, test = split_fold(frame, year)
+        if len(fit) < min_train_rows or test.empty:
+            continue
+        intercept, coef, range_k = fit_fold(fit, coverage)
+        sigma = sigma_pct(test[list(FEATURE_NAMES)].to_numpy(), intercept, coef)
+        hit = test["abs_r5_pct"].to_numpy() <= scaled_band(sigma, range_k)
+        folds.append({"test_year": year, "n": int(len(test)), "coverage": float(hit.mean()), "k": range_k})
+        pieces.append(pd.DataFrame({"date": test["date"].to_numpy(), "hit": hit}))
+    windows = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame({"date": [], "hit": []})
+    return windows.astype({"date": object, "hit": bool}), folds
+
+
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None or np.isnan(value) else f"{value * 100:.1f}%"
+
+
+def format_by_year(folds: list[dict]) -> str:
+    """This run's out-of-time coverage by test year, beside the reviewer-reported range as a labelled reference."""
+    low, high = REVIEWER_REPORTED_BY_YEAR
+    lines = ["Out-of-time coverage by test year (recomputed in this run; nominal 68%):"]
+    lines += [f"  {f['test_year']}  windows {f['n']:>9,}  coverage {_pct(f['coverage'])}" for f in folds]
+    lines.append(
+        f"  reference: by-year range {_pct(low)} to {_pct(high)} is reviewer-reported and not re-verified "
+        "when this change was written; it is not a result of this run"
+    )
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> None:

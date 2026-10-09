@@ -631,3 +631,75 @@ def test_episodes_are_maximal_runs_of_consecutive_sessions_in_one_third():
                        index=pd.bdate_range("2020-01-02", periods=7).strftime("%Y-%m-%d"))
 
     assert ebr.episode_counts(labels) == {"calm": 2, "middle": 1, "volatile": 1}
+
+
+# ---------------------------------------------------------------------------
+# the band under test, out of time (tasks 3.1, 3.2)
+# ---------------------------------------------------------------------------
+
+
+def _window_frame(n_tickers: int = 4, n_rows: int = 1500) -> pd.DataFrame:
+    """Windows from `build_window_frame` for several synthetic tickers, prepared as the training script does."""
+    import train_har_rv as train
+    from app.ml.volatility import build_window_frame
+
+    rng = np.random.default_rng(9)
+    dates = pd.Series(pd.bdate_range("2019-01-01", periods=n_rows).strftime("%Y-%m-%d"))
+    parts = []
+    for i in range(n_tickers):
+        closes = pd.Series(20 * np.exp(np.cumsum(rng.normal(0, 0.015, n_rows))))
+        parts.append(build_window_frame(dates, closes).assign(ticker=f"T{i}"))
+    return train.prepare(pd.concat(parts, ignore_index=True))
+
+
+def test_each_folds_year_window_count_and_coverage_equal_the_training_scripts():
+    import train_har_rv as train
+
+    frame = _window_frame()
+
+    windows, folds = ebr.out_of_time_windows(frame, min_train_rows=1000)
+    reference = train.run_validation(frame, min_train_rows=1000)["folds"]
+
+    assert len(folds) == len(reference) >= 3
+    for ours, theirs in zip(folds, reference):
+        assert ours["test_year"] == theirs["test_year"]
+        assert ours["n"] == theirs["n"]
+        assert ours["coverage"] == pytest.approx(theirs["coverage"], abs=0)
+        assert ours["k"] == pytest.approx(theirs["k"], abs=0)
+    assert len(windows) == sum(f["n"] for f in folds)
+
+
+def test_the_windows_keep_each_test_windows_date_and_hit():
+    frame = _window_frame()
+
+    windows, folds = ebr.out_of_time_windows(frame, min_train_rows=1000)
+
+    assert list(windows.columns) == ["date", "hit"]
+    assert windows["hit"].dtype == bool
+    by_year = windows.groupby(windows["date"].str[:4])["hit"].agg(["size", "mean"])
+    for fold in folds:
+        assert by_year.loc[str(fold["test_year"]), "size"] == fold["n"]
+        assert by_year.loc[str(fold["test_year"]), "mean"] == pytest.approx(fold["coverage"], abs=0)
+
+
+def test_a_fold_needs_enough_purged_prior_windows():
+    frame = _window_frame()
+
+    windows, folds = ebr.out_of_time_windows(frame, min_train_rows=10**9)
+
+    assert folds == [] and windows.empty
+    assert list(windows.columns) == ["date", "hit"]
+
+
+def test_the_by_year_table_is_recomputed_and_the_reviewers_range_is_only_a_labelled_reference():
+    folds = [{"test_year": 2020, "n": 1000, "coverage": 0.6411, "k": 1.2},
+             {"test_year": 2021, "n": 2000, "coverage": 0.7288, "k": 1.2}]
+
+    text = ebr.format_by_year(folds)
+
+    assert "2020" in text and "64.1%" in text and "72.9%" in text and "1,000" in text
+    assert "0.6411" not in text  # Rule 2 spirit: percentages, never raw fractions
+    reference = [line for line in text.splitlines() if "61.4%" in line]
+    assert len(reference) == 1
+    assert "reviewer-reported" in reference[0] and "not re-verified" in reference[0] and "74.1%" in reference[0]
+    assert ebr.REVIEWER_REPORTED_BY_YEAR == (0.614, 0.741)
