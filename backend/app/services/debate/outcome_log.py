@@ -3,7 +3,8 @@
 Stores stances, the band, guards, provenance and the agents' own evidence, so a
 verdict and the displayed band can be scored once five sessions have passed. It
 stores no reasoning text, no headline text and no credentials (design Decisions
-3-4), and makes no network call: evidence is what the agents handed over.
+3-4), and makes no network call: evidence is what the agents handed over. The verdict
+is the vote over the `r1_*` stances; the `r2_*` columns are NULL for every new row.
 
 `log_debate_run` raises on any problem; the caller decides it must not fail the
 response and must not be silent.
@@ -30,7 +31,9 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 GIT_TIMEOUT_SECONDS = 2
 
-_STANCE_COLUMNS = tuple(f"r{n}_{agent}" for n in (1, 2) for agent in AGENT_ORDER)
+# `r2_*` stay in the table (no migration) so rows written while a second round existed read unchanged;
+# the writer does not name them, so they are NULL in every new row.
+_STANCE_COLUMNS = tuple(f"r1_{agent}" for agent in AGENT_ORDER)
 _COLUMNS = (
     "ticker", "as_of", "run_at", "close_at_asof", "data_age_sessions", "eligible",
     "eligibility_reasons", "agents_degraded", "sigma_daily_pct", "range_5s_pct",
@@ -124,9 +127,8 @@ def build_row(result: DebateResult) -> dict:
         "code_rev": _code_rev(),
         "evidence": json.dumps(evidence),
     }
-    for n, positions in ((1, result.round1), (2, result.round2)):
-        for agent in AGENT_ORDER:
-            row[f"r{n}_{agent}"] = _stance(positions.get(agent))
+    for agent in AGENT_ORDER:
+        row[f"r1_{agent}"] = _stance(result.round1.get(agent))
     return row
 
 

@@ -7,6 +7,9 @@ Lookback: last 7 calendar days (≈5 trading sessions, matching Rule 1's horizon
 
 The output is labeled "News Context" in the UI — NOT "Market Sentiment" (Rule 5).
 The technical proxy label is reserved for the TechnicalAgent surface only.
+
+This is the only agent that calls a language model, and its bullets are the only
+model-written text a run produces. It reads no other agent's reasoning.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from app.db.connection import get_connection
 from app.services.debate.engine import AgentPosition, Stance
 from app.services.debate.llm_client import LLMClient
 from app.services.debate.news_feeds import MAX_HEADLINES, SECTOR_BY_ICB, fetch_headlines
-from app.services.debate.prompt_safety import DESCRIBE_ONLY, fence
+from app.services.debate.prompt_safety import fence
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +104,7 @@ class NewsAgent:
         self._llm = LLMClient()
 
     async def run(self, ticker: str) -> AgentPosition:
-        """Round 1: fetch headlines, extract signals via LLM."""
+        """Fetch headlines and extract the stance and bullets via the language model (the run's only call)."""
         sector = await asyncio.to_thread(_get_sector_for_ticker, ticker)  # blocking SQLite
         try:
             headlines = await fetch_headlines(ticker, sector)
@@ -113,38 +116,6 @@ class NewsAgent:
             return _degraded(_NO_NEWS_REASONING, "no_input")
 
         return await self._extract_signals(ticker, sector or "general", headlines)
-
-    async def respond(self, ticker: str, round1: dict) -> AgentPosition:
-        """Round 2: review other agents' positions and respond."""
-        my_r1 = round1.get("news")
-        others = {k: v for k, v in round1.items() if k != "news"}
-        other_lines = "\n".join(
-            f"- {k.capitalize()} agent ({v.stance}): {'; '.join(v.reasoning[:2])}"
-            for k, v in others.items()
-        )
-        peers = fence("PEERS", other_lines)  # the peers' bullets can quote scraped headlines
-        # So can this agent's own Round 1 bullets: they were written from the headlines.
-        own = fence("OWN", "; ".join(my_r1.reasoning[:3]) if my_r1 else "N/A")
-        prompt = f"""\
-You are the News Context agent. Your Round 1 stance was: {my_r1.stance if my_r1 else "neutral"}.
-Your Round 1 reasoning:
-{own}
-
-Other agents' Round 1 positions:
-{peers}
-
-Review these positions. Maintain your stance if your news evidence supports it.
-Only shift if a SPECIFIC counter-argument is compelling. Respond with your
-final stance on the first line (bull/bear/neutral) then 3-5 bullet points.
-{DESCRIBE_ONLY}
-"""
-        response = await self._llm.chat([
-            {"role": "system", "content": "You are a disciplined financial news analyst."},
-            {"role": "user", "content": prompt},
-        ])
-        from app.services.debate.technical import _parse_stance_and_bullets
-        stance, reasoning = _parse_stance_and_bullets(response, my_r1)
-        return AgentPosition(agent_id="news", stance=stance, reasoning=reasoning)
 
     async def _extract_signals(
         self, ticker: str, sector: str, headlines: list[str]

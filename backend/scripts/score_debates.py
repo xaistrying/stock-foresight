@@ -12,6 +12,13 @@ from the modules `retire-direction-model` removes. Readiness is decided from
 session exists, and a scored row is never rewritten.
 
 Every threshold below that Rules 1-6 do not cover is new and provisional.
+
+Two kinds of row are read. A row logged while a second round existed has `r2_*` stances and
+its verdict was voted on them; a row logged since (`retire-debate-round-two-and-model-prose`)
+has NULL `r2_*` and its verdict was voted on the `r1_*` stances. The two verdicts come from
+different inputs, so every statistic that depends on the verdict is reported once per vote
+basis and never pooled; the vote does not touch coverage, the funnel or the per-agent Round 1
+tables, which stay pooled.
 """
 
 import argparse
@@ -40,6 +47,14 @@ BOOTSTRAP_SEED = 0
 Z_95 = 1.96
 HALF_WIDTH_TARGET = 0.05  # the planning line: effective n for +-5 points at p = 0.5
 REPORTS_DIR = Path(__file__).resolve().parents[2] / "reports"
+
+# The stance columns of the second round: set in older rows, NULL in every row logged since.
+R2_COLUMNS = ("r2_technical", "r2_news", "r2_macro")
+# The vote bases, in report order. The wording names an input, not a quality (no domain rule covers it).
+VOTE_BASES = (
+    ("round2", "voted on Round 2 stances"),
+    ("round1", "voted on Round 1 stances"),
+)
 
 BULL_VERDICTS = ("STRONG_BUY_SIGNAL", "BUY_SIGNAL")
 BEAR_VERDICTS = ("CAUTION_SIGNAL", "STRONG_CAUTION_SIGNAL")
@@ -312,6 +327,21 @@ def coverage_stats(rows: list[dict]) -> dict:
     }
 
 
+def has_second_round(row: dict) -> bool:
+    return any(row[c] is not None for c in R2_COLUMNS)
+
+
+def vote_basis(row: dict) -> str:
+    """`round2` when any `r2_*` stance exists, else `round1`. Inside the analysed population every agent
+    is live, so an older row has all three `r2_*` stances and a newer one has none: the test is exact and
+    needs no commit lookup (`code_rev` is a git hash, not an ordered boundary)."""
+    return "round2" if has_second_round(row) else "round1"
+
+
+def rows_with_second_round(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if has_second_round(r)]
+
+
 def verdict_lean(row: dict) -> str | None:
     return "bull" if row["verdict"] in BULL_VERDICTS else "bear" if row["verdict"] in BEAR_VERDICTS else None
 
@@ -386,13 +416,46 @@ def possible_failed_writes(log_conn, reports_dir: Path) -> list[str]:
     )
 
 
-def _directional_section(title: str, table: dict) -> list[str]:
+def _directional_section(title: str, table: dict, indent: str = "  ") -> list[str]:
     lines = []
     for side in ("bull", "bear"):
         if side in table:
             t = table[side]
-            lines.append(f"  {title}, {side}-lean: " + rate_line("hit", t["hits"], t["blocks"], t["base"]))
-    return lines or [f"  {title}: no directional calls in the analysed rows"]
+            lines.append(f"{indent}{title}, {side}-lean: " + rate_line("hit", t["hits"], t["blocks"], t["base"]))
+    return lines or [f"{indent}{title}: no directional calls in the analysed rows"]
+
+
+def _code_revs(rows: list[dict]) -> str:
+    return ", ".join(sorted({r["code_rev"] or "unknown" for r in rows}))
+
+
+def _verdict_section(rows: list[dict], indent: str) -> list[str]:
+    """The statistics that depend on the verdict, over the rows of ONE vote basis."""
+    out = _directional_section("verdict", directional_stats(rows, verdict_lean), indent)
+    if any(r["market_r5"] is not None for r in rows):
+        out += _directional_section("verdict vs market-demeaned", directional_stats(rows, verdict_lean, demean=True), indent)
+    else:
+        out.append(f"{indent}market-demeaned: unavailable (fewer than {MIN_MARKET_TICKERS} market tickers)")
+    vt = verdict_vs_technical(rows)
+    if vt:
+        out.append(
+            f"{indent}verdict minus technical-only, same rows: {(vt['difference']) * 100:+.1f} points "
+            f"(verdict {pct(vt['verdict'])}, technical {pct(vt['technical'])}, n={vt['n']})"
+        )
+    return out
+
+
+def _vote_basis_sections(analysed: list[dict]) -> list[str]:
+    """Verdict statistics once per vote basis, each with its n and code_rev values; never pooled."""
+    out = ["Verdict statistics, by vote basis (the two kinds of verdict come from different inputs, so they are not pooled):"]
+    for basis, label in VOTE_BASES:
+        rows = [r for r in analysed if vote_basis(r) == basis]
+        if not rows:
+            out.append(f"  Vote basis {basis} ({label}): no analysed row was {label}.")
+            continue
+        out.append(f"  Vote basis {basis} ({label}): n={len(rows)}; code_rev: {_code_revs(rows)}")
+        out += _verdict_section(rows, "    ")
+    return out
 
 
 def build_report(app_conn, log_conn, summary: dict, max_age: int, reports_dir: Path | None = None) -> str:
@@ -430,28 +493,23 @@ def build_report(app_conn, log_conn, summary: dict, max_age: int, reports_dir: P
         else:
             out.append("  no analysed row has a band (n=0)")
 
-        out += ["", "Directional hit-rates (a zero move is a miss; base = share of all analysed rows that moved that way):"]
-        out += _directional_section("verdict", directional_stats(analysed, verdict_lean))
-        if any(r["market_r5"] is not None for r in analysed):
-            out += _directional_section("verdict vs market-demeaned", directional_stats(analysed, verdict_lean, demean=True))
-        else:
-            out.append(f"  market-demeaned: unavailable (fewer than {MIN_MARKET_TICKERS} market tickers)")
-        vt = verdict_vs_technical(analysed)
-        if vt:
-            out.append(
-                f"  verdict minus technical-only, same rows: {(vt['difference']) * 100:+.1f} points "
-                f"(verdict {pct(vt['verdict'])}, technical {pct(vt['technical'])}, n={vt['n']})"
-            )
+        out += ["", "Directional hit-rates (a zero move is a miss; base = share of the rows in the group that moved that way):"]
+        out += _vote_basis_sections(analysed)
 
         out += ["", "Per agent (neutral stances are not scored):"]
         has_market = any(r["market_r5"] is not None for r in analysed)
+        with_round2 = rows_with_second_round(analysed)
         for agent in ("technical", "news", "macro"):
-            for n in (1, 2):
+            for n, rows in ((1, analysed), (2, with_round2)):  # Round 2 reads only the rows that have it
+                if not rows:
+                    continue
                 lean = stance_lean(f"r{n}_{agent}")
-                out += _directional_section(f"{agent} round {n}", directional_stats(analysed, lean))
+                out += _directional_section(f"{agent} round {n}", directional_stats(rows, lean))
                 if has_market:
                     out += _directional_section(f"{agent} round {n} market-demeaned",
-                                                directional_stats(analysed, lean, demean=True))
+                                                directional_stats(rows, lean, demean=True))
+        if not with_round2:
+            out.append("  Per agent, Round 2: no analysed row has Round 2 stances (every analysed row was voted on Round 1 stances).")
 
         out += ["", "Sample size:",
                 f"  {len(analysed)} rows, {len({r['ticker'] for r in analysed})} tickers, "

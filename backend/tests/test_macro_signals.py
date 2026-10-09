@@ -626,6 +626,10 @@ async def test_every_signal_has_a_line_in_the_specs_order(monkeypatch):
     ]
     assert position.reasoning[0] == "VN-Index trend: up (+)"
     assert position.reasoning[2] == "USD/VND: -0.31%"
+    # The engine applies the recommendation-wording check to every position: computed lines pass untouched.
+    from app.services.debate.prompt_safety import withhold_advice
+
+    assert [withhold_advice(bullet, "macro") for bullet in position.reasoning] == position.reasoning
 
 
 @pytest.mark.asyncio
