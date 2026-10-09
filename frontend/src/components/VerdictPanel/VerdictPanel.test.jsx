@@ -173,18 +173,18 @@ describe('Verdict panel: running', () => {
   })
 
   it('keeps the last label and shows no error when a progress poll fails', () => {
-    vi.mocked(useDebateProgress).mockReturnValue({ data: ROUND2 })
+    vi.mocked(useDebateProgress).mockReturnValue({ data: ROUND1 })
     const { rerender, queryClient } = renderPanel(running())
-    expect(screen.getByText('Comparing positions…')).toBeInTheDocument()
+    expect(screen.getByText('Running agents…')).toBeInTheDocument()
 
-    vi.mocked(useDebateProgress).mockReturnValue({ data: ROUND2, isError: true, error: new Error('network') })
+    vi.mocked(useDebateProgress).mockReturnValue({ data: ROUND1, isError: true, error: new Error('network') })
     rerender(
       <QueryClientProvider client={queryClient}>
         <VerdictPanel ticker="VCB" analysis={running()} showRange={false} />
       </QueryClientProvider>,
     )
 
-    expect(screen.getByText('Comparing positions…')).toBeInTheDocument()
+    expect(screen.getByText('Running agents…')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 

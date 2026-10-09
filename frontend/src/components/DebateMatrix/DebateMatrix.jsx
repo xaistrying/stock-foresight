@@ -1,35 +1,25 @@
-import { Fragment, useId, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { INLINE_DISCLAIMER, LM_NOTE } from '../../lib/disclaimer'
 import { AGENT_ORDER, agentLabel } from '../../lib/debateText'
 import { AgentCard, SkeletonCells } from './AgentCard'
 import './debate-matrix.css'
 
-const ROUNDS = [
-  { key: 'round1', title: 'Round 1 · Initial positions' },
-  { key: 'round2', title: 'Round 2 · Responses' },
-]
+const hasPositions = (result) => Object.keys(result.round1 ?? {}).length > 0
 
-const hasPositions = (result) => Object.keys(result.round1 ?? {}).length + Object.keys(result.round2 ?? {}).length > 0
-
-// Three agent columns by two round rows, the cards aligned by row, so a reader scans one agent top to
-// bottom or one round left to right. Never one scrolling text column.
+// One row of three agent cards, in the same order everywhere, so a reader scans the agents left to
+// right. Never one scrolling text column.
 function MatrixGrid({ result }) {
   return (
     <div className="debate-grid">
-      {ROUNDS.map(({ key, title }) => (
-        <Fragment key={key}>
-          <h3 className="debate-grid__row-label t-label">{title}</h3>
-          {AGENT_ORDER.map((id) => (
-            <AgentCard key={id} agentId={id} position={result[key]?.[id]} />
-          ))}
-        </Fragment>
+      {AGENT_ORDER.map((id) => (
+        <AgentCard key={id} agentId={id} position={result.round1?.[id]} />
       ))}
     </div>
   )
 }
 
-// Below 768px: one tab per agent, Round 1 above Round 2 inside it. Left and Right move between the
-// tabs (wrapping), Home and End go to the ends, and the tab moved to is the one shown.
+// Below 768px: one tab per agent, its one card in the panel. Left and Right move between the tabs
+// (wrapping), Home and End go to the ends, and the tab moved to is the one shown.
 function AgentTabs({ result }) {
   const base = useId()
   const [selected, setSelected] = useState(0)
@@ -69,7 +59,7 @@ function AgentTabs({ result }) {
             onClick={() => setSelected(index)}
           >
             {agentLabel(id)}
-            {result.round2?.[id]?.degraded_reason ? ' (unavailable)' : ''}
+            {result.round1?.[id]?.degraded_reason ? ' (unavailable)' : ''}
           </button>
         ))}
       </div>
@@ -83,12 +73,7 @@ function AgentTabs({ result }) {
           hidden={index !== selected}
           className="debate-tabs__panel"
         >
-          {ROUNDS.map(({ key, title }) => (
-            <Fragment key={key}>
-              <h3 className="debate-grid__row-label t-label">{title}</h3>
-              <AgentCard agentId={id} position={result[key]?.[id]} />
-            </Fragment>
-          ))}
+          <AgentCard agentId={id} position={result.round1?.[id]} />
         </div>
       ))}
     </div>
@@ -96,16 +81,15 @@ function AgentTabs({ result }) {
 }
 
 /**
- * The Debate matrix, below the chart: three agents (Technical Signal, News Context, Macro, in that
- * order) by two rounds, one card per cell. It reads the same run the Verdict panel reads (`analysis`),
- * so both show one result from one request, and it does not show Key tension or Synthesis: those are
- * the Verdict panel's.
+ * The Debate matrix, below the chart: one card per agent (Technical Signal, News Context, Macro, in
+ * that order). It reads the same run the Verdict panel reads (`analysis`), so both show one result from
+ * one request, and no round is named anywhere.
  *
  * It shows agent reasoning outside the panel that carries the disclaimer, so it repeats the inline
- * disclaimer under its heading in every state (Rule 6) and says the reasoning is written by a language
- * model (Rule 5). Before a result: a one-line prompt. While a run is going: six empty cells. After a
- * refusal in which no agent ran: that no debate was run. At 768px and up the three columns stay; below
- * it the agents are tabs.
+ * disclaimer under its heading in every state (Rule 6) and says which reasoning is a language model's
+ * and which is computed values (Rule 5). Before a result: a one-line prompt. While a run is going:
+ * three empty cells. After a refusal in which no agent ran: that no debate was run. At 768px and up the
+ * three columns stay; below it the agents are tabs.
  *
  * @param {{ticker: string|null, analysis: object, layoutMode: 'wide'|'collapsed'|'drawer'|'phone'}} props
  */
@@ -121,11 +105,7 @@ export function DebateMatrix({ ticker, analysis, layoutMode }) {
       </div>
     )
   } else if (!result) {
-    body = (
-      <p className="debate-matrix__message t-body">
-        Run Analyse to see each agent&apos;s Round 1 and Round 2 positions.
-      </p>
-    )
+    body = <p className="debate-matrix__message t-body">Run Analyse to see each agent&apos;s position.</p>
   } else if (!hasPositions(result)) {
     body = (
       <p className="debate-matrix__message t-body">

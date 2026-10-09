@@ -101,7 +101,7 @@ describe('layout-mode specific structure', () => {
     await openWithResult(queryClient)
 
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('article')).toHaveLength(6)
+    expect(screen.getAllByRole('article')).toHaveLength(3)
   })
 
   it('renders the Rail as a column at 1440px, collapsed at 1300px, a drawer at 900px and not at all on a phone', async () => {

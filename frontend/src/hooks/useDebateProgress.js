@@ -11,7 +11,7 @@ export const PROGRESS_POLL_MS = 2000
  * the previous run's stage. Best effort: a failed poll keeps the last value (React Query keeps
  * `data` through a failed refetch) and is not retried or reported.
  *
- * `data` is { ticker, running, stage: 'round1'|'round2'|'synthesis'|null, elapsed_ms }.
+ * `data` is { ticker, running, stage: 'round1'|null, elapsed_ms }.
  */
 export function useDebateProgress(ticker, startedAt) {
   return useQuery({
