@@ -26,7 +26,7 @@ describe('token colour pairs', () => {
     expect(failures.map((row) => `${row.theme}: ${row.foreground} on ${row.background} = ${row.ratio.toFixed(2)}`)).toEqual([])
   })
 
-  it('covers the pairs the design names: Key tension label, the band bounds and the focus ring', () => {
+  it('covers the pairs the design names: the warn label (its tokens stay, unused), the band bounds and the focus ring', () => {
     const named = PAIRS.map(([foreground, background]) => `${foreground} on ${background}`)
 
     expect(named).toContain('warn-line on warn-bg')

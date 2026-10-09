@@ -5,8 +5,8 @@ import * as tickersApi from '../api/tickers'
 import { ApiError } from '../api/client'
 import { useDebateAnalysis } from './useDebateAnalysis'
 
-const RESULT = { ticker: 'VCB', verdict: 'BUY_SIGNAL', synthesis: { key_tension: 'a tension' } }
-const OTHER_RESULT = { ticker: 'VCB', verdict: 'OBSERVE', synthesis: { key_tension: 'another tension' } }
+const RESULT = { ticker: 'VCB', verdict: 'BUY_SIGNAL', round1: {} }
+const OTHER_RESULT = { ticker: 'VCB', verdict: 'OBSERVE', round1: {} }
 
 function setup() {
   const queryClient = new QueryClient({

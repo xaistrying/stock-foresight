@@ -14,7 +14,8 @@ import { useTickerContext } from '../../hooks/useTickerContext'
 import * as tickersApi from '../../api/tickers'
 import { ApiError } from '../../api/client'
 import { FULL_DISCLAIMER, INLINE_DISCLAIMER, LM_NOTE } from '../../lib/disclaimer'
-import { readSrc, rulesFor, parseRules, declarations } from '../../test/cssText'
+import { TYPICAL_ANALYSIS_SECONDS } from '../../lib/debateText'
+import { allCssFiles, readSrc, rulesFor, declarations } from '../../test/cssText'
 import { newQueryClient, renderWithQuery } from '../../test/railFixtures'
 import {
   DONE_AT, FORBIDDEN_TEXT, LABELS, MOCK_RESULT, NEWS_DEGRADED, analysisState, insufficient, oneDegraded,
@@ -80,7 +81,8 @@ describe('Verdict panel: ready', () => {
     renderPanel()
 
     expect(screen.getByRole('button', { name: 'Analyse VCB' })).toBeInTheDocument()
-    expect(screen.getByText('Analysis takes about 45 seconds.')).toBeInTheDocument()
+    // The number comes from the one named constant, not from a literal in the panel.
+    expect(screen.getByText(`Analysis takes about ${TYPICAL_ANALYSIS_SECONDS} seconds.`)).toBeInTheDocument()
     expect(screen.queryByText(/agreement/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/lean|observe|split/i)).not.toBeInTheDocument()
   })
@@ -105,19 +107,28 @@ describe('Verdict panel: running', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
-  const ROUND2 = { ticker: 'VCB', running: true, stage: 'round2', elapsed_ms: 8000 }
+  const ROUND1 = { ticker: 'VCB', running: true, stage: 'round1', elapsed_ms: 8000 }
 
-  it.each([
-    ['round1', 'Running agents…'],
-    ['round2', 'Comparing positions…'],
-    ['synthesis', 'Synthesising…'],
-  ])('shows the server stage "%s" as "%s"', (stage, label) => {
-    vi.mocked(useDebateProgress).mockReturnValue({ data: { ...ROUND2, stage } })
+  it('shows the server stage "round1", the run\'s only stage, as "Running agents…"', () => {
+    vi.mocked(useDebateProgress).mockReturnValue({ data: ROUND1 })
 
     renderPanel(running())
 
-    expect(screen.getByRole('status')).toHaveTextContent(label)
+    expect(screen.getByRole('status')).toHaveTextContent('Running agents…')
   })
+
+  it.each(['round2', 'synthesis', 'something_new'])(
+    'a stage the panel has no label for ("%s", as a stale server may send) reads "Running agents…", never enum text',
+    (stage) => {
+      vi.mocked(useDebateProgress).mockReturnValue({ data: { ...ROUND1, stage } })
+
+      renderPanel(running())
+
+      expect(screen.getByRole('status')).toHaveTextContent('Running agents…')
+      expect(screen.queryByText(new RegExp(stage))).not.toBeInTheDocument()
+      expect(screen.queryByText(/comparing positions|synthesising/i)).not.toBeInTheDocument()
+    },
+  )
 
   it.each([
     ['before the first poll has answered', undefined],
@@ -198,7 +209,7 @@ describe('Verdict panel: running', () => {
 })
 
 describe('Verdict panel: result', () => {
-  it('shows the badge, Agreement, three stance chips, Key tension, Synthesis and the data line, all at once', () => {
+  it('shows the badge, Agreement, three stance chips and the data line, all at once', () => {
     show(populated({ data_as_of: '2026-10-02', data_age_sessions: 2 }))
 
     expect(screen.getByText('Bullish lean')).toBeInTheDocument()
@@ -206,28 +217,44 @@ describe('Verdict panel: result', () => {
     expect(screen.getByText('Technical Signal ↑ Bullish')).toBeInTheDocument()
     expect(screen.getByText('News Context ↑ Bullish')).toBeInTheDocument()
     expect(screen.getByText('Macro → Neutral')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Key tension' })).toBeInTheDocument()
-    expect(screen.getByText(MOCK_RESULT.synthesis.key_tension)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Synthesis' })).toBeInTheDocument()
-    expect(screen.getByText(MOCK_RESULT.synthesis.reasoning)).toBeInTheDocument()
     expect(screen.getByText('Data as of 2026-10-02 · 2 sessions old')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /show reasoning|full debate|hide/i })).not.toBeInTheDocument()
   })
 
-  it('has no disclosure control for Key tension or Synthesis', () => {
+  it('shows no Key tension, no Synthesis and no language-model sentence: it holds no model text', () => {
+    const { container } = show(populated())
+
+    expect(screen.queryByRole('heading', { name: /key tension|synthesis/i })).not.toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/key tension|synthesi[sz]/i)
+    expect(screen.queryByText(LM_NOTE)).not.toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/written by a language model/i)
+  })
+
+  it('reads the chips from the one round the result carries (round1)', () => {
+    show(populated({
+      round1: {
+        technical: position('technical', 'bear', ['a']),
+        news: position('news', 'bull', ['b']),
+        macro: position('macro', 'neutral', ['c']),
+      },
+    }))
+
+    expect(screen.getByText('Technical Signal ↓ Bearish')).toBeInTheDocument()
+    expect(screen.getByText('News Context ↑ Bullish')).toBeInTheDocument()
+  })
+
+  it('has no disclosure control among the result parts', () => {
     show(populated())
 
     expect(screen.queryByRole('button', { name: /show|hide|expand|collapse/i })).not.toBeInTheDocument()
   })
 
-  it('orders them: badge, Agreement, chips, Key tension, Synthesis, data line, Analysed time, Re-analyse', () => {
+  it('orders them: badge, Agreement, chips, data line, Analysed time, report line, Re-analyse', () => {
     show(populated({ report_saved: true, report_file: '2026-10-05_VCB.md' }))
     const order = [
       screen.getByText('Bullish lean'),
       screen.getByText(/^Agreement:/),
       screen.getByText('Technical Signal ↑ Bullish'),
-      screen.getByRole('heading', { name: 'Key tension' }),
-      screen.getByRole('heading', { name: 'Synthesis' }),
       screen.getByText(/^Data as of/),
       screen.getByText('Analysed 14:32'),
       screen.getByText(/report saved to/i),
@@ -262,45 +289,6 @@ describe('Verdict panel: result', () => {
 
     expect(screen.getByText('Bullish lean')).toBeInTheDocument()
     expect(screen.queryByText(/data as of/i)).not.toBeInTheDocument()
-  })
-
-  it('shows the language-model note once, above Key tension and Synthesis', () => {
-    show(populated())
-
-    const note = screen.getByText(LM_NOTE)
-    expect(screen.getAllByText(LM_NOTE)).toHaveLength(1)
-    expect(note.compareDocumentPosition(screen.getByRole('heading', { name: 'Key tension' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(note.compareDocumentPosition(screen.getByRole('heading', { name: 'Synthesis' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  })
-
-  it('renders Markdown bold as bold with no asterisks, and never as HTML, in Key tension and Synthesis', () => {
-    const { container } = show(populated({
-      synthesis: { ...MOCK_RESULT.synthesis, key_tension: 'The **key point** is the index.', reasoning: 'A **bold** summary. <b>not bold</b>' },
-    }))
-
-    expect(container.textContent).not.toContain('**')
-    expect(screen.getByText('key point').tagName).toBe('STRONG')
-    expect(screen.getByText('bold').tagName).toBe('STRONG')
-    expect(screen.queryByText('not bold')).not.toBeInTheDocument()
-    expect(container.querySelector('b')).toBeNull()
-  })
-})
-
-describe('Verdict panel: Key tension', () => {
-  it('says "Key tension unavailable" and shows no text as the key tension when it is null', () => {
-    show(populated({ synthesis: { ...MOCK_RESULT.synthesis, key_tension: null } }))
-
-    const block = screen.getByRole('heading', { name: 'Key tension' }).closest('section')
-    expect(within(block).getByText('Key tension unavailable')).toBeInTheDocument()
-    expect(within(block).queryByText(MOCK_RESULT.synthesis.key_tension)).not.toBeInTheDocument()
-  })
-
-  it('shows the key tension the model wrote under its heading', () => {
-    show(populated())
-
-    const block = screen.getByRole('heading', { name: 'Key tension' }).closest('section')
-    expect(within(block).getByText(MOCK_RESULT.synthesis.key_tension)).toBeInTheDocument()
-    expect(screen.queryByText(/key tension unavailable/i)).not.toBeInTheDocument()
   })
 })
 
@@ -349,7 +337,7 @@ describe('Verdict panel: verdict badge and stance chips', () => {
 
   it('every stance chip reads agent, arrow and word', () => {
     show(populated({
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['a']),
         news: position('news', 'neutral', ['b']),
         macro: position('macro', 'bear', ['c']),
@@ -363,7 +351,7 @@ describe('Verdict panel: verdict badge and stance chips', () => {
 
   it('tints bullish and bearish chips, and leaves neutral on the inset surface', () => {
     const { container } = show(populated({
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['a']),
         news: position('news', 'neutral', ['b']),
         macro: position('macro', 'bear', ['c']),
@@ -389,7 +377,7 @@ describe('Verdict panel: one agent unavailable', () => {
     show(oneDegraded({
       verdict: 'SPLIT',
       agreement_level: 'split',
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['RSI above 55']),
         news: NEWS_DEGRADED,
         macro: position('macro', 'neutral', ['VN-Index flat']),
@@ -417,7 +405,7 @@ describe('Verdict panel: one agent unavailable', () => {
   it('a split of three reads "Split — 3 different positions"', () => {
     show(withVerdict('SPLIT', {
       agreement_level: 'split',
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['a']),
         news: position('news', 'neutral', ['b']),
         macro: position('macro', 'bear', ['c']),
@@ -491,7 +479,6 @@ describe('Verdict panel: insufficient data', () => {
       data_age_sessions: 1,
       agents_degraded: ['news', 'macro'],
       round1: { technical, news, macro },
-      round2: { technical, news, macro },
     }))
 
     expect(screen.getByText(/fewer than two agents produced a usable position/i)).toBeInTheDocument()
@@ -829,18 +816,22 @@ describe('Verdict panel: fixed text (Rule 5 and Rule 6)', () => {
   })
 })
 
-// The warn colours belong to Key tension alone, and a failure is named in the primary ink: both are
-// stylesheet rules jsdom cannot compute, so they are read from the stylesheet's own text.
+// A failure is named in the primary ink, and no component uses the warn colours: both are stylesheet
+// rules jsdom cannot compute, so they are read from the stylesheets' own text.
 describe('Verdict panel stylesheet', () => {
   const css = readSrc('components/VerdictPanel/verdict-panel.css')
 
-  it('uses the warn tokens only in rules about Key tension', () => {
-    const offenders = parseRules(css)
-      .filter((rule) => /--warn-/.test(rule.body) && !/tension/.test(rule.selector))
-      .map((rule) => rule.selector)
+  it('refers to no --warn- token in any component stylesheet (the tokens stay defined, unused)', () => {
+    const offenders = allCssFiles()
+      .filter((file) => file !== 'styles/tokens.css')
+      .filter((file) => /--warn-/.test(readSrc(file)))
 
     expect(offenders).toEqual([])
-    expect(/--warn-/.test(css)).toBe(true)
+    expect(/--warn-line:/.test(readSrc('styles/tokens.css'))).toBe(true)
+  })
+
+  it('has no Key tension or Synthesis rule left', () => {
+    expect(css).not.toMatch(/verdict-panel__(tension|synthesis)/)
   })
 
   it('draws a failure in the primary ink, with no up or down colour', () => {

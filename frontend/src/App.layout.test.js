@@ -53,26 +53,37 @@ describe('shell layout', () => {
 describe('drawer-mode strip', () => {
   const css = readSrc('App.css')
   const rule = (selector) => declarations(rulesFor(css, selector)[0].body)
+  const DRAWER = ".app-shell[data-layout='drawer']"
 
-  it('lays the Verdict panel out as a three-column strip under the chart', () => {
-    const strip = rule(".app-shell[data-layout='drawer'] .verdict-panel")
+  it('lays the Verdict panel out as a two-column strip under the chart', () => {
+    const strip = rule(`${DRAWER} .verdict-panel`)
 
     expect(strip.display).toBe('grid')
-    expect(strip['grid-template-columns'].split(' minmax').length).toBe(3)
+    expect(strip['grid-template-columns'].split(' minmax').length).toBe(2)
     expect(strip['row-gap']).toBe('0')
   })
 
-  it('puts the range block at the left, Key tension at the right, Synthesis and the foot on full-width rows', () => {
-    expect(rule(".app-shell[data-layout='drawer'] .verdict-panel > .range-block")['grid-column']).toBe('1')
-    expect(rule(".app-shell[data-layout='drawer'] .verdict-panel__tension")['grid-column']).toBe('3')
-    expect(rule(".app-shell[data-layout='drawer'] .verdict-panel__synthesis")['grid-column']).toBe('1 / -1')
-    expect(rule(".app-shell[data-layout='drawer'] .verdict-panel__foot")['grid-column']).toBe('1 / -1')
+  it('puts the range block at the left, the verdict at the right, and the foot on a full-width row', () => {
+    expect(rule(`${DRAWER} .verdict-panel > .range-block`)['grid-column']).toBe('1')
+    expect(rule(`${DRAWER} .verdict-panel__foot`)['grid-column']).toBe('1 / -1')
+    // Every cell of the panel's wrappers (which dissolve into the grid) sits in the second column.
+    const cells = parseRules(css).filter((r) => r.selector.includes(DRAWER) && r.selector.trim().endsWith('> *'))
+    expect(cells.map((r) => declarations(r.body)['grid-column'])).toEqual(['2'])
   })
 
-  it('applies to drawer mode only', () => {
-    for (const { selector } of parseRules(css)) {
-      if (selector.includes('verdict-panel__tension')) expect(selector).toContain("[data-layout='drawer']")
+  it('has no third column and no rule for the removed Key tension or Synthesis blocks', () => {
+    expect(css).not.toMatch(/verdict-panel__(tension|synthesis)/)
+    for (const { selector, body } of parseRules(css)) {
+      if (!selector.includes("[data-layout='drawer']")) continue
+      expect(declarations(body)['grid-column'] ?? '', selector).not.toBe('3')
     }
+  })
+
+  it('puts the result\'s data, time and report lines on full-width rows under the chips, before the foot', () => {
+    const meta = rule(`${DRAWER} .verdict-panel__result > .verdict-panel__meta`)
+
+    expect(meta['grid-column']).toBe('1 / -1')
+    expect(Number(meta.order)).toBeLessThan(Number(rule(`${DRAWER} .verdict-panel__foot`).order))
   })
 })
 

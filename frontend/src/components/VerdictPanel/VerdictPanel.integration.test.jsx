@@ -47,7 +47,7 @@ function stubApi() {
       fail = (error) => reject(error)
     }),
   )
-  vi.spyOn(tickersApi, 'getDebateProgress').mockResolvedValue({ ticker: 'VCB', running: true, stage: 'round2', elapsed_ms: 1000 })
+  vi.spyOn(tickersApi, 'getDebateProgress').mockResolvedValue({ ticker: 'VCB', running: true, stage: 'round1', elapsed_ms: 1000 })
   vi.spyOn(tickersApi, 'fetchTickers').mockResolvedValue({ tickers: [catalogEntry('VCB'), catalogEntry('FPT')] })
   vi.spyOn(tickersApi, 'fetchTickerHistory').mockImplementation(async (ticker) => ({
     ticker, rows: [{ date: '2026-10-07', open: 10, high: 11, low: 9, close: 10.5, volume: 100 }],
@@ -73,16 +73,16 @@ describe('Verdict panel and Debate matrix with their real hooks', () => {
     renderWithQuery(<Harness />)
 
     fireEvent.click(await screen.findByRole('button', { name: /analyse vcb/i }))
-    expect(await screen.findByText('Comparing positions…')).toBeInTheDocument()
+    expect(await screen.findByText('Running agents…')).toBeInTheDocument()
     expect(screen.getByText(/^\d+ s$/)).toBeInTheDocument() // not "0 s": a slow runner may be past a second
-    expect(matrix().querySelectorAll('.agent-card--skeleton')).toHaveLength(6)
+    expect(matrix().querySelectorAll('.agent-card--skeleton')).toHaveLength(3)
 
     await act(async () => api.finish())
 
     expect(await within(panel()).findByText('Bullish lean')).toBeInTheDocument()
     expect(within(panel()).getByText(/^Analysed \d\d:\d\d$/)).toBeInTheDocument()
-    expect(within(matrix()).getAllByRole('article')).toHaveLength(6)
-    expect(within(matrix()).getByText('RSI at 62 is bullish')).toBeInTheDocument()
+    expect(within(matrix()).getAllByRole('article')).toHaveLength(3)
+    expect(within(matrix()).getByText('RSI: 62.0')).toBeInTheDocument()
     expect(api.run).toHaveBeenCalledTimes(1)
   })
 
@@ -90,11 +90,11 @@ describe('Verdict panel and Debate matrix with their real hooks', () => {
     const api = stubApi()
     renderWithQuery(<Harness />)
     fireEvent.click(await screen.findByRole('button', { name: /analyse vcb/i }))
-    await screen.findByText('Comparing positions…')
+    await screen.findByText('Running agents…')
 
     switchTicker() // FPT, never analysed this session
     expect(await screen.findByRole('button', { name: /analyse fpt/i })).toBeInTheDocument()
-    expect(screen.queryByText('Comparing positions…')).not.toBeInTheDocument()
+    expect(screen.queryByText('Running agents…')).not.toBeInTheDocument()
     expect(within(matrix()).queryByRole('article')).not.toBeInTheDocument()
 
     await act(async () => api.finish()) // VCB finishes while FPT is on screen
@@ -103,7 +103,7 @@ describe('Verdict panel and Debate matrix with their real hooks', () => {
     switchTicker() // back to VCB
     expect(await within(panel()).findByText('Bullish lean')).toBeInTheDocument()
     expect(within(panel()).getByText(/^Analysed \d\d:\d\d$/)).toBeInTheDocument()
-    expect(within(matrix()).getAllByRole('article')).toHaveLength(6)
+    expect(within(matrix()).getAllByRole('article')).toHaveLength(3)
     expect(api.run).toHaveBeenCalledTimes(1)
   })
 
@@ -111,14 +111,14 @@ describe('Verdict panel and Debate matrix with their real hooks', () => {
     const api = stubApi()
     renderWithQuery(<Harness />)
     fireEvent.click(await screen.findByRole('button', { name: /analyse vcb/i }))
-    await screen.findByText('Comparing positions…')
+    await screen.findByText('Running agents…')
 
     switchTicker()
     switchTicker()
 
-    expect(await screen.findByText('Comparing positions…')).toBeInTheDocument()
+    expect(await screen.findByText('Running agents…')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /analyse vcb/i })).not.toBeInTheDocument()
-    expect(matrix().querySelectorAll('.agent-card--skeleton')).toHaveLength(6)
+    expect(matrix().querySelectorAll('.agent-card--skeleton')).toHaveLength(3)
     await act(async () => api.finish())
     expect(api.run).toHaveBeenCalledTimes(1)
   })
@@ -127,18 +127,18 @@ describe('Verdict panel and Debate matrix with their real hooks', () => {
     const api = stubApi()
     renderWithQuery(<Harness />)
     fireEvent.click(await screen.findByRole('button', { name: /analyse vcb/i }))
-    await screen.findByText('Comparing positions…')
+    await screen.findByText('Running agents…')
     await act(async () => api.finish())
     await within(panel()).findByText('Bullish lean')
 
     fireEvent.click(screen.getByRole('button', { name: /re-analyse vcb/i }))
-    await screen.findByText('Comparing positions…')
+    await screen.findByText('Running agents…')
     await act(async () => api.fail(new ApiError('Another analysis is already running; try again shortly.', {
       status: 429, body: { code: 'debate_busy' },
     })))
 
     expect(await within(panel()).findByRole('alert')).toHaveTextContent('Another analysis is already running; try again shortly.')
     expect(within(panel()).getByText('Bullish lean')).toBeInTheDocument()
-    expect(within(matrix()).getAllByRole('article')).toHaveLength(6)
+    expect(within(matrix()).getAllByRole('article')).toHaveLength(3)
   })
 })

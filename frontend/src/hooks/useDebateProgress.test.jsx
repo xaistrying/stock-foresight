@@ -70,25 +70,25 @@ describe('useDebateProgress', () => {
   it('keeps the last value when a poll fails', async () => {
     const { wrapper } = setup()
     const poll = vi.spyOn(tickersApi, 'getDebateProgress')
-      .mockResolvedValueOnce(progress('round2'))
+      .mockResolvedValueOnce(progress('round1'))
       .mockRejectedValue(new Error('network'))
 
     const { result } = render(wrapper, 1000)
     await vi.advanceTimersByTimeAsync(10)
-    expect(result.current.data).toEqual(progress('round2'))
+    expect(result.current.data).toEqual(progress('round1'))
 
     await vi.advanceTimersByTimeAsync(2000)
 
     expect(poll).toHaveBeenCalledTimes(2)
-    expect(result.current.data).toEqual(progress('round2'))
+    expect(result.current.data).toEqual(progress('round1'))
   })
 
   it('a new run does not start with the last run\'s stage', async () => {
     const { wrapper } = setup()
-    vi.spyOn(tickersApi, 'getDebateProgress').mockResolvedValue(progress('synthesis'))
+    vi.spyOn(tickersApi, 'getDebateProgress').mockResolvedValue(progress('round1'))
     const { result, rerender } = render(wrapper, 1000)
     await vi.advanceTimersByTimeAsync(10)
-    expect(result.current.data.stage).toBe('synthesis')
+    expect(result.current.data.stage).toBe('round1')
     rerender({ started: null })
 
     rerender({ started: 5000 }) // the next run, before its first poll has answered

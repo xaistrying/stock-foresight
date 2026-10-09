@@ -1,5 +1,5 @@
-// Debate results in the shape the backend serialises (backend/app/api/debate.py), shared by the
-// Verdict panel, Debate matrix and integration tests. Agent text avoids the words the Rule 6 guard
+// Debate results in the shape the backend serialises (backend/app/api/debate.py): `round1` only, no
+// `round2` and no `synthesis`. Shared by the Verdict panel, Debate matrix and integration tests. Agent text avoids the words the Rule 6 guard
 // forbids ("buy", "sell", "hold") so the guard can scan whole renderings.
 
 export const position = (agentId, stance, reasoning, extra = {}) => ({
@@ -19,20 +19,9 @@ export const MOCK_RESULT = {
   verdict: 'BUY_SIGNAL',
   agreement_level: 'majority',
   round1: {
-    technical: position('technical', 'bull', ['RSI at 62 is bullish', 'MACD positive']),
+    technical: position('technical', 'bull', ['RSI: 62.0', 'MACD histogram: 0.12']),
     news: position('news', 'bull', ['Positive Q3 earnings reported']),
-    macro: position('macro', 'neutral', ['VN-Index flat over 20 sessions']),
-  },
-  round2: {
-    technical: position('technical', 'bull', ['Maintained — RSI still above 55']),
-    news: position('news', 'bull', ['Held — earnings confirmed']),
-    macro: position('macro', 'neutral', ['Held — macro mixed']),
-  },
-  synthesis: {
-    verdict: 'BUY_SIGNAL',
-    agreement_level: 'majority',
-    key_tension: 'Technical and news are bullish but macro remains cautious.',
-    reasoning: 'Two of three agents signal a bullish picture for VCB.',
+    macro: position('macro', 'neutral', ['VN-Index trend: flat']),
   },
   range_5s_pct: 4.14,
   sigma_daily_pct: 1.85,
@@ -68,8 +57,6 @@ export function insufficient(reasons, overrides = {}) {
     eligibility: { eligible: false, reasons },
     agents_degraded: [],
     round1: {},
-    round2: {},
-    synthesis: { verdict: 'INSUFFICIENT_DATA', agreement_level: 'none', key_tension: '', reasoning: '' },
     range_5s_pct: null,
     sigma_daily_pct: null,
     range_coverage: null,
@@ -79,17 +66,16 @@ export function insufficient(reasons, overrides = {}) {
 }
 
 export function withVerdict(verdict, extra = {}) {
-  return populated({ verdict, synthesis: { ...MOCK_RESULT.synthesis, verdict }, ...extra })
+  return populated({ verdict, ...extra })
 }
 
 /** One agent unavailable: News, with the two live agents on the same stance. */
 export function oneDegraded(overrides = {}) {
   return populated({
-    round1: { ...MOCK_RESULT.round1, news: NEWS_DEGRADED },
-    round2: {
-      technical: position('technical', 'bull', ['RSI above 55']),
+    round1: {
+      technical: position('technical', 'bull', ['RSI: 62.0']),
       news: NEWS_DEGRADED,
-      macro: position('macro', 'bull', ['VN-Index up']),
+      macro: position('macro', 'bull', ['VN-Index trend: up (+)']),
     },
     agents_degraded: ['news'],
     ...overrides,
