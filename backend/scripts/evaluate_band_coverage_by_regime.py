@@ -25,13 +25,16 @@ research and non-commercial use; this study is inside that (not legal advice).
 
 Run from the project root:
     python backend/scripts/evaluate_band_coverage_by_regime.py --depth-only
-    python backend/scripts/evaluate_band_coverage_by_regime.py --fetch-index backend/data/study_cache/vnindex_closes.csv --json OUT.json
-    python backend/scripts/evaluate_band_coverage_by_regime.py --index-csv backend/data/study_cache/vnindex_closes.csv
+    python backend/scripts/evaluate_band_coverage_by_regime.py --fetch-index [CSV] --json OUT.json
+    python backend/scripts/evaluate_band_coverage_by_regime.py --index-csv [CSV]
+(CSV defaults to backend/data/study_cache/vnindex_closes.csv, which is gitignored.)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import sys
 import time
@@ -264,7 +267,7 @@ def format_depth(history: IndexHistory, source: str | None) -> str:
         + ("none" if not depth["gaps_over_10_days"] else str(depth["gaps_over_10_days"])),
         f"  vendor history-limit warning logged: {'yes' if history.history_limit_warning else 'no'}"
         + (f" {list(history.warnings)}" if history.warnings else ""),
-        f"  floor for the study (Decision 4): first date <= {INDEX_FLOOR_DATE}: {'reached' if reached else 'NOT reached'}",
+        f"  floor of Decision 4 (first date <= {INDEX_FLOOR_DATE}): {'reached' if reached else 'NOT reached'}",
     ]
     lines += [f"  call {i}: {c}" for i, c in enumerate(history.calls, 1)]
     return "\n".join(lines)
@@ -470,7 +473,7 @@ def year_adjusted_gap(cells: pd.DataFrame) -> dict | None:
 
 
 def cell_stats(cells: pd.DataFrame, labels: pd.Series) -> dict:
-    """Per third: windows, distinct dates and months, regime episodes, coverage, and the mean and sd of the per-date coverage."""
+    """Per third: windows, distinct dates and months, episodes, coverage, and the mean and sd of per-date coverage."""
     episodes = episode_counts(labels.reindex(sorted(cells["date"].unique())))
     stats = {}
     for regime in REGIMES:
@@ -562,11 +565,12 @@ def decide_outcome(early: dict, late: dict, year_adjusted: dict | None, index_ma
     under = {name: half for name, half in halves.items() if abs(half["gap"]) < PASS_GAP}
     opposite = early["gap"] * late["gap"] < 0
     if under or opposite:
-        reasons = [f"{name} half gap {_points(half['gap'])} is under the {PASS_GAP * 100:.0f}-point level" for name, half in under.items()]
+        level = f"{PASS_GAP * 100:.0f}-point level"
+        reasons = [f"{name} half gap {_points(half['gap'])} is under the {level}" for name, half in under.items()]
         reasons += ["the two halves' gaps have opposite signs"] if opposite else []
         notes = [
-            f"{name} half: its interval {_interval_text(half['ci'])} reaches {PASS_GAP * 100:.0f} points, so the level is "
-            "not met but this is not evidence that no regime effect exists"
+            f"{name} half: its interval {_interval_text(half['ci'])} reaches {PASS_GAP * 100:.0f} points, so the "
+            "level is not met but this is not evidence that no regime effect exists"
             for name, half in under.items() if max(abs(half["ci"][0]), abs(half["ci"][1])) >= PASS_GAP
         ]
         return {"outcome": "KILL", "reasons": reasons, "notes": notes}
@@ -579,11 +583,12 @@ def decide_outcome(early: dict, late: dict, year_adjusted: dict | None, index_ma
         failing.append(f"year-adjusted gap {_points(year_adjusted['gap'])} has the opposite sign to the halves")
     elif not _excludes_zero(year_adjusted["ci"]):
         failing.append(
-            f"year-adjusted interval {_interval_text(year_adjusted['ci'])} includes zero: not separable from the by-year variation"
+            f"year-adjusted interval {_interval_text(year_adjusted['ci'])} includes zero: "
+            "not separable from the by-year variation"
         )
     if failing:
         return {"outcome": "INCONCLUSIVE", "reasons": failing,
-                "notes": ["Both gaps meet the level; failing an interval is not evidence that no regime effect exists."]}
+                "notes": ["Both gaps meet the level; a failing interval is not evidence that no regime effect exists."]}
     return {"outcome": "PASS", "reasons": [], "notes": [
         "PASS is evidence that a later change may design a regime-aware reading. Nothing is served: any "
         "user-facing use needs its own change (P7) and Rule 4 sign-off, because a by-regime coverage figure "
@@ -633,24 +638,253 @@ def format_by_year(folds: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--depth-only", action="store_true", help="fetch, print the index depth and exit; reads no database")
-    parser.add_argument("--source", choices=("kbs", "vci"), default=None, help="pin the vendor source (default: the vendor's)")
-    args = parser.parse_args(argv)
+# ---------------------------------------------------------------------------
+# The index CSV cache (design Decision 5): `date,close`, outside app.db, gitignored
+# ---------------------------------------------------------------------------
+DEFAULT_INDEX_CSV = HERE.parent / "data" / "study_cache" / "vnindex_closes.csv"
 
-    print(HEADER)
-    if args.depth_only:
-        try:
+
+def write_index_csv(path: Path, closes: pd.Series) -> None:
+    """Write `date,close` atomically (temp file, then replace); a failed write leaves no partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        closes.rename_axis("date").rename("close").to_csv(tmp)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def read_index_csv(path: Path) -> pd.Series:
+    frame = pd.read_csv(path, dtype={"date": str})
+    if list(frame.columns) != ["date", "close"]:
+        raise ValueError(f"{path} must have the columns date,close; it has {list(frame.columns)}")
+    closes = pd.Series(frame["close"].astype("float64").to_numpy(), index=frame["date"].to_numpy())
+    if closes.index.has_duplicates or not closes.index.is_monotonic_increasing or not (closes > 0).all():
+        raise ValueError(f"{path} must have one positive close per date, ascending")
+    return closes
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Assembling the read-only study
+# ---------------------------------------------------------------------------
+def load_out_of_time(db_path: Path, min_train_rows: int | None = None) -> dict:
+    """Read the modelling universe and its windows (mode=ro), then measure the band out of time."""
+    conn = open_readonly(db_path)
+    try:
+        symbols = modelling_universe(conn=conn)  # read at run time: a symbol that newly fails a filter drops out
+        frame = load_frame(conn, symbols) if symbols else pd.DataFrame()
+    finally:
+        conn.close()
+    if frame.empty:
+        raise ValueError("no windows in the modelling universe")
+    min_train_rows = MIN_TRAIN_ROWS if min_train_rows is None else min_train_rows  # read at call time
+    windows, folds = out_of_time_windows(frame, min_train_rows=min_train_rows)
+    return {
+        "windows": windows, "folds": folds,
+        "universe": {
+            "symbols": len(symbols), "tickers_with_windows": int(frame["ticker"].nunique()), "windows": int(len(frame))
+        },
+        "sessions": sorted(frame["date"].unique()),  # the stock calendar, a stand-in for index sessions
+    }
+
+
+def needed_index_start(sessions: list[str], first_test_date: str | None) -> str:
+    """The date 271 sessions before the first test date: the earliest index close the study needs."""
+    if first_test_date is None or first_test_date not in sessions:
+        return INDEX_FLOOR_DATE
+    return sessions[max(sessions.index(first_test_date) - (VOL_WINDOW + PERCENTILE_WINDOW - 1), 0)]
+
+
+def _sensitivity(result: dict) -> dict:
+    return {name: {k: half[k] for k in ("gap", "ci", "half_width")} for name, half in result["halves"].items()} | {
+        "year_adjusted": None if result["year_adjusted"] is None else {
+            k: result["year_adjusted"][k] for k in ("gap", "ci", "years")}
+    }
+
+
+def evaluate(study: dict, index_closes: pd.Series, provenance: dict | None = None) -> dict:
+    """The full report for out-of-time windows and an index series; the expanding percentile is sensitivity only."""
+    windows = study["windows"]
+    regime = evaluate_regime(windows, regime_labels(index_closes))
+    return {
+        "header": HEADER, "universe": study["universe"],
+        "index": index_depth(index_closes) | (provenance or {}),
+        "by_year": study["folds"], "reviewer_reported_by_year": list(REVIEWER_REPORTED_BY_YEAR),
+        "regime": regime,
+        "sensitivity_expanding": _sensitivity(evaluate_regime(windows, regime_labels(index_closes, expanding=True))),
+        "outcome": regime["outcome"],
+    }
+
+
+def run(
+    db_path: Path, index_closes: pd.Series, *, min_train_rows: int | None = None, provenance: dict | None = None
+) -> dict:
+    return evaluate(load_out_of_time(db_path, min_train_rows), index_closes, provenance)
+
+
+# ---------------------------------------------------------------------------
+# Report
+# ---------------------------------------------------------------------------
+def _interval(ci: tuple) -> str:
+    return "n/a" if ci[0] is None else _interval_text(ci)
+
+
+def _cell_line(regime: str, cell: dict | None) -> str:
+    if not cell or not cell["windows"]:
+        return f"    {regime:<9} no windows"
+    sd = "n/a" if cell["date_sd"] is None else f"{cell['date_sd'] * 100:.1f} points"
+    return (f"    {regime:<9} windows {cell['windows']:>9,}  dates {cell['dates']:>5}  months {cell['months']:>3}  "
+            f"episodes {cell['episodes']:>3}  coverage {_pct(cell['coverage'])}  "
+            f"per-date mean {_pct(cell['date_mean'])} sd {sd}")
+
+
+def _half_lines(name: str, half: dict) -> list[str]:
+    side = f"window dates {'before' if name == 'early' else 'from'} {SPLIT_DATE}"
+    lines = [f"  {name} half ({side}); windows in {half['months']} months:"]
+    lines += [_cell_line(regime, half["cells"][regime]) for regime in REGIMES]
+    if half["gap"] is None:
+        return lines + ["    gap calm - volatile: not computable (a third has no windows)"]
+    lines.append(
+        f"    gap calm - volatile {_points(half['gap'])}; month-block 95% interval {_interval(half['ci'])}, half-width "
+        f"{half['half_width'] * 100:.1f} points ({half['dropped_share']:.1%} of draws dropped for an empty third)"
+    )
+    flag = "  DISAGREES with the month-block interval about excluding zero" if half["disagreement"] else ""
+    lines.append(f"    quarter-block 95% interval {_interval(half['quarter_ci'])}{flag}")
+    return lines
+
+
+def _provenance_lines(index: dict) -> list[str]:
+    gaps = index["gaps_over_10_days"] or "none"
+    lines = [f"VN-Index series: first date {index['first_date']}, last date {index['last_date']}, "
+             f"{index['sessions']} sessions, calendar gaps over {GAP_DAYS} days: {gaps}"]
+    if index.get("source"):
+        lines.append(f"  source: {index['source']}; {index.get('fetched_label', 'fetched')}: {index.get('fetched')}")
+    if index.get("sha256"):
+        lines.append(f"  csv: {index['path']}  SHA-256 {index['sha256']}")
+    return lines
+
+
+def format_report(report: dict) -> str:
+    regime, ex = report["regime"], report["regime"]["exclusions"]
+    lines = [
+        report["header"], "",
+        f"Universe: {report['universe']['symbols']} symbols from ticker_universe at run time; "
+        f"{report['universe']['windows']:,} windows, {ex['windows']:,} of them out-of-time test windows.",
+        *_provenance_lines(report["index"]), "",
+        f"Windows excluded from every regime figure: {ex['no_index_close']:,} with no index close, "
+        f"{ex['warm_up']:,} in the index warm-up (the first {VOL_WINDOW + PERCENTILE_WINDOW - 1} sessions); "
+        f"{ex['with_regime']:,} have a regime. "
+        f"Test dates with an index close: {_pct(ex['index_match'])} (need {MIN_INDEX_MATCH:.0%}).", "",
+        format_by_year(report["by_year"]), "",
+        f"Coverage by market regime (trailing {PERCENTILE_WINDOW}-session percentile of {VOL_WINDOW}-session "
+        "index volatility, thirds; windows, dates and months are not independent observations, episodes are the "
+        "effective sample):",
+    ]
+    for name, half in regime["halves"].items():
+        lines += _half_lines(name, half)
+    adjusted = regime["year_adjusted"]
+    lines.append(
+        "  year-adjusted gap: unavailable (no year has both thirds on at least "
+        f"{MIN_DATES_PER_YEAR_CELL} dates)" if adjusted is None else
+        f"  year-adjusted gap {_points(adjusted['gap'])} over years {adjusted['years']}; 95% interval "
+        f"{_interval(adjusted['ci'])}, half-width {adjusted['half_width'] * 100:.1f} points"
+    )
+    lines += ["", "Sensitivity, expanding percentile (does not enter the outcome):"]
+    for name in ("early", "late"):
+        half = report["sensitivity_expanding"][name]
+        lines.append(f"  {name} half: " + ("not computable" if half["gap"] is None else
+                     f"gap {_points(half['gap'])}, 95% interval {_interval(half['ci'])}"))
+    outcome = regime["outcome"]
+    lines += ["", f"OUTCOME: {outcome['outcome']}  (level: {PASS_GAP * 100:.0f} points in both halves, same sign, "
+              "intervals excluding zero, year-adjusted gap agreeing; fixed in the spec before any run)"]
+    lines += [f"  reason: {reason}" for reason in outcome["reasons"]] + [f"  note: {note}" for note in outcome["notes"]]
+    return "\n".join(lines)
+
+
+def _json_safe(value):
+    """Plain JSON: numpy scalars to Python, tuples to lists, NaN to null."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.generic):
+        value = value.item()
+    return None if isinstance(value, float) and not np.isfinite(value) else value
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def _load_index(args, study: dict) -> tuple[pd.Series, dict]:
+    """The index closes and their provenance: a cached CSV (no network call), or one paced vendor fetch."""
+    if args.index_csv:
+        path = args.index_csv
+        modified = date.fromtimestamp(path.stat().st_mtime).isoformat()
+        return read_index_csv(path), {"source": "cached CSV (the vendor and fetch date are not stored in it)",
+                                      "fetched_label": "file modified", "fetched": modified,
+                                      "path": str(path), "sha256": file_sha256(path)}
+    first_test = study["windows"]["date"].min() if len(study["windows"]) else None
+    history = fetch_index_history(
+        INDEX_FIRST_DATE, date.today().isoformat(), need_start=needed_index_start(study["sessions"], first_test),
+        source=args.source, sleep=time.sleep,
+    )
+    provenance = {
+        "source": f"vendor Market.index('{INDEX_SYMBOL}').ohlcv, source {args.source or 'default (kbs)'}, "
+                  f"versions {_versions()}",
+        "fetched": date.today().isoformat(), "calls": history.calls,
+        "history_limit_warning": history.history_limit_warning,
+    }
+    if args.fetch_index:
+        write_index_csv(args.fetch_index, history.closes)
+        provenance |= {"path": str(args.fetch_index), "sha256": file_sha256(args.fetch_index)}
+    return history.closes, provenance
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--db", type=Path, default=DB_PATH, help="SQLite file, opened read-only")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--index-csv", type=Path, nargs="?", const=DEFAULT_INDEX_CSV,
+                        help="read cached date,close; no network call")
+    source.add_argument("--fetch-index", type=Path, nargs="?", const=DEFAULT_INDEX_CSV,
+                        help="fetch the index and write date,close here")
+    source.add_argument("--depth-only", action="store_true",
+                        help="fetch, print the index depth and exit; reads no database, writes no file")
+    parser.add_argument("--source", choices=("kbs", "vci"), default=None, help="pin the vendor source")
+    parser.add_argument("--json", type=Path, dest="json_path", help="also write the report figures here")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.depth_only and args.json_path:
+        parser.error("--depth-only writes no file, so it cannot be combined with --json")
+
+    try:
+        if args.depth_only:
             history = fetch_index_history(
                 INDEX_FIRST_DATE, date.today().isoformat(), need_start=INDEX_FLOOR_DATE,
                 source=args.source, sleep=time.sleep,
             )
-        except IndexRateLimited as error:
-            sys.exit(f"ERROR: the vendor's rate limit ended the call ({error}); no series was written.")
-        print(format_depth(history, args.source))
-        return
-    parser.error("only --depth-only is implemented so far")
+            print(HEADER)
+            print(format_depth(history, args.source))
+            return
+        study = load_out_of_time(args.db)
+        closes, provenance = _load_index(args, study)
+    except IndexRateLimited as error:
+        sys.exit(f"ERROR: the vendor's rate limit ended the call ({error}); no series was written.")
+    report = evaluate(study, closes, provenance)
+    print(format_report(report))
+    if args.json_path:
+        args.json_path.parent.mkdir(parents=True, exist_ok=True)
+        args.json_path.write_text(json.dumps(_json_safe(report), indent=2, allow_nan=False))
 
 
 if __name__ == "__main__":

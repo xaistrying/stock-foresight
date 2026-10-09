@@ -352,7 +352,8 @@ def test_a_stock_window_whose_date_has_no_index_close_is_excluded_and_counted():
 
 
 def _half(gap, lo, hi, months=36, calm_months=20, volatile_months=20):
-    return {"gap": gap, "ci": (lo, hi), "months": months, "calm_months": calm_months, "volatile_months": volatile_months}
+    return {"gap": gap, "ci": (lo, hi), "months": months, "calm_months": calm_months,
+            "volatile_months": volatile_months}
 
 
 def _year_adjusted(gap, lo, hi):
@@ -425,7 +426,9 @@ def test_a_half_with_14_months_is_not_evaluable_whatever_the_late_half_shows():
 
 
 def test_a_third_with_too_few_months_makes_the_half_not_evaluable():
-    result = _decide(_half(0.07, 0.02, 0.12, volatile_months=7), _half(0.06, 0.01, 0.11), _year_adjusted(0.05, 0.01, 0.09))
+    early = _half(0.07, 0.02, 0.12, volatile_months=7)
+
+    result = _decide(early, _half(0.06, 0.01, 0.11), _year_adjusted(0.05, 0.01, 0.09))
 
     assert result["outcome"] == "INCONCLUSIVE"
     assert any("early half is not evaluable" in reason for reason in result["reasons"])
@@ -703,3 +706,212 @@ def test_the_by_year_table_is_recomputed_and_the_reviewers_range_is_only_a_label
     assert len(reference) == 1
     assert "reviewer-reported" in reference[0] and "not re-verified" in reference[0] and "74.1%" in reference[0]
     assert ebr.REVIEWER_REPORTED_BY_YEAR == (0.614, 0.741)
+
+
+# ---------------------------------------------------------------------------
+# the assembled read-only script: database, CSV cache, report (tasks 4.1, 4.2)
+# ---------------------------------------------------------------------------
+
+SYMBOLS = ("AAA", "BBB", "CCC", "DDD")
+
+
+def _make_db(path: Path, symbols=SYMBOLS, n_rows: int = 1500) -> None:
+    import sqlite3
+
+    from app.db.schema import CREATE_OHLCV_TABLE, CREATE_TICKER_UNIVERSE_TABLE
+
+    rng = np.random.default_rng(5)
+    dates = pd.bdate_range("2019-01-01", periods=n_rows).strftime("%Y-%m-%d")
+    conn = sqlite3.connect(path)
+    conn.execute(CREATE_OHLCV_TABLE)
+    conn.execute(CREATE_TICKER_UNIVERSE_TABLE)
+    for symbol in symbols:
+        closes = 20 * np.exp(np.cumsum(rng.normal(0, 0.015, n_rows)))
+        conn.executemany(
+            "INSERT INTO ohlcv VALUES (?, ?, ?, ?, ?, ?, 1000)",
+            [(symbol, d, c, c, c, c) for d, c in zip(dates, closes)],
+        )
+        conn.execute(
+            "INSERT INTO ticker_universe (symbol, listing_status, fails_liquidity_filter, "
+            "below_minimum_history, ingestion_state, updated_at) VALUES (?, 'listed', 0, 0, 'ok', 'x')",
+            (symbol,),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _index_series() -> pd.Series:
+    """Index closes on the same business-day calendar as the synthetic stocks, starting a year earlier."""
+    rng = np.random.default_rng(11)
+    dates = pd.bdate_range("2018-01-01", periods=2000).strftime("%Y-%m-%d")
+    return pd.Series(1000 * np.exp(np.cumsum(rng.normal(0, 0.01, 2000))), index=dates)
+
+
+@pytest.fixture
+def small_folds(monkeypatch):
+    """The synthetic database has a few thousand windows, not the 40,000 a real fold needs."""
+    monkeypatch.setattr(ebr, "MIN_TRAIN_ROWS", 1000)
+
+
+@pytest.fixture
+def study_db(tmp_path, small_folds):
+    path = tmp_path / "db" / "app.db"
+    path.parent.mkdir()
+    _make_db(path)
+    return path
+
+
+def _no_network(monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("the study made a vendor call")
+
+    monkeypatch.setattr(ebr, "fetch_index_history", refuse)
+    monkeypatch.setattr(ebr, "_index_handle", refuse)
+
+
+def test_the_study_leaves_the_database_bytes_unchanged_and_its_connection_cannot_write(study_db, monkeypatch):
+    import hashlib
+    import sqlite3
+
+    before = hashlib.sha256(study_db.read_bytes()).hexdigest()
+    siblings = sorted(p.name for p in study_db.parent.iterdir())
+    write_attempts = []
+    real_open = ebr.open_readonly
+
+    def spying_open(path):
+        conn = real_open(path)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("INSERT INTO ohlcv VALUES ('ZZZ', '2020-01-01', 1, 1, 1, 1, 1)")
+        write_attempts.append(conn)
+        return conn
+
+    monkeypatch.setattr(ebr, "open_readonly", spying_open)
+
+    report = ebr.run(study_db, _index_series())
+
+    assert write_attempts, "the script never opened the database through open_readonly"
+    assert hashlib.sha256(study_db.read_bytes()).hexdigest() == before
+    assert sorted(p.name for p in study_db.parent.iterdir()) == siblings  # no journal, no model file
+    assert report["outcome"]["outcome"] in ("PASS", "KILL", "INCONCLUSIVE")
+
+
+def test_no_file_is_created_without_fetch_index_or_json(study_db, tmp_path, monkeypatch, capsys):
+    csv = tmp_path / "cache.csv"
+    ebr.write_index_csv(csv, _index_series())
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    cache_before = sorted(p.name for p in tmp_path.iterdir())
+    _no_network(monkeypatch)
+
+    ebr.main(["--db", str(study_db), "--index-csv", str(csv)])
+
+    assert list(workdir.iterdir()) == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == cache_before
+
+
+def test_the_first_output_line_says_study_output_not_shown_to_users_not_advice(study_db, tmp_path, monkeypatch, capsys):
+    csv = tmp_path / "cache.csv"
+    ebr.write_index_csv(csv, _index_series())
+    _no_network(monkeypatch)
+
+    ebr.main(["--db", str(study_db), "--index-csv", str(csv)])
+
+    first = capsys.readouterr().out.splitlines()[0].lower()
+    assert first.startswith("study output")
+    assert "not shown to any user" in first and "not investment advice" in first
+
+
+def test_a_cached_csv_makes_no_network_call_and_the_report_names_its_sha256(study_db, tmp_path, monkeypatch, capsys):
+    import hashlib
+
+    csv = tmp_path / "cache.csv"
+    ebr.write_index_csv(csv, _index_series())
+    _no_network(monkeypatch)  # any vendor call raises
+
+    ebr.main(["--db", str(study_db), "--index-csv", str(csv)])
+
+    assert hashlib.sha256(csv.read_bytes()).hexdigest() in capsys.readouterr().out
+
+
+def test_fetch_index_writes_a_date_close_csv_that_reads_back_the_same_series(study_db, tmp_path, monkeypatch, capsys):
+    import hashlib
+
+    series = _index_series()
+    history = ebr.IndexHistory(series, [{"end": "x", "count": 1, "rows": len(series), "first": series.index[0],
+                                         "last": series.index[-1]}], False, ())
+    monkeypatch.setattr(ebr, "fetch_index_history", lambda *a, **k: history)
+    csv = tmp_path / "cache" / "vnindex_closes.csv"
+
+    ebr.main(["--db", str(study_db), "--fetch-index", str(csv)])
+
+    assert csv.read_text().splitlines()[0] == "date,close"
+    pd.testing.assert_series_equal(ebr.read_index_csv(csv), series, check_names=False)
+    assert hashlib.sha256(csv.read_bytes()).hexdigest() in capsys.readouterr().out
+
+
+def test_a_rate_limit_while_fetching_exits_non_zero_and_writes_no_csv(study_db, tmp_path, monkeypatch):
+    def limited(*_args, **_kwargs):
+        raise ebr.IndexRateLimited("Rate limit exceeded")
+
+    monkeypatch.setattr(ebr, "fetch_index_history", limited)
+    csv = tmp_path / "cache" / "vnindex_closes.csv"
+
+    with pytest.raises(SystemExit) as exit_info:
+        ebr.main(["--db", str(study_db), "--fetch-index", str(csv)])
+
+    assert exit_info.value.code not in (0, None)
+    assert not csv.exists() and not csv.parent.exists()
+
+
+def test_json_is_written_only_when_asked_and_carries_the_outcome(study_db, tmp_path, monkeypatch):
+    import json
+
+    csv, out = tmp_path / "cache.csv", tmp_path / "out" / "report.json"
+    ebr.write_index_csv(csv, _index_series())
+    _no_network(monkeypatch)
+
+    ebr.main(["--db", str(study_db), "--index-csv", str(csv), "--json", str(out)])
+
+    report = json.loads(out.read_text())
+    assert report["outcome"]["outcome"] in ("PASS", "KILL", "INCONCLUSIVE")
+    assert report["header"].lower().startswith("study output")
+    assert report["index"]["sha256"]
+
+
+def test_the_modelling_universe_is_read_at_run_time(study_db):
+    import sqlite3
+
+    first = ebr.run(study_db, _index_series())
+    conn = sqlite3.connect(study_db)
+    conn.execute("UPDATE ticker_universe SET fails_liquidity_filter = 1 WHERE symbol = 'DDD'")
+    conn.commit()
+    conn.close()
+
+    second = ebr.run(study_db, _index_series())
+
+    assert first["universe"]["symbols"] == 4
+    assert second["universe"]["symbols"] == 3  # no code edit
+
+
+def test_the_report_prints_counts_exclusions_intervals_and_the_outcome(study_db):
+    text = ebr.format_report(ebr.run(study_db, _index_series()))
+
+    for expected in ("windows", "episodes", "no index close", "warm-up", "month-block", "quarter-block",
+                     "half-width", "year-adjusted", "expanding", "OUTCOME:", "reviewer-reported"):
+        assert expected in text, expected
+    assert text.splitlines()[0].lower().startswith("study output")
+
+
+def test_the_outcome_uses_no_debate_verdict_label_and_no_instruction(study_db):
+    text = ebr.format_report(ebr.run(study_db, _index_series())).lower()
+
+    for word in ("buy", "sell", "hold ", "accumulate", "reduce"):
+        assert word not in text
+
+
+def test_a_series_shorter_than_the_warm_up_gives_inconclusive(study_db):
+    report = ebr.run(study_db, _index_series().iloc[:200])
+
+    assert report["outcome"]["outcome"] == "INCONCLUSIVE"
+    assert report["regime"]["exclusions"]["with_regime"] == 0
