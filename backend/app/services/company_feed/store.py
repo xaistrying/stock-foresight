@@ -198,6 +198,22 @@ def _read(query: str, params: dict[str, Any]) -> list[tuple]:
         conn.close()
 
 
+def new_records(records: Sequence[ItemRecord]) -> list[ItemRecord]:
+    """The records the log does not hold yet, read-only (what a dry run would store). A missing log, or
+    one with no tables yet, holds nothing."""
+    if not company_feed_log.COMPANY_FEED_LOG_DB_PATH.exists():
+        return list(records)
+    conn = open_log_readonly()
+    try:
+        return [record for record in records if _is_new(conn, record)]
+    except sqlite3.OperationalError as error:
+        if "no such table" in str(error):
+            return list(records)
+        raise
+    finally:
+        conn.close()
+
+
 _LATEST_ITEMS = """
 WITH first_success AS (
     SELECT source, MIN(id) AS fetch_id
