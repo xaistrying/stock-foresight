@@ -17,19 +17,17 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.debate import runner
-from app.services.debate.engine import AgentPosition, DebateResult, SynthesisResult
+from app.services.debate.engine import AgentPosition, DebateResult
 from app.services.debate.runner import DebateBusy, DebateTimeout, RunContext
 
 SECRET_TEXT = "THE-MODEL-WROTE-THIS-SENTENCE"
 
 
 def _result(ticker: str = "VCB") -> DebateResult:
-    positions = {a: AgentPosition(a, "bull", ["a bullet"]) for a in ("technical", "news", "macro")}
+    positions = {a: AgentPosition(a, "bull", [SECRET_TEXT]) for a in ("technical", "news", "macro")}
     return DebateResult(
         ticker=ticker, as_of="2026-10-07", verdict="BUY_SIGNAL", agreement_level="unanimous",
-        round1=positions, round2=dict(positions),
-        synthesis=SynthesisResult("BUY_SIGNAL", "unanimous", SECRET_TEXT, SECRET_TEXT),
-        duration_ms=1, data_as_of="2026-10-07", data_age_sessions=0,
+        round1=positions, duration_ms=1, data_as_of="2026-10-07", data_age_sessions=0,
     )
 
 
@@ -67,12 +65,11 @@ def engine(monkeypatch):
     class FakeEngine:
         async def run(self, ticker, eligibility=None, on_stage=None):
             state.calls.append(ticker)
-            for stage in ("round1", "round2", "synthesis"):
-                if on_stage:
-                    on_stage(stage)
-                await asyncio.sleep(state.stage_delay)
-                if state.gate is not None and stage == "round2":
-                    await state.gate.wait()
+            if on_stage:
+                on_stage("round1")  # the run's only stage
+            await asyncio.sleep(state.stage_delay)
+            if state.gate is not None:
+                await state.gate.wait()
             if state.fail is not None:
                 raise state.fail
             state.finished.append(ticker)
@@ -236,11 +233,15 @@ async def test_progress_reports_the_stage_and_elapsed_time_then_goes_idle(engine
     await asyncio.sleep(0.05)
 
     state = runner.progress("VCB")
-    assert state["running"] is True and state["stage"] == "round2" and state["elapsed_ms"] >= 40
+    assert state["running"] is True and state["stage"] == "round1" and state["elapsed_ms"] >= 40
     assert state["ticker"] == "VCB"
     engine.gate.set()
     await caller
     assert runner.progress("VCB") == {"ticker": "VCB", "running": False, "stage": None, "elapsed_ms": None}
+
+
+def test_the_run_has_one_stage():
+    assert runner.STAGES == ("round1",)
 
 
 def test_progress_for_an_unknown_ticker_is_idle_not_an_error():
@@ -253,7 +254,7 @@ def test_progress_for_an_unknown_ticker_is_idle_not_an_error():
 
 LINE = re.compile(
     r"^Debate run ticker=VCB provider=openai model=stub-model status=(?P<status>\w+) "
-    r"round1_ms=(?P<r1>\S+) round2_ms=(?P<r2>\S+) synthesis_ms=(?P<syn>\S+) total_ms=(?P<total>\d+) "
+    r"round1_ms=(?P<r1>\S+) total_ms=(?P<total>\d+) "
     r"joined=(?P<joined>\d+) hook_failures=(?P<failures>\d+)$"
 )
 
@@ -272,22 +273,22 @@ async def test_a_successful_run_logs_one_line_with_the_stage_durations(engine, c
     (line,) = _run_lines(caplog)
     assert line is not None, "the line does not have the documented shape"
     assert line["status"] == "ok" and line["joined"] == "2" and line["failures"] == "0"
-    stages = [int(line[k]) for k in ("r1", "r2", "syn")]
-    assert all(ms >= 40 for ms in stages)
-    assert int(line["total"]) >= sum(stages) - 5
+    assert int(line["r1"]) >= 40
+    assert int(line["total"]) >= int(line["r1"]) - 5
 
 
 @pytest.mark.asyncio
-async def test_a_timed_out_run_logs_status_timeout_and_only_the_stages_that_finished(engine, monkeypatch, caplog):
+async def test_a_timed_out_run_logs_status_timeout_and_no_duration_for_the_unfinished_stage(engine, monkeypatch, caplog):
     monkeypatch.setenv("DEBATE_RUN_TIMEOUT_SECONDS", "0.3")
-    engine.stage_delay = 0.2  # round 1 ends at 0.2 s, round 2 is cut off at 0.3 s
+    engine.stage_delay = 1.0  # the only stage is cut off at 0.3 s
     with caplog.at_level(logging.INFO, logger=runner.logger.name):
         with pytest.raises(DebateTimeout):
             await run("VCB")
 
     (line,) = _run_lines(caplog)
     assert line["status"] == "timeout"
-    assert int(line["r1"]) >= 150 and line["r2"] == "n/a" and line["syn"] == "n/a"
+    assert line["r1"] == "n/a" and int(line["total"]) >= 250
+    assert "round2_ms" not in caplog.text and "synthesis_ms" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -363,7 +364,7 @@ async def test_the_hook_sees_the_export_outcome_and_the_run_times(engine):
     assert ctx.report_file == response["report_file"] == "2026-10-07_VCB.md"
     assert ctx.result.verdict == "BUY_SIGNAL"
     assert ctx.started_at.tzinfo is not None and ctx.finished_at >= ctx.started_at
-    assert set(ctx.stage_ms) == {"round1", "round2", "synthesis", "total"}
+    assert set(ctx.stage_ms) == {"round1", "total"}
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,6 @@ from app.services.debate import outcome_log
 from app.services.debate.engine import (
     AgentPosition,
     DebateResult,
-    SynthesisResult,
     insufficient_data_result,
 )
 
@@ -53,15 +52,9 @@ def _result(ticker="VCB", as_of="2026-10-06", verdict="BUY_SIGNAL", **overrides)
         "news": AgentPosition("news", "bull", [HEADLINE_TITLE], evidence=news_evidence),
         "macro": AgentPosition("macro", "neutral", ["flat"], evidence=macro_evidence),
     }
-    round2 = {
-        "technical": AgentPosition("technical", "bull", ["kept"]),
-        "news": AgentPosition("news", "bear", ["shifted"]),
-        "macro": AgentPosition("macro", "neutral", ["held"]),
-    }
     fields = dict(
         ticker=ticker, as_of=as_of, verdict=verdict, agreement_level="majority",
-        round1=round1, round2=round2,
-        synthesis=SynthesisResult(verdict, "majority", REASONING_SENTENCE, REASONING_SENTENCE),
+        round1=round1,
         duration_ms=10, range_5s_pct=4.1, sigma_daily_pct=1.8, range_coverage=0.68,
         data_as_of=as_of, data_age_sessions=0, agents_degraded=[],
         eligibility={"eligible": True, "reasons": []},
@@ -131,7 +124,7 @@ def test_a_result_yields_one_fully_filled_row_with_null_outcomes(paths):
     assert (row["sigma_daily_pct"], row["range_5s_pct"], row["range_k"], row["range_coverage"]) == (
         1.8, 4.1, 1.3, 0.68)
     assert [row[c] for c in ("r1_technical", "r1_news", "r1_macro")] == ["bull", "bull", "neutral"]
-    assert [row[c] for c in ("r2_technical", "r2_news", "r2_macro")] == ["bull", "bear", "neutral"]
+    assert [row[c] for c in ("r2_technical", "r2_news", "r2_macro")] == [None, None, None]  # no second round
     assert (row["verdict"], row["agreement_level"]) == ("BUY_SIGNAL", "majority")
     assert all(row[c] is not None for c in (
         "run_at", "close_at_asof", "llm_provider", "llm_model", "code_rev", "evidence"))
@@ -158,18 +151,42 @@ def test_an_abstention_logs_null_stances_and_eligible_zero(paths):
 def test_a_degraded_agent_has_no_logged_stance(paths):
     result = _result()
     result.round1["news"] = AgentPosition("news", "neutral", ["x"], degraded_reason="llm_failed")
-    result.round2["news"] = result.round1["news"]
     outcome_log.log_debate_run(result)
     (row,) = _rows(paths["log"])
-    assert row["r1_news"] is None and row["r2_news"] is None and row["r1_macro"] == "neutral"
+    assert row["r1_news"] is None and row["r1_macro"] == "neutral" and row["r1_technical"] == "bull"
 
 
-def test_a_failed_round_two_keeps_round_one_but_not_the_voting_stance(paths):
-    result = _result()
-    result.round2["news"] = AgentPosition("news", "bull", ["x"], degraded_reason="round2_failed")
-    outcome_log.log_debate_run(result)
+def test_the_writer_names_no_r2_column_so_the_table_keeps_them_and_they_stay_null(paths):
+    """The table keeps its `r2_*` columns (no migration); the INSERT does not name them."""
+    assert "r2_" not in outcome_log.INSERT_DEBATE_LOG
+    assert all(f"r1_{agent}" in outcome_log.INSERT_DEBATE_LOG for agent in ("technical", "news", "macro"))
+    outcome_log.log_debate_run(_result())
     (row,) = _rows(paths["log"])
-    assert row["r1_news"] == "bull" and row["r2_news"] is None
+    assert {"r2_technical", "r2_news", "r2_macro"} <= set(row)  # the columns exist
+    assert row["r2_technical"] is row["r2_news"] is row["r2_macro"] is None
+    assert row["verdict"] == "BUY_SIGNAL"  # the vote over the r1_* stances
+
+
+def test_a_row_written_before_the_change_is_untouched_by_a_new_run(paths):
+    """An older row carries `r2_*` stances; logging a new run neither rewrites it nor reads it."""
+    conn = debate_log_mod.get_debate_log_connection()
+    debate_log_mod.init_debate_log_db(conn)
+    with conn:
+        conn.execute(
+            "INSERT INTO debate_log (ticker, as_of, run_at, eligible, r1_technical, r1_news, r1_macro,"
+            " r2_technical, r2_news, r2_macro, verdict, agreement_level, code_rev)"
+            " VALUES ('SAB', '2026-10-05', '2026-10-05T10:00:00+00:00', 1, 'bull', 'bull', 'neutral',"
+            " 'bull', 'bear', 'neutral', 'BUY_SIGNAL', 'majority', 'old1234')"
+        )
+    conn.close()
+    before = _rows(paths["log"])
+
+    outcome_log.log_debate_run(_result())
+
+    older, newer = _rows(paths["log"])
+    assert older == before[0]  # every column of the old row is as it was
+    assert [older[c] for c in ("r2_technical", "r2_news", "r2_macro")] == ["bull", "bear", "neutral"]
+    assert [newer[c] for c in ("r2_technical", "r2_news", "r2_macro")] == [None, None, None]
 
 
 def test_as_of_is_data_as_of_and_never_today(paths, monkeypatch):
