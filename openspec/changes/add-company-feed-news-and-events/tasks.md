@@ -12,9 +12,9 @@
 
 ## 3. The log file and schema (tests first)
 
-- [ ] 3.1 Test hygiene first: an autouse fixture in `backend/tests/conftest.py`, `_temporary_company_feed_log`, patches `COMPANY_FEED_LOG_DB_PATH` to a temporary file for every test (the pattern of `_temporary_debate_log`, `conftest.py:48`), plus a test that the real `backend/data/company_feed_log.db` is neither created nor modified by a test that exercises the writer.
-- [ ] 3.2 Tests in `backend/tests/test_company_feed_store.py` against temporary files: the first write creates the file with both tables; re-running init on a populated file keeps rows and raises nothing; `app.db`'s `init_db` does not create the tables; deleting and rebuilding `app.db` leaves the log untouched; the log path differs from the `app.db` and `debate_log.db` paths.
-- [ ] 3.3 Add `backend/app/db/company_feed_log.py`: `COMPANY_FEED_LOG_DB_PATH` (`backend/data/company_feed_log.db`), `get_company_feed_log_connection()` (with a busy timeout), `CREATE TABLE IF NOT EXISTS` for `company_feed_fetch` and `company_feed_item` with `UNIQUE (ticker, source, kind, item_id, content_hash)` (design Decision 4), and `init_company_feed_log_db(conn)`. Do not touch `schema.py` or `init_db`.
+- [x] 3.1 Test hygiene first: an autouse fixture in `backend/tests/conftest.py`, `_temporary_company_feed_log`, patches `COMPANY_FEED_LOG_DB_PATH` to a temporary file for every test (the pattern of `_temporary_debate_log`, `conftest.py:48`), plus a test that the real `backend/data/company_feed_log.db` is neither created nor modified by a test that exercises the writer.
+- [x] 3.2 Tests in `backend/tests/test_company_feed_store.py` against temporary files: the first write creates the file with both tables; re-running init on a populated file keeps rows and raises nothing; `app.db`'s `init_db` does not create the tables; deleting and rebuilding `app.db` leaves the log untouched; the log path differs from the `app.db` and `debate_log.db` paths.
+- [x] 3.3 Add `backend/app/db/company_feed_log.py`: `COMPANY_FEED_LOG_DB_PATH` (`backend/data/company_feed_log.db`), `get_company_feed_log_connection()` (with a busy timeout), `CREATE TABLE IF NOT EXISTS` for `company_feed_fetch` and `company_feed_item` with `UNIQUE (ticker, source, kind, item_id, content_hash)` (design Decision 4), and `init_company_feed_log_db(conn)`. Do not touch `schema.py` or `init_db`.
 
 ## 4. Normalising and cleaning (tests first)
 
