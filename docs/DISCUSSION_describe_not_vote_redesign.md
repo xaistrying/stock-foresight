@@ -903,6 +903,7 @@ defaults, including keeping S1's year-adjusted condition)**
 - The layout of the running dashboard (components were read, not seen).
 - Whether `obv`/volume history is clean enough for any volume-based reading.
 - The headline parts have no thresholds yet; S1 and S2 are plans, not results.
+- S1 result: see the archived change's design.md (`evaluate-band-coverage-by-market-regime`, "Result").
 - The vendor index endpoint's history depth (S1 needs several years).
 - Whether `vnstock` 4.0.5 is the latest release (`pip index` could not list versions here).
 - VCI's own terms for the endpoints behind the library (not found).

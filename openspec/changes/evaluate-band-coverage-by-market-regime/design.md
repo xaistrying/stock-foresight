@@ -159,3 +159,89 @@ Task 5.1, 2026-10-10, recorded before the script has been run against the real d
 - The script's constants block, lines 64 to 82 of `backend/scripts/evaluate_band_coverage_by_regime.py` (the criterion banner through `REVIEWER_REPORTED_BY_YEAR`): SHA-256 `b773686561d674b037cfd3aa764c2faddb10c9bb07656e0328e2ca14907526ce`. Reproduce with `sed -n '64,82p' backend/scripts/evaluate_band_coverage_by_regime.py | sha256sum`.
 - The script as run: git blob `d0b1cbbf501c476c0243d2905080f64b673861ed` (`git hash-object backend/scripts/evaluate_band_coverage_by_regime.py`), committed in `f6c4392`.
 - The constants then: pass gap 0.05, split date 2023-01-01, volatility window 20, percentile window 252, interval 95% with 2,000 resamples and seed 0, minimum 24 months per half and 8 per cell, minimum 20 dates per year-cell, minimum index match 0.99.
+
+## Result
+
+Task 5.2, 2026-10-10 (about 20:10 local time). One run, no re-run, no parameter changed after seeing the outcome: `backend/.venv/bin/python -I backend/scripts/evaluate_band_coverage_by_regime.py --fetch-index backend/data/study_cache/vnindex_closes.csv --json <scratch path>`, `HOME` and the working directory redirected to a throwaway directory, behind the shared vendor lock, no API key. It opened the worktree's copy of `backend/data/app.db` with `mode=ro`. One vendor call (no walk-back needed); vnstock 4.0.5, vnai 2.5.5, source `kbs` (the default); the vendor logged its 8-year history-limit warning. Afterwards no `AGENTS.md` and none of the six home config files existed in the throwaway `HOME`, the throwaway working directory or the worktree. The cache CSV (1,995 closes, 2018-10-11 to 2026-10-09, gitignored, not committed) has SHA-256 `46ce6f6ae431ee1a3f86795971ef8e815cea0d581146761bfbff517a05246b6b`.
+
+**Outcome: KILL.** Verbatim outcome line:
+
+> `OUTCOME: KILL  (level: 5 points in both halves, same sign, intervals excluding zero, year-adjusted gap agreeing; fixed in the spec before any run)`
+
+In plain words: the band's out-of-time coverage in the calmest third and in the most volatile third of VN-Index volatility regimes differed by less than 5 points in both halves, and the observed gaps are small and negative (the calmest third was covered slightly less often, not more). The 5-point level of decision 8 is not met. As the spec requires, this is printed with the notes that the early interval [-7.4, +5.6] and the late interval [-8.2, +2.1] each reach 5 points in size, so the level is not met but the study does not show that no regime effect exists; with half-widths of 6.5 and 5.2 points, a true gap near 5 points would probably not have been separated from zero with this data. Both halves' intervals and the year-adjusted interval include zero. The sensitivity result with the expanding percentile does not change the picture (below) and does not enter the outcome.
+
+| | Early (before 2023-01-01) | Late (from 2023-01-01) |
+|---|---|---|
+| Gap, calm minus volatile | -0.9 points | -2.8 points |
+| Month-block 95% interval | [-7.4, +5.6], half-width 6.5 points | [-8.2, +2.1], half-width 5.2 points |
+| Quarter-block 95% interval | [-5.7, +3.9], half-width 4.8 points | [-7.4, +0.5], half-width 3.9 points |
+| Draws dropped for an empty third | 0.0% | 0.0% |
+| Month-block and quarter-block disagree about excluding zero | no | no |
+
+Year-adjusted gap: -2.3 points over the years 2020 to 2026 (all seven qualify), 95% interval [-8.4, +2.0], half-width 5.2 points, 1.7% of draws dropped because a year had an empty third. Expanding-percentile sensitivity: early gap -0.7 points, interval [-7.8, +6.5]; late gap -3.2 points, interval [-7.6, +1.2].
+
+Windows: 208 symbols read from `ticker_universe`; 385,935 windows, 334,336 of them out-of-time test windows; none excluded for a missing index close or for the index warm-up (the first test window, 2020, is after the 271st index session); the share of test dates with an index close is 100.0%. The windows, dates, months and episodes per cell are:
+
+| Half | Third | Windows | Dates | Months | Episodes | Coverage |
+|---|---|---|---|---|---|---|
+| early | calm | 35,490 | 179 | 21 | 21 | 62.1% |
+| early | middle | 47,025 | 237 | 25 | 31 | 59.1% |
+| early | volatile | 66,068 | 335 | 24 | 11 | 63.0% |
+| late | calm | 65,195 | 334 | 28 | 19 | 71.5% |
+| late | middle | 67,697 | 339 | 31 | 36 | 72.1% |
+| late | volatile | 52,861 | 258 | 22 | 19 | 74.2% |
+
+Out-of-time coverage by test year, recomputed in this run from `train_har_rv.py`'s folds (nominal 68%): 2020 61.4%, 2021 61.3%, 2022 61.9%, 2023 72.9%, 2024 74.1%, 2025 72.0%, 2026 (to the last window) 70.1%. The range 61.3% to 74.1% is close to the reviewer-reported 61.4% to 74.1%, so the recorded by-year swing is reproduced. It is a step between the first three test years (about 61% to 62%) and the last four (about 70% to 74%), and the regime thirds, which cut across years, did not explain it. All seven years had both extreme thirds on at least 20 dates, so each year contributes to the year-adjusted gap. This study did not test what the step between the early and late years is, and nothing here says.
+
+Full report as printed (the vendor's promotional banner on stdout is omitted):
+
+```text
+STUDY OUTPUT, not shown to any user (Rule 4); a technical observation, not investment advice (Rule 6).
+
+Universe: 208 symbols from ticker_universe at run time; 385,935 windows, 334,336 of them out-of-time test windows.
+VN-Index series: first date 2018-10-11, last date 2026-10-09, 1995 sessions, calendar gaps over 10 days: none
+  source: vendor Market.index('VNINDEX').ohlcv, source default (kbs), versions {'vnstock': '4.0.5', 'vnai': '2.5.5'}; fetched: 2026-10-10
+  vendor calls: 1 (no walk-back needed); vendor history-limit warning logged: yes
+  csv: /home/traipn/worktrees/stock-foresight/s1/backend/data/study_cache/vnindex_closes.csv  SHA-256 46ce6f6ae431ee1a3f86795971ef8e815cea0d581146761bfbff517a05246b6b
+
+Windows excluded from every regime figure: 0 with no index close, 0 in the index warm-up (the first 271 sessions); 334,336 have a regime. Test dates with an index close: 100.0% (need 99%).
+
+Out-of-time coverage by test year (recomputed in this run; nominal 68%):
+  2020  windows    48,123  coverage 61.4%
+  2021  windows    49,671  coverage 61.3%
+  2022  windows    50,789  coverage 61.9%
+  2023  windows    50,791  coverage 72.9%
+  2024  windows    51,098  coverage 74.1%
+  2025  windows    51,071  coverage 72.0%
+  2026  windows    32,793  coverage 70.1%
+  reference: by-year range 61.4% to 74.1% is reviewer-reported and not re-verified when this change was written; it is not a result of this run
+
+Coverage by market regime (trailing 252-session percentile of 20-session index volatility, thirds; windows, dates and months are not independent observations, episodes are the effective sample):
+  early half (window dates before 2023-01-01); windows in 36 months:
+    calm      windows    35,490  dates   179  months  21  episodes  21  coverage 62.1%  per-date mean 62.1% sd 12.6 points
+    middle    windows    47,025  dates   237  months  25  episodes  31  coverage 59.1%  per-date mean 59.0% sd 16.7 points
+    volatile  windows    66,068  dates   335  months  24  episodes  11  coverage 63.0%  per-date mean 63.0% sd 19.3 points
+    gap calm - volatile -0.9 points; month-block 95% interval [-7.4, +5.6], half-width 6.5 points (0.0% of draws dropped for an empty third)
+    quarter-block 95% interval [-5.7, +3.9], half-width 4.8 points (0.0% of draws dropped)
+  late half (window dates from 2023-01-01); windows in 46 months:
+    calm      windows    65,195  dates   334  months  28  episodes  19  coverage 71.5%  per-date mean 72.1% sd 15.0 points
+    middle    windows    67,697  dates   339  months  31  episodes  36  coverage 72.1%  per-date mean 72.6% sd 16.8 points
+    volatile  windows    52,861  dates   258  months  22  episodes  19  coverage 74.2%  per-date mean 74.2% sd 14.7 points
+    gap calm - volatile -2.8 points; month-block 95% interval [-8.2, +2.1], half-width 5.2 points (0.0% of draws dropped for an empty third)
+    quarter-block 95% interval [-7.4, +0.5], half-width 3.9 points (0.0% of draws dropped)
+  year-adjusted gap -2.3 points over years [2020, 2021, 2022, 2023, 2024, 2025, 2026]; 95% interval [-8.4, +2.0], half-width 5.2 points (1.7% of draws dropped because a year had an empty third)
+
+Sensitivity, expanding percentile (does not enter the outcome):
+  early half: gap -0.7 points, 95% interval [-7.8, +6.5]
+  late half: gap -3.2 points, 95% interval [-7.6, +1.2]
+
+OUTCOME: KILL  (level: 5 points in both halves, same sign, intervals excluding zero, year-adjusted gap agreeing; fixed in the spec before any run)
+  reason: early half gap -0.9 points is under the 5-point level
+  reason: late half gap -2.8 points is under the 5-point level
+  note: early half: its interval [-7.4, +5.6] reaches 5 points, so the level is not met but this is not evidence that no regime effect exists
+  note: late half: its interval [-8.2, +2.1] reaches 5 points, so the level is not met but this is not evidence that no regime effect exists
+```
+
+## What a `PASS` would still need
+
+Not applicable to this run (the outcome is `KILL`), recorded as task 5.4 requires so that a later re-run on more history is read correctly. A `PASS` would be evidence that a later change may design a regime-aware reading, nothing more. It would still need: (1) a design question in P7 (`add-headline-parts`), namely whether and how a regime reading appears as a headline part, with its own thresholds; and (2) a Rule 4 sign-off, with P3 (`retire-vote-and-agreement`), for any by-regime or by-year coverage statement, because that would be a second reliability figure and the only reliability figure allowed today is the range hit-rate measured from price history. Nothing is added to `docs/MODEL_CARD.md` and nothing to any UI, API or export. A `KILL` closes the regime idea for the headline parts, as Open Question 7 records; it is not re-run with other parameters.

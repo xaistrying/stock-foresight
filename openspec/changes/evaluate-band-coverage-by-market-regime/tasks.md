@@ -32,9 +32,9 @@
 ## 5. Freeze the criterion, run once, record the result
 
 - [x] 5.1 Before the first real run, record in `design.md` the SHA-256 of `specs/band-coverage-regime-evaluation/spec.md` and of the script's constants block, so the pre-stated criterion is on record before any result; commit the script, test, spec and design together if the owner asks for a commit
-- [ ] 5.2 Run the script once on the real database with `backend/.venv/bin/python backend/scripts/evaluate_band_coverage_by_regime.py --fetch-index backend/data/study_cache/vnindex_closes.csv --json <scratch path>`; it opens `app.db` read-only. Do not re-run with different parameters after seeing the outcome
-- [ ] 5.3 Under a "Result" heading in `design.md`, record the verbatim outcome line, the two gaps with intervals and half-widths, the cell counts and episode counts, the recomputed by-year coverage, the sensitivity result, the CSV's SHA-256 and the vnstock version, and state the outcome plainly whether it is `PASS`, `KILL` or `INCONCLUSIVE`
-- [ ] 5.4 Add one pointer line to `docs/DISCUSSION_describe_not_vote_redesign.md` ("S1 result: see the archived change's design.md") and list in `design.md` what a `PASS` would still need (a P7 design question and a Rule 4 sign-off for any by-regime or by-year coverage statement, with P3); add nothing to `docs/MODEL_CARD.md` and nothing to any UI, API or export
+- [x] 5.2 Run the script once on the real database with `backend/.venv/bin/python backend/scripts/evaluate_band_coverage_by_regime.py --fetch-index backend/data/study_cache/vnindex_closes.csv --json <scratch path>`; it opens `app.db` read-only. Do not re-run with different parameters after seeing the outcome
+- [x] 5.3 Under a "Result" heading in `design.md`, record the verbatim outcome line, the two gaps with intervals and half-widths, the cell counts and episode counts, the recomputed by-year coverage, the sensitivity result, the CSV's SHA-256 and the vnstock version, and state the outcome plainly whether it is `PASS`, `KILL` or `INCONCLUSIVE`
+- [x] 5.4 Add one pointer line to `docs/DISCUSSION_describe_not_vote_redesign.md` ("S1 result: see the archived change's design.md") and list in `design.md` what a `PASS` would still need (a P7 design question and a Rule 4 sign-off for any by-regime or by-year coverage statement, with P3); add nothing to `docs/MODEL_CARD.md` and nothing to any UI, API or export
 
 ## 6. Close out
 
