@@ -790,15 +790,15 @@ spec requirement or code file.
 
 | # | Change | What | Depends on | Status |
 |---|---|---|---|---|
-| P1 | `retire-debate-round-two-and-model-prose` | step 1, pure removal ("Settled for step 1") | none | settled; start now |
-| P2a | `add-company-feed-news-and-events` | VCI fetcher, title cleaning, storage, snapshot log in a separate file, `vnstock` and `vnai` pin; no News-agent feed | none | start now; decisions 3 to 6 apply |
-| S1 | `evaluate-band-coverage-by-market-regime` | read-only study with a kill criterion | none | start now; decisions 7 and 8 apply |
+| P1 | `retire-debate-round-two-and-model-prose` | step 1, pure removal ("Settled for step 1") | none | applied 2026-10-10, 51 of 56 tasks; see "Apply results and merge" |
+| P2a | `add-company-feed-news-and-events` | VCI fetcher, title cleaning, storage, snapshot log in a separate file, `vnstock` and `vnai` pin; no News-agent feed | none | applied 2026-10-10, 36 of 38 tasks; see "P2a applied" |
+| S1 | `evaluate-band-coverage-by-market-regime` | read-only study with a kill criterion | none | applied 2026-10-10, 25 of 26 tasks; result KILL, see "Apply results and merge" |
 | S2 | `evaluate-event-windows` | matched event versus non-event windows | P2a event data | after P2a |
 | P2b | `show-source-readings-and-coverage` | readings cards, rule-written coverage table | P1 applied, P2a | after P1 |
 | P3 | `retire-vote-and-agreement` | drop the vote and Agreement; rule edits in `CLAUDE.md` and `config.yaml` | P1, P2b; owner sign-off | after P2b |
 | P4 | `add-fundamentals-readings` | latest-quarter facts, TTM P/E | P2b; vendor and key decisions | after P2b |
 | P5 | `add-fibonacci-reference-levels` | chart toggle | the owner's Rule 6 ruling (first open question) | independent of the rest; blocked on the ruling |
-| P7 | `add-headline-parts` | volatility percentile, catalysts list, market-backdrop header | S1, S2, P2b | later |
+| P7 | `add-headline-parts` | volatility percentile, catalysts list, market-backdrop header | S2, P2b; S1 killed the conditioning idea, so the backdrop is a plain fact with no coverage claim | later |
 | P6 | `add-nightly-ticker-basket` | basket of about 25 tickers | P3 (no model cost) | optional, later |
 
 **What to start with.** P1, P2a and S1, and no more in flight than the owner can review. P1
@@ -908,6 +908,40 @@ check) are open, see below.
   module does not exist in `vnstock` 4.0.5; `RateLimitExceeded` is in `vnai/beam/quota.py` and
   reaches the caller as a `SystemExit` (`snapshot.py` handles that, with `_is_rate_limit_exit`).
   The skill file is the owner's to edit; this change did not.
+
+## Apply results and merge (2026-10-10)
+
+The three changes were applied on their own branches in separate worktrees, then merged on
+`integrate/describe-not-vote` in the order S1, P1, P2a. The three merges had no textual conflicts,
+including in `docs/KNOWN_ISSUES.md` and `docs/DATA_DICTIONARY.md`. On the merged result: backend
+1146 passed and 1 skipped (the baseline 914, minus 43 for P1, plus 198 for P2a, plus 77 for S1),
+frontend 720 passed, `npm run build` OK, `openspec validate --strict` valid for all three. No
+change is archived: the delta specs are not yet in `openspec/specs/`.
+
+**S1 result: KILL** (agent's run on 2026-10-10, one vendor call, VN-Index 2018-10-11 to 2026-10-09,
+1,995 sessions; 334,336 out-of-time windows over 208 symbols, every window had a regime). Gap
+between the calmest and most volatile regime third: early half -0.9 points (95% month-block
+interval -7.4 to +5.6), late half -2.8 points (-8.2 to +2.1); year-adjusted -2.3 points (-8.4 to
++2.0). Both halves are under the 5-point level, with the same sign, and every interval includes
+zero. This is a failure to show an effect, not evidence of none. The criterion hashes were
+recorded in the change's `design.md` before the first run. The calm third was covered slightly
+less often than the volatile one, the opposite of "calm means a safer band".
+- Recomputed coverage by test year: 2020 to 2022 about 61 to 62%, 2023 to 2026 about 70 to 74%.
+  That step of about 10 points is not explained by the regime thirds, and its cause was not tested.
+  It bears on the Rule 4 disclosure of "about 2 in 3": the pooled 0.676 averages two different
+  periods.
+
+**P1 not done (5 of 56)**: the typical analysis duration was never measured (needs live model
+calls; `TYPICAL_ANALYSIS_SECONDS` stays 45 and the README says it is unmeasured: tasks 1.3, 5.6,
+7.2); a real Analyse run (8.2); the archive step (8.4). The visual check at 1440, 1144, 900 and
+390 px was done with a stubbed harness, not a live run.
+
+**Still open after the merge**: archiving the three changes; the first snapshot run and backup of
+the owner's real `company_feed_log.db` (task 10.4); the 9.4 pin check, blocked by the PyPI
+quarantine above (the pins are exact, so a fresh venv cannot be built until PyPI lists the files
+or another source is chosen); the `.claude/skills/vnstock/SKILL.md` lines about
+`RateLimitExceeded`; the unmeasured duration; and everything in the revised order after step 2a
+(P2b, P3, P4, S2, P7, P5, P6).
 
 ## Open questions for the owner or the next session
 
