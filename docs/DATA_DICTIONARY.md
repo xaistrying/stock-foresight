@@ -253,6 +253,59 @@ Outcome columns, NULL until `score_debates.py` fills them, once:
 
 A row with a non-NULL `outcome_status` is never rewritten.
 
+## `company_feed_log.db` (a third database)
+
+`backend/data/company_feed_log.db` is a separate SQLite file, created on the first write by
+`app/db/company_feed_log.py` (`init_db` does not know it). It holds two append-only tables
+written by `backend/scripts/snapshot_company_feed.py` (`app/services/company_feed/`): VCI
+company news and events per ticker, and the News agent's three RSS feeds. Nothing reads it yet
+except the two helpers `latest_items` and `last_fetch` in `company_feed/store.py` (read-only, no
+route, no UI).
+
+**It cannot be rebuilt**: the vendor returns at most 50 items per call and the RSS feeds hold
+about four days. Back it up (see `KNOWN_ISSUES.md`). It is gitignored by `data/*.db*` and, as
+vendor data under a personal-use licence, is not to be shared.
+
+### `company_feed_fetch`
+
+One row per fetch attempt, including empty and failed ones.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER PK AUTOINCREMENT | |
+| `ticker` | TEXT NOT NULL | `''` for an RSS feed |
+| `source` | TEXT NOT NULL | `vci`, or the feed URL |
+| `kind` | TEXT NOT NULL | `news`, `events` or `rss` |
+| `fetched_at` | TEXT NOT NULL | UTC ISO-8601 with offset |
+| `status` | TEXT NOT NULL | `ok`, `empty` (a normal answer), `rate_limited`, `error` |
+| `items_returned`, `items_new` | INTEGER | what the source returned; how many were new versions. `items_returned = 50` for VCI is the vendor's cap, not a claim that nothing older exists |
+| `error_class` | TEXT | exception class name only, never its message; `UnexpectedFrame` when a non-empty frame lacks a required column |
+| `vnstock_version` | TEXT | installed version string; NULL for RSS |
+
+### `company_feed_item`
+
+One row per distinct version of an item. `UNIQUE (ticker, source, kind, item_id, content_hash)`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `id` | INTEGER PK AUTOINCREMENT | |
+| `fetch_id` | INTEGER NOT NULL | the fetch that first saw this version |
+| `ticker`, `source`, `kind` | TEXT NOT NULL | as above |
+| `item_id` | TEXT NOT NULL | first 16 hex of the SHA-256 of what identifies the item (kind, ticker, source, published date, title and, for events, `event_code`) |
+| `content_hash` | TEXT NOT NULL | SHA-256 of every stored field: a revised field is a new version with the same `item_id` |
+| `fetched_at` | TEXT NOT NULL | when this log first saw this version, not when it was announced |
+| `published_at` | TEXT | the item's own date as the source gave it (VCI: ISO-8601 without an offset, timezone not stated by the vendor; RSS: UTC) |
+| `title` | TEXT | cleaned, original language, at most 500 characters; never translated |
+| `fields` | TEXT NOT NULL (JSON) | the other stored scalars, strings at most 200 characters, `null` for NaN. News: `news_source`, `news_source_link`, `news_author`. Events: `event_code`, `category`, the dates, `value_per_share`, `exercise_ratio`, `action_type_vi`, `action_type_en`. RSS: the cleaned `snippet` |
+
+Items in a ticker's and kind's first successful fetch are history, not "known on their date":
+`latest_items` marks them `from_first_fetch`. Not stored, on purpose: the body
+(`news_full_content`, `news_short_content`), the vendor's own `id` and `news_id`, the English
+event title, exception messages, and any environment value. Never updated or deleted by the
+company feed; no retention limit. Known limit: a version that returns after a different one
+(A, then B, then A again) is already stored, so it is not inserted again and `latest_items`
+keeps returning B, the highest `id`.
+
 ## Files outside the database
 
 - `backend/data/models/har_rv_model.json`: the HAR-RV linear model and band

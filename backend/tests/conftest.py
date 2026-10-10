@@ -52,3 +52,17 @@ def _temporary_debate_log(tmp_path_factory, monkeypatch):
     lifespan) would otherwise insert fake rows into the owner's irreplaceable log.
     """
     monkeypatch.setattr(_debate_log, "DEBATE_LOG_DB_PATH", tmp_path_factory.mktemp("debate_log") / "debate_log.db")
+
+
+@pytest.fixture(autouse=True)
+def _temporary_company_feed_log(tmp_path_factory, monkeypatch):
+    """No test may create or write the real `backend/data/company_feed_log.db` (`company-feed`).
+
+    Its history cannot be re-fetched from the vendor, so a test row in it would be permanent.
+    """
+    from app.db import company_feed_log
+
+    monkeypatch.setattr(
+        company_feed_log, "COMPANY_FEED_LOG_DB_PATH",
+        tmp_path_factory.mktemp("company_feed_log") / "company_feed_log.db",
+    )

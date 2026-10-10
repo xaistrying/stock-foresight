@@ -725,7 +725,7 @@ loop (`outcome_log.py:127`).
   step 1 keeps them working. Option 4 and a nightly basket stay deferred.
 - Archived open questions: prompt language (unchanged, English; revisit with the Vietnamese-titles
   question), board-settle time and the rolling foreign-flow window (deferred, Macro unchanged),
-  `[ticker]` aliases (deferred to P2a, partly overtaken by VCI). `/insight` and the feature
+  `[ticker]` aliases (moved to P2b, partly overtaken by VCI: P2a stores titles and matches nothing). `/insight` and the feature
   flag: `/insight` is retired per `ticker-prediction` and `VITE_DEBATE_PANEL_ENABLED` does not
   appear in `frontend/src` (env files not read), so this looks done; the proposal should confirm
   it and not re-open it.
@@ -812,6 +812,8 @@ wait for it to be applied.
   value is the snapshot clock and a ready data layer. The snapshot log lives in its own file
   (decision 6): not in `app.db`, which `KNOWN_ISSUES.md` treats as disposable, and not in
   `debate_log.db`, whose spec excludes third-party headline text.
+  **P2a status (2026-10-10):** applied on branch `apply/add-company-feed-news-and-events`, not
+  merged or archived; results in "P2a applied" below.
 - Every task uses the project's `vnstock` skill and none hand-rolls calls (the `tasks` rule in
   `openspec/config.yaml`); every new importer calls `app.vnstock_guard.install()` first.
 - S1 and S2 follow the repo's precedent for study scripts as capabilities
@@ -872,6 +874,40 @@ defaults, including keeping S1's year-adjusted condition)**
   year-adjusted gap separable from zero, at least 24 months per half, 8 per third and 99% of
   test dates with an index close, and a month-block bootstrap with a quarter-block check printed
   beside it. The owner may drop the year-adjusted condition.
+
+## P2a applied: measured results (2026-10-10)
+
+`add-company-feed-news-and-events`, branch `apply/add-company-feed-news-and-events`. Nothing here
+is merged or archived. Tasks 10.4 (first backup, on the owner's real log) and 9.4 (fresh-venv pin
+check) are open, see below.
+
+- **Live frame (task 4.1, SAB, 2026-10-09)**: the Unified UI frames
+  `Reference().company("SAB").news(source="vci")` and `.events(source="vci")` equal the Legacy
+  `Company(source="vci", symbol="SAB")` frames (`DataFrame.equals` true, same columns and dtypes,
+  50 rows each), so `fetch.py` stays on the Unified UI. The events title column is
+  `event_title_vi`; `public_date` is ISO-8601 without an offset (the timezone is not stated by the
+  vendor). Column lists and identity tuples are in the design's Open Questions.
+- **Live dry run (task 9.2, SAB, 2026-10-10)**: `--tickers SAB --dry-run --no-rss` with `HOME` and
+  cwd in a throwaway directory: news and events each 50 returned, exit 0, the log file's SHA-256
+  unchanged, the five home AI-config files and `~/.gemini/config/AGENTS.md` kept their 2026-08-11
+  timestamps, no `AGENTS.md` appeared; the throwaway home received only `.vnstock/` state files and
+  a matplotlib cache.
+- **First real runs (task 9.3, SAB and VPB, RSS on)**: the first run, 2026-10-09 (rows read back
+  from the log; its console output was not kept), returned and stored 50 news and 50 events items
+  per ticker (`items_returned` 50, `items_new` 50 each) and 60, 50 and 20 RSS items (all new, 130
+  rows). A run seconds later stored 0 vendor items and 1 new RSS item. A third run on
+  2026-10-10, 1.2 days later, exit code 0: vendor items 0 new, RSS 17, 19 and 3 new. The file then
+  held 50 news and 50 events per ticker, 170 RSS items (370 item rows) and 21 fetch rows, all
+  `ok`; `PRAGMA integrity_check` said `ok`. No `possible gap` warning was raised.
+- **Pin (task 9.4)**: not done. On 2026-10-10 PyPI's simple index lists `vnstock` and `vnai` as
+  `quarantined` with no files, so a fresh venv cannot be built from `backend/requirements.txt`
+  (`pip` reports no matching distribution). The existing `backend/.venv` holds the pinned
+  versions; see `KNOWN_ISSUES.md`.
+- **For the owner**: the project `vnstock` skill (`.claude/skills/vnstock/SKILL.md`, lines 240 to
+  285) tells the reader to catch `RateLimitExceeded` imported from `vnstock.core.quota`. That
+  module does not exist in `vnstock` 4.0.5; `RateLimitExceeded` is in `vnai/beam/quota.py` and
+  reaches the caller as a `SystemExit` (`snapshot.py` handles that, with `_is_rate_limit_exit`).
+  The skill file is the owner's to edit; this change did not.
 
 ## Open questions for the owner or the next session
 
