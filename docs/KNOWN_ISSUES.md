@@ -119,7 +119,8 @@ top-level side effects, so importing it to patch it is safe.
 
 Every module in this repo that imports `vnstock` calls `install()` above that
 import: `backend/app/services/ticker_universe.py`,
-`backend/app/services/ticker_ingestion.py`, and
+`backend/app/services/ticker_ingestion.py`, `backend/app/services/company_feed/fetch.py`
+(`add-company-feed-news-and-events`), and
 `backend/scripts/verify_vnstock_tier_limit.py`. For tests,
 `backend/tests/conftest.py` installs it once per session — earlier than
 `test_ticker_ingestion.py`'s own top-level vnstock import, which is what
@@ -185,12 +186,24 @@ unpatched upstream `vnstock`, and covered by regression tests.
    investigation deleted them outright.
 2. **Not reported upstream.** The guard makes this repo safe; it does nothing
    for anyone else installing `vnstock`.
-3. **No version pin.** `backend/requirements.txt` still lists `vnstock`
-   unpinned. The guard warns (rather than silently succeeding) if a future
-   version renames or drops the writer functions it patches, but an upgrade
-   that moves the write to a new code path would not be caught. A pin would
-   bound that; it also freezes data-source fixes, so it is a trade-off worth
-   deciding rather than assuming.
+3. **No version pin. Closed by `add-company-feed-news-and-events`.**
+   `backend/requirements.txt` now pins `vnstock==4.0.5` and `vnai==2.5.5`
+   exactly (`vnai`, the component that writes the files, was transitive and
+   unpinned), checked by `backend/tests/test_company_feed_pin.py`. The
+   bump procedure is the comment above the two lines in that file: both pins
+   together, a fresh venv, the guard tests including the sandboxed-`HOME`
+   test and the control run, a read of the new `vnai` and `vnstock` write
+   paths, a one-ticker `snapshot_company_feed.py --dry-run`, and a record
+   here. The pin freezes data-source fixes; a bump is the owner's call.
+   Not known whether 4.0.5 is the latest release.
+   **A fresh venv cannot currently be built from that file.** On 2026-10-10
+   PyPI's simple index listed both `vnstock` and `vnai` as `quarantined`
+   with no files, so `pip install -r backend/requirements.txt` fails with
+   "No matching distribution" (checked from a scratch venv, nothing
+   installed). The existing `backend/.venv` holds the only known copy of
+   the pinned versions; the pin test passes, but the fresh-venv check of the
+   pin (task 9.4) and a bump are blocked until the vendor packages are
+   installable again or the wheels are kept somewhere (not done here).
 
 ## Uncaught `tenacity.RetryError` for a well-formed ticker with no real data
 
@@ -381,6 +394,31 @@ product said and what the price then did. There is no off-machine copy.
 rebuild script). Deleting `app.db` is safe for the log; deleting the log is not.
 
 **Not done**: an automatic backup or export; it was out of scope.
+
+**Status**: open; a standing caution, not a task.
+
+## `backend/data/company_feed_log.db` is a second irreplaceable file, with no automatic backup
+
+**Found**: applying `add-company-feed-news-and-events`. The same hazard as the entry above,
+for a second file.
+
+**What exists today**: the company feed snapshot (`backend/scripts/snapshot_company_feed.py`,
+run by hand) keeps VCI company news and events and the three RSS feeds in
+`backend/data/company_feed_log.db`, also under the disposable-looking `data/*.db`. It cannot be
+rebuilt: the vendor returns at most 50 items per call (4 to 16 months of news, 8 months to about
+9 years of events, measured 2026-10-09) and the RSS feeds hold about four days, so an item that
+is lost cannot be fetched again. The file is append-only and small (an estimate, not measured:
+single-digit megabytes a year). It is personal-use data (`vnstock` licence) and must not be
+shared.
+
+**What to do**: take a consistent copy outside the repo and check it, for example
+`sqlite3 backend/data/company_feed_log.db ".backup ~/backups/stock-foresight/company_feed_log-<date>.db"`
+then `sqlite3 <copy> "PRAGMA integrity_check"` (it must say `ok`). Never clean `backend/data/*.db` blindly (`rm data/*.db`, `git clean -x`).
+Deleting `app.db` is safe for this log; deleting the log is not.
+
+**Not done**: an automatic backup, and a scheduler: the clock ticks only when someone runs the
+script (daily after the close is recommended; its summary prints the age of the previous
+successful fetch per ticker and kind and warns on a `possible gap`).
 
 **Status**: open; a standing caution, not a task.
 
