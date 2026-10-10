@@ -50,9 +50,9 @@
 
 ## 9. Verification
 
-- [ ] 9.1 Run the focused tests: `pytest backend/tests/test_company_feed_*.py backend/tests/test_vnstock_guard.py backend/tests/test_news_feeds.py`. Every spec scenario in `specs/company-feed/spec.md` has a test that names it.
-- [ ] 9.2 Live dry run on one ticker with `HOME` set to a throwaway directory: `python backend/scripts/snapshot_company_feed.py --tickers SAB --dry-run --no-rss`. It prints items, writes no file, and the six home AI-config files and any `AGENTS.md` keep their timestamps (the check the note ran on 2026-10-09).
-- [ ] 9.3 First real run: `--tickers SAB,VPB --from-debate-log` with RSS. Record the row counts per kind and the `items_returned` per call; run it again at once and confirm `items_new = 0` for the vendor items and only genuinely new RSS items. If anything failed, the exit code and summary say so.
+- [x] 9.1 Run the focused tests: `pytest backend/tests/test_company_feed_*.py backend/tests/test_vnstock_guard.py backend/tests/test_news_feeds.py`. Every spec scenario in `specs/company-feed/spec.md` has a test that names it.
+- [x] 9.2 Live dry run on one ticker with `HOME` set to a throwaway directory: `python backend/scripts/snapshot_company_feed.py --tickers SAB --dry-run --no-rss`. It prints items, writes no file, and the six home AI-config files and any `AGENTS.md` keep their timestamps (the check the note ran on 2026-10-09).
+- [x] 9.3 First real run: `--tickers SAB,VPB --from-debate-log` with RSS. Record the row counts per kind and the `items_returned` per call; run it again at once and confirm `items_new = 0` for the vendor items and only genuinely new RSS items. If anything failed, the exit code and summary say so.
 - [ ] 9.4 Pin check in a fresh virtual environment built from `backend/requirements.txt` in a scratch directory: it resolves to `vnstock 4.0.5` and `vnai 2.5.5`, and `test_vnstock_guard.py` passes there with `HOME` and cwd redirected.
 - [ ] 9.5 Run the whole backend suite once. Confirm `backend/data/company_feed_log.db` was not created or changed by it, no `AGENTS.md` appeared, and the earlier focused tests still pass.
 - [ ] 9.6 Review: run the `code-reviewer` and `security-reviewer` agents over the new package, the script and the db module (untrusted text, parameterised SQL, key handling, the `SystemExit` paths) and fix CRITICAL and HIGH findings.
