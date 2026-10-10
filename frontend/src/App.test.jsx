@@ -118,7 +118,7 @@ describe('App (dashboard assembly)', () => {
     expect(screen.queryByText('N/A')).not.toBeInTheDocument()
     expect(screen.queryByText(/select a ticker to see its chart/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Analyse TCB' })).toBeInTheDocument()
-    expect(screen.getByText("Run Analyse to see each agent's Round 1 and Round 2 positions.")).toBeInTheDocument()
+    expect(screen.getByText("Run Analyse to see each agent's position.")).toBeInTheDocument()
     expect(await screen.findByText(/^As of 2026-08-10/)).toBeInTheDocument()
   })
 

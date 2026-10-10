@@ -1,10 +1,13 @@
 """Debate report export service.
 
 Writes YYYY-MM-DD_<TICKER>.md to the reports/ directory at the repo root.
-Structure is optimised for NotebookLM ingestion (design.md Decision 10).
+Structure is optimised for NotebookLM ingestion (design.md Decision 10): Summary,
+Agent Positions, Agent Reasoning, then the disclaimer. There is no Key Tension, no round
+and no synthesis; files written before this structure existed are never rewritten.
 
 Rule 6: every exported file ends with the full disclaimer unconditionally.
-Rule 5: agent labels are "Technical Signal", "News Context", "Macro".
+Rule 5: agent labels are "Technical Signal", "News Context", "Macro"; only the News Context
+bullets are language-model text, and the note under Agent Positions says so.
 """
 
 from __future__ import annotations
@@ -25,11 +28,11 @@ DISCLAIMER_FULL = (
     "This analysis shows technical observations, not investment advice. The verdict comes from "
     "three automated agents: one reads price indicators (RSI, MACD, Ichimoku), one reads recent "
     "Vietnamese financial headlines, and one reads market-wide data (VN-Index, USD/VND, foreign "
-    "flows). A language model writes the agents' reasoning and revises their positions in a second "
-    "round, so wording and positions can be wrong or incomplete. The range is a statistical "
-    "estimate of typical 5-session movement, sized so that about 2 in 3 past moves stayed inside "
-    "it; larger moves are possible. Nothing here is a recommendation to buy, sell or hold any "
-    "security."
+    "flows). A language model reads the news headlines and writes the News Context agent's "
+    "reasoning and position; the other two agents report computed values. Wording and positions "
+    "can be wrong or incomplete. The range is a statistical estimate of typical 5-session "
+    "movement, sized so that about 2 in 3 past moves stayed inside it; larger moves are possible. "
+    "Nothing here is a recommendation to buy, sell or hold any security."
 )
 
 AGENT_LABELS = {
@@ -55,11 +58,11 @@ VERDICT_DESCRIPTIONS = {
     "INSUFFICIENT_DATA": "Insufficient data",
 }
 
-# Rule 5: same sentence the panel shows above LLM-written text (frontend/src/lib/disclaimer.js).
-LM_NOTE = "Reasoning, key tension and synthesis are written by a language model."
-
-# The synthesiser's key-tension call failed or its reply was unusable (blank, too short, a refusal).
-KEY_TENSION_UNAVAILABLE = "Key tension unavailable: the synthesiser returned no usable text."
+# Rule 5: same sentence the panel shows above the agents' reasoning (frontend/src/lib/disclaimer.js).
+LM_NOTE = (
+    "News Context reasoning is written by a language model; "
+    "Technical Signal and Macro reasoning are computed values."
+)
 
 
 # Plain-language reasons, worded as the panel words them (debate-panel-ui).
@@ -67,7 +70,6 @@ DEGRADED_REASON_TEXT = {
     "agent_error": "The agent failed to run.",
     "no_input": "No usable input data.",
     "llm_failed": "The language-model analysis failed.",
-    "round2_failed": "Round 2 failed; its Round 1 position is shown but not counted.",
 }
 
 
@@ -87,20 +89,20 @@ def _range_coverage_note(result: DebateResult) -> str:
 
 
 def _stance_cell(pos: AgentPosition) -> str:
-    """A degraded agent's stance is a placeholder (or a kept Round 1 stance) that
-    does not vote: it is never printed as a stance."""
+    """A degraded agent's stance is a placeholder that does not vote: it is never printed as a stance."""
     if pos.degraded_reason is not None:
         return "Unavailable"
     return f"{_stance_icon(pos.stance)} {pos.stance.capitalize()}"
 
 
-def _format_agent_position(pos: AgentPosition, round_label: str) -> str:
+def _format_agent_position(pos: AgentPosition) -> str:
+    """One `### <label> (<stance>)` block of the Agent Reasoning section: the agent's bullets."""
     label = _agent_label(pos.agent_id)
     bullets = "\n".join(f"- {r}" for r in pos.reasoning)
     if pos.degraded_reason is not None:
         reason = DEGRADED_REASON_TEXT.get(pos.degraded_reason, pos.degraded_reason)
-        return f"#### {label} (Unavailable — not counted)\n{bullets}\n- {reason}\n"
-    return f"#### {label} ({_stance_cell(pos)})\n{bullets}\n"
+        return f"### {label} (Unavailable — not counted)\n{bullets}\n- {reason}\n"
+    return f"### {label} ({_stance_cell(pos)})\n{bullets}\n"
 
 
 def _data_age(age: int | None) -> str:
@@ -111,8 +113,8 @@ def _data_age(age: int | None) -> str:
 
 def _agreement(result: DebateResult) -> str:
     """The Agreement text, over live agents only once any is degraded."""
-    live = [pos for pos in result.round2.values() if pos.degraded_reason is None]
-    unavailable = len(result.round2) - len(live)
+    live = [pos for pos in result.round1.values() if pos.degraded_reason is None]
+    unavailable = len(result.round1) - len(live)
     if unavailable == 0:
         if result.agreement_level == "split":
             # Three different stances: there is no group of agreeing agents to count
@@ -161,12 +163,12 @@ def export_debate_report(result: DebateResult) -> Path | None:
 
     stance_row = " · ".join(
         f"{_agent_label(aid)} {'Unavailable' if pos.degraded_reason else _stance_icon(pos.stance)}"
-        for aid, pos in result.round2.items()
+        for aid, pos in result.round1.items()
     )
     lines.append(f"**Agents**: {stance_row}")
     if result.agents_degraded:
         unavailable = ", ".join(
-            f"{_agent_label(aid)} ({DEGRADED_REASON_TEXT.get(result.round2[aid].degraded_reason, '')})"
+            f"{_agent_label(aid)} ({DEGRADED_REASON_TEXT.get(result.round1[aid].degraded_reason, '')})"
             for aid in result.agents_degraded
         )
         lines.append(f"**Unavailable agents**: {unavailable}")
@@ -176,13 +178,13 @@ def export_debate_report(result: DebateResult) -> Path | None:
     lines.append("")
 
     # ------------------------------------------------------------------ #
-    # Agent Positions table (Level 2)
+    # Agent Positions table (Level 2); the first line is the language-model note (Rule 5)
     # ------------------------------------------------------------------ #
     lines.append("## Agent Positions\n")
     lines.append(f"{LM_NOTE}\n")
     lines.append("| Agent | Stance | Key reasoning |")
     lines.append("|-------|--------|---------------|")
-    for aid, pos in result.round2.items():
+    for aid, pos in result.round1.items():
         key_reason = pos.reasoning[0] if pos.reasoning else "—"
         if pos.degraded_reason is not None:
             key_reason += " (not counted in the vote)"
@@ -190,28 +192,11 @@ def export_debate_report(result: DebateResult) -> Path | None:
     lines.append("")
 
     # ------------------------------------------------------------------ #
-    # Key Tension
+    # Agent Reasoning (Level 3): every agent's bullets, in the table's order
     # ------------------------------------------------------------------ #
-    lines.append("## Key Tension\n")
-    lines.append(result.synthesis.key_tension or KEY_TENSION_UNAVAILABLE)
-    lines.append("")
-
-    # ------------------------------------------------------------------ #
-    # Full Debate (Level 3)
-    # ------------------------------------------------------------------ #
-    lines.append("## Full Debate\n")
-
-    lines.append("### Round 1 — Initial Positions\n")
-    for aid, pos in result.round1.items():
-        lines.append(_format_agent_position(pos, "Round 1"))
-
-    lines.append("### Round 2 — Responses\n")
-    for aid, pos in result.round2.items():
-        lines.append(_format_agent_position(pos, "Round 2"))
-
-    lines.append("### Synthesis\n")
-    lines.append(result.synthesis.reasoning)
-    lines.append("")
+    lines.append("## Agent Reasoning\n")
+    for pos in result.round1.values():
+        lines.append(_format_agent_position(pos))
 
     # ------------------------------------------------------------------ #
     # Disclaimer — Rule 6: unconditional, always last

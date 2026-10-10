@@ -6,7 +6,7 @@ import App from './App'
 import * as tickersApi from './api/tickers'
 import { INLINE_DISCLAIMER } from './lib/disclaimer'
 import { catalogEntry } from './test/railFixtures'
-import { MOCK_RESULT, populated } from './test/debateFixtures'
+import { populated } from './test/debateFixtures'
 import { resetViewport, setViewport } from './test/viewport'
 
 // The four layout modes against the composed app: each single-place element renders once whatever the
@@ -67,14 +67,13 @@ afterEach(() => {
 describe.each(MODES)('at %ipx (%s mode) with a result present', (width) => {
   beforeEach(() => setViewport(width))
 
-  it('shows the range check once, Key tension once and the Verdict panel\'s inline disclaimer once', async () => {
+  it('shows the range check once and the Verdict panel\'s inline disclaimer once, and no Key tension anywhere', async () => {
     const { queryClient } = renderApp()
     await openWithResult(queryClient)
 
     expect(screen.getAllByText(/34 of the last 50 five-session moves stayed inside it/)).toHaveLength(1)
-    expect(screen.getAllByText(MOCK_RESULT.synthesis.key_tension)).toHaveLength(1)
     expect(within(verdictPanel()).getAllByText(INLINE_DISCLAIMER)).toHaveLength(1)
-    expect(screen.getAllByRole('heading', { name: 'Key tension' })).toHaveLength(1)
+    expect(screen.queryByRole('heading', { name: /key tension|synthesis/i })).not.toBeInTheDocument()
   })
 
   it('shows the Debate matrix once, and tells the same story as the panel from the same run', async () => {
@@ -102,7 +101,7 @@ describe('layout-mode specific structure', () => {
     await openWithResult(queryClient)
 
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('article')).toHaveLength(6)
+    expect(screen.getAllByRole('article')).toHaveLength(3)
   })
 
   it('renders the Rail as a column at 1440px, collapsed at 1300px, a drawer at 900px and not at all on a phone', async () => {

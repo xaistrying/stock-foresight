@@ -1,10 +1,8 @@
-"""Unit tests for News Agent, Macro Agent, Debate Engine, and Synthesiser."""
+"""Unit tests for the News Agent, the Macro Agent, the vote and the Debate Engine.
+
+One round, one model call (News): see `retire-debate-round-two-and-model-prose`."""
 
 from __future__ import annotations
-
-import itertools
-import re
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -93,38 +91,36 @@ async def test_news_agent_extracts_bearish_signal(monkeypatch):
     assert len(pos.reasoning) >= 1
 
 
+
 # ===========================================================================
 # Macro Agent
 # ===========================================================================
 
+def _macro_data(monkeypatch, *, vnindex, usdvnd, flow, ticker_closes, settling=False):
+    from app.services.debate import macro as macro_mod
+
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: vnindex)
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: ticker_closes)
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: usdvnd)
+    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: flow)
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: settling)
+    return macro_mod.MacroAgent()
+
+
 @pytest.mark.asyncio
 async def test_macro_agent_bull_four_bullish_signals(monkeypatch):
-    from app.services.debate import macro as macro_mod
     import pandas as pd
     import numpy as np
 
     dates = pd.date_range(end="2026-10-02", periods=22, freq="B").strftime("%Y-%m-%d")
-
-    # VN-Index trending up
-    vnindex_up = pd.Series(np.linspace(1200, 1260, 22), index=dates)
-    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: vnindex_up)
-
-    # Ticker outperforming
-    ticker_up = pd.Series(np.linspace(50, 54, 22), index=dates)
-    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: ticker_up)
-
-    # USD/VND stable / VND strengthening
-    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: -0.3)
-
-    # Foreign net buyer across the market: (net, gross) in VND, net/gross = +15%
-    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: (15_000_000_000, 100_000_000_000))
-    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: False)  # flow is final: it votes
-
-    async def fake_chat(messages):
-        return "- VN-Index trending up over 20 sessions\n- Ticker outperforming market\n- VND stable\n- Foreign buying pressure"
-
-    agent = macro_mod.MacroAgent()
-    agent._llm.chat = fake_chat
+    # VN-Index up, ticker outperforming, VND stable, foreign net buying (+15% of turnover, final: it votes)
+    agent = _macro_data(
+        monkeypatch,
+        vnindex=pd.Series(np.linspace(1200, 1260, 22), index=dates),
+        usdvnd=-0.3,
+        flow=(15_000_000_000, 100_000_000_000),
+        ticker_closes=pd.Series(np.linspace(50, 54, 22), index=dates),
+    )
 
     pos = await agent.run("VCB")
     assert pos.agent_id == "macro"
@@ -134,30 +130,23 @@ async def test_macro_agent_bull_four_bullish_signals(monkeypatch):
 @pytest.mark.asyncio
 async def test_macro_agent_vnindex_unavailable_uses_remaining_signals(monkeypatch):
     """When VN-Index is completely unavailable, stance is derived from 3 remaining signals."""
-    from app.services.debate import macro as macro_mod
     import pandas as pd
-    import numpy as np
 
-    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: None)
-    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series([]))
-    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: -0.2)   # VND stable → neutral
-    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: (-5_000_000_000, 40_000_000_000))  # net sell → bear
-    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: False)  # flow is final: it votes
-
-    async def fake_chat(messages):
-        return "- VN-Index data unavailable\n- VND stable\n- Net foreign selling"
-
-    agent = macro_mod.MacroAgent()
-    agent._llm.chat = fake_chat
+    agent = _macro_data(
+        monkeypatch,
+        vnindex=None,
+        usdvnd=-0.2,  # VND stable → neutral
+        flow=(-5_000_000_000, 40_000_000_000),  # net sell → bear
+        ticker_closes=pd.Series([], dtype="float64"),
+    )
 
     pos = await agent.run("VCB")
     assert pos.agent_id == "macro"
     # Only 2 votes: 0 (usdvnd stable) + (-1) (foreign sell) = -1 → bear
     assert pos.stance == "bear"
 
-
 # ===========================================================================
-# Synthesiser — verdict mapping
+# The vote — verdict mapping over the stances of live agents
 # ===========================================================================
 
 def test_map_verdict_unanimous_bull():
@@ -209,39 +198,7 @@ def test_map_verdict_three_way_split():
     assert agreement == "split"
 
 
-@pytest.mark.asyncio
-async def test_synthesiser_degrades_instead_of_crashing_when_the_llm_is_down(monkeypatch):
-    """Both of the synthesiser's LLM calls have fallbacks; the reasoning
-    fallback referenced an undefined name, so any LLM failure there turned the
-    whole debate into a 500 instead of a degraded result."""
-    from app.services.debate.engine import AgentPosition
-    from app.services.debate.synthesiser import Synthesiser
-
-    synth = Synthesiser()
-
-    async def llm_down(messages):
-        raise RuntimeError("llm down")
-
-    monkeypatch.setattr(synth._llm, "chat", llm_down)
-    round2 = {
-        "technical": AgentPosition(agent_id="technical", stance="bull", reasoning=["x"]),
-        "news": AgentPosition(agent_id="news", stance="neutral", reasoning=["x"]),
-        "macro": AgentPosition(agent_id="macro", stance="bear", reasoning=["x"]),
-    }
-
-    result = await synth.run("VCB", round2, round2)
-
-    assert result.verdict == "SPLIT"
-    assert result.key_tension is None  # unavailable, not a canned sentence shown as analysis
-    # The fallback counts every Round 2 stance and never prints the verdict enum (Rule 6).
-    assert result.reasoning == "Vote: 1 bullish, 1 neutral, 1 bearish."
-
-
-# ===========================================================================
-# Synthesiser — votes only the Round 2 stances of live agents
-# ===========================================================================
-
-def _round2(technical, news, macro):
+def _round1(technical, news, macro):
     """Each argument is a stance, or (stance, degraded_reason) for a degraded agent."""
     from app.services.debate.engine import AgentPosition
 
@@ -257,93 +214,69 @@ def _round2(technical, news, macro):
     }
 
 
-async def _synthesise(monkeypatch, round2, *, chat=None):
-    from app.services.debate.synthesiser import Synthesiser
+def _vote_of(round1):
+    from app.services.debate.synthesiser import vote
 
-    synth = Synthesiser()
-    prompts: list[str] = []
-
-    async def capture(messages):
-        prompts.append(messages[-1]["content"])
-        return "ok"
-
-    monkeypatch.setattr(synth._llm, "chat", chat or capture)
-    return await synth.run("VCB", round2, round2), prompts
+    return vote(round1)
 
 
-@pytest.mark.asyncio
-async def test_three_live_agents_keep_the_existing_mapping(monkeypatch):
-    result, _ = await _synthesise(monkeypatch, _round2("neutral", "neutral", "bull"))
+def test_the_vote_needs_no_language_model(monkeypatch):
+    """Traces: "The vote is deterministic, makes no language-model call and returns no prose".
+    Every model call would raise, and the vote is still the mapping."""
+    from app.services.debate.llm_client import LLMClient
 
-    assert (result.verdict, result.agreement_level) == ("OBSERVE", "majority")
+    async def llm_down(self, messages):
+        raise AssertionError("the vote called a language model")
+
+    monkeypatch.setattr(LLMClient, "chat", llm_down)
+
+    assert _vote_of(_round1("bull", "neutral", "bear")) == ("SPLIT", "split")
+    assert _vote_of(_round1("bull", "bull", "bull")) == ("STRONG_BUY_SIGNAL", "unanimous")
 
 
-@pytest.mark.asyncio
+def test_the_synthesiser_module_has_no_language_model_and_no_prose():
+    from app.services.debate import synthesiser
+
+    assert not hasattr(synthesiser, "Synthesiser")
+    assert not hasattr(synthesiser, "LLMClient")
+    assert not hasattr(synthesiser, "_TENSION_PROMPT") and not hasattr(synthesiser, "_SYNTHESIS_SUMMARY_PROMPT")
+
+
+def test_three_live_agents_keep_the_existing_mapping():
+    assert _vote_of(_round1("neutral", "neutral", "bull")) == ("OBSERVE", "majority")
+
+
 @pytest.mark.parametrize(
     "stance, verdict",
     [("bull", "BUY_SIGNAL"), ("bear", "CAUTION_SIGNAL"), ("neutral", "OBSERVE")],
 )
-async def test_two_live_agents_that_agree_never_reach_a_strong_or_unanimous_verdict(
-    monkeypatch, stance, verdict
-):
-    result, _ = await _synthesise(monkeypatch, _round2(stance, stance, ("neutral", "agent_error")))
-
-    assert (result.verdict, result.agreement_level) == (verdict, "majority")
+def test_two_live_agents_that_agree_never_reach_a_strong_or_unanimous_verdict(stance, verdict):
+    assert _vote_of(_round1(stance, stance, ("neutral", "agent_error"))) == (verdict, "majority")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("other", ["neutral", "bear"])
-async def test_two_live_agents_that_disagree_are_a_split(monkeypatch, other):
+def test_two_live_agents_that_disagree_are_a_split(other):
     # A neutral placeholder for the degraded agent would have made bull+neutral "OBSERVE".
-    result, _ = await _synthesise(monkeypatch, _round2("bull", other, ("neutral", "no_input")))
-
-    assert (result.verdict, result.agreement_level) == ("SPLIT", "split")
+    assert _vote_of(_round1("bull", other, ("neutral", "no_input"))) == ("SPLIT", "split")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "round2",
+    "round1",
     [
-        _round2("bull", ("neutral", "no_input"), ("neutral", "round2_failed")),
-        _round2(("neutral", "agent_error"), ("neutral", "llm_failed"), ("neutral", "no_input")),
+        _round1("bull", ("neutral", "no_input"), ("neutral", "agent_error")),
+        _round1(("neutral", "agent_error"), ("neutral", "llm_failed"), ("neutral", "no_input")),
     ],
 )
-async def test_fewer_than_two_live_agents_abstain_without_any_llm_call(monkeypatch, round2):
-    async def fail(messages):
-        raise AssertionError("the synthesiser called the LLM while abstaining")
+def test_fewer_than_two_live_agents_abstain_without_any_llm_call(monkeypatch, round1):
+    from app.services.debate.llm_client import LLMClient
 
-    result, _ = await _synthesise(monkeypatch, round2, chat=fail)
+    async def fail(self, messages):
+        raise AssertionError("the vote called the LLM while abstaining")
 
-    assert (result.verdict, result.agreement_level) == ("INSUFFICIENT_DATA", "none")
-    assert result.key_tension == "" and result.reasoning == ""
+    monkeypatch.setattr(LLMClient, "chat", fail)
 
+    assert _vote_of(round1) == ("INSUFFICIENT_DATA", "none")
 
-@pytest.mark.asyncio
-async def test_a_degraded_agent_is_named_unavailable_and_its_placeholder_is_not_shown(monkeypatch):
-    _, prompts = await _synthesise(monkeypatch, _round2("bull", ("neutral", "llm_failed"), "bull"))
-
-    assert len(prompts) == 2
-    # The agent's own line says unavailable (the static preamble alone also does):
-    assert "News Context agent (Round 2): unavailable" in prompts[0]
-    assert "News Context: unavailable" in prompts[1]
-    for prompt in prompts:
-        assert "PLACEHOLDER news" not in prompt
-        # The vote counts live agents only: the placeholder stance is not counted as neutral.
-        assert "2 bullish, 0 neutral, 0 bearish" in prompt
-
-
-@pytest.mark.asyncio
-async def test_a_failing_synthesis_prose_keeps_the_verdict(monkeypatch):
-    async def llm_down(messages):
-        raise RuntimeError("llm down")
-
-    result, _ = await _synthesise(
-        monkeypatch, _round2("bull", ("neutral", "llm_failed"), "bull"), chat=llm_down
-    )
-
-    assert (result.verdict, result.agreement_level) == ("BUY_SIGNAL", "majority")
-    # The fallback counts live stances only (a degraded agent's placeholder is not a vote).
-    assert result.reasoning == "Vote: 2 bullish, 0 neutral, 0 bearish."
 
 
 # ===========================================================================
@@ -371,52 +304,45 @@ def _stub(outcome, calls):
     return method
 
 
-def _engine(round1, round2):
-    """A DebateEngine whose agents are stubs and whose synthesiser LLM is counted.
-
-    Returns (engine, calls, synthesiser_prompts); `calls[agent][method]` lists the
-    extra arguments each stub received.
-    """
+def _engine(round1):
+    """A DebateEngine whose agents are stubs; `calls[agent]` lists the extra arguments each `run` got."""
     from app.services.debate.engine import AGENT_ORDER, DebateEngine
 
     engine = DebateEngine()
-    calls = {agent_id: {"run": [], "respond": []} for agent_id in AGENT_ORDER}
+    calls = {agent_id: [] for agent_id in AGENT_ORDER}
     for agent_id in AGENT_ORDER:
-        agent = getattr(engine, f"_{agent_id}")
-        agent.run = _stub(round1[agent_id], calls[agent_id]["run"])
-        agent.respond = _stub(
-            round2.get(agent_id, AssertionError("Round 2 was not expected")),
-            calls[agent_id]["respond"],
-        )
-
-    prompts: list[str] = []
-
-    async def chat(messages):
-        prompts.append(messages[-1]["content"])
-        return "synthesis prose"
-
-    engine._synthesiser._llm.chat = chat
-    return engine, calls, prompts
+        getattr(engine, f"_{agent_id}").run = _stub(round1[agent_id], calls[agent_id])
+    return engine, calls
 
 
 @pytest.mark.asyncio
 async def test_engine_all_agents_live_uses_the_eligibility_date_and_age():
     r1 = {"technical": _position("technical", "bull"), "news": _position("news", "bull"),
           "macro": _position("macro", "neutral")}
-    r2 = {a: _position(a, p.stance, "held") for a, p in r1.items()}
-    engine, calls, prompts = _engine(r1, r2)
+    engine, calls = _engine(r1)
+    stages: list[str] = []
 
-    result = await engine.run("VCB", eligibility=ELIGIBLE)
+    result = await engine.run("VCB", eligibility=ELIGIBLE, on_stage=stages.append)
 
     assert (result.verdict, result.agreement_level) == ("BUY_SIGNAL", "majority")
     assert (result.as_of, result.data_as_of, result.data_age_sessions) == ("2026-10-02", "2026-10-02", 2)
     assert result.agents_degraded == []
     assert result.eligibility == {"eligible": True, "reasons": []}
-    assert result.round2["news"].reasoning == ["held"]
     assert result.duration_ms >= 0
-    assert calls["technical"]["run"] == [("2026-10-02",)]  # Technical reads the row of as_of
-    assert calls["news"]["run"] == [()]
-    assert len(prompts) == 2
+    assert calls["technical"] == [("2026-10-02",)]  # Technical reads the row of as_of
+    assert calls["news"] == [()]
+    assert stages == ["round1"]  # the run's only stage
+
+
+@pytest.mark.asyncio
+async def test_the_result_has_no_second_round_and_no_synthesis():
+    r1 = {a: _position(a, "bull") for a in ("technical", "news", "macro")}
+    engine, _ = _engine(r1)
+
+    result = await engine.run("VCB", eligibility=ELIGIBLE)
+
+    assert set(result.round1) == {"technical", "news", "macro"}
+    assert not hasattr(result, "round2") and not hasattr(result, "synthesis")
 
 
 @pytest.mark.asyncio
@@ -427,8 +353,7 @@ async def test_engine_copies_the_range_fields_from_round1_to_the_result():
         "technical", "bull", ["RSI high"], range_5s_pct=4.02, sigma_daily_pct=1.5, range_coverage=0.68
     )
     r1 = {"technical": technical, "news": _position("news", "bull"), "macro": _position("macro", "neutral")}
-    r2 = {a: _position(a, p.stance, "held") for a, p in r1.items()}
-    engine, _, _ = _engine(r1, r2)
+    engine, _ = _engine(r1)
 
     result = await engine.run("VCB", eligibility=ELIGIBLE)
 
@@ -442,84 +367,99 @@ async def test_a_round1_exception_degrades_the_agent_and_two_live_agents_vote():
 
     r1 = {"technical": _position("technical", "bear"), "news": RuntimeError("Network error"),
           "macro": _position("macro", "bear")}
-    r2 = {"technical": _position("technical", "bear", "held"), "macro": _position("macro", "bear", "held")}
-    engine, calls, _ = _engine(r1, r2)
+    engine, _ = _engine(r1)
 
     result = await engine.run("VCB", eligibility=ELIGIBLE)
 
     news = result.round1["news"]
     assert (news.stance, news.degraded_reason) == ("neutral", "agent_error")
     assert news.reasoning == AGENT_UNAVAILABLE_REASONING
-    assert result.round2["news"] == news and calls["news"]["respond"] == []  # not asked again
-    # The others are not shown the degraded agent's placeholder as a position.
-    assert set(calls["technical"]["respond"][0][0]) == {"technical", "macro"}
     assert result.agents_degraded == ["news"]
     assert (result.verdict, result.agreement_level) == ("CAUTION_SIGNAL", "majority")
 
 
 @pytest.mark.asyncio
-async def test_two_degraded_agents_after_round1_skip_round2_and_synthesis():
-    r1 = {"technical": _position("technical", "bull"), "news": RuntimeError("down"),
-          "macro": _position("macro", "neutral", reason="no_input")}
-    engine, calls, prompts = _engine(r1, {})
+async def test_agents_degraded_is_read_from_round1_and_the_reason_is_never_round2_failed():
+    r1 = {"technical": _position("technical", "bull"),
+          "news": _position("news", "neutral", "language-model analysis failed", reason="llm_failed"),
+          "macro": _position("macro", "neutral", "nothing to count", reason="no_input")}
+    engine, _ = _engine(r1)
 
     result = await engine.run("VCB", eligibility=ELIGIBLE)
 
-    assert all(not c["respond"] for c in calls.values())
-    assert prompts == []
+    assert result.agents_degraded == ["news", "macro"]
+    reasons = {p.degraded_reason for p in result.round1.values()}
+    assert reasons == {None, "llm_failed", "no_input"} and "round2_failed" not in reasons
+
+
+@pytest.mark.asyncio
+async def test_two_degraded_agents_give_insufficient_data_and_no_further_call():
+    r1 = {"technical": _position("technical", "bull"), "news": RuntimeError("down"),
+          "macro": _position("macro", "neutral", reason="no_input")}
+    engine, calls = _engine(r1)
+
+    result = await engine.run("VCB", eligibility=ELIGIBLE)
+
+    assert all(len(c) == 1 for c in calls.values())  # each agent ran once; nothing ran after
     assert (result.verdict, result.agreement_level) == ("INSUFFICIENT_DATA", "none")
     assert result.agents_degraded == ["news", "macro"]
     assert (result.range_5s_pct, result.sigma_daily_pct, result.range_coverage) == (None, None, None)
 
 
+def _real_agent_data(monkeypatch):
+    """Data for the real Technical and Macro agents and a News feed, so a failing model can be
+    observed on all three (a stub `run` would prove nothing about who calls a model)."""
+    import numpy as np
+    import pandas as pd
+
+    from app.services.debate import macro as macro_mod
+    from app.services.debate import news as news_mod
+    from app.services.debate import technical as technical_mod
+
+    dates = pd.date_range(end="2026-10-02", periods=22, freq="B").strftime("%Y-%m-%d")
+    row = {"date": "2026-10-02", "rsi": 61.0, "macd_histogram": 0.05, "tenkan_sen": 20.0, "kijun_sen": 18.0}
+
+    async def headlines(ticker, sector):
+        return ["[ticker] 2026-10-01 VCB headline"]
+
+    monkeypatch.setattr(technical_mod, "_get_features_row", lambda t, a: row)
+    monkeypatch.setattr(technical_mod, "compute_range", lambda t: None)
+    monkeypatch.setattr(macro_mod, "_get_vnindex_closes", lambda n: pd.Series(np.linspace(1200, 1260, 22), index=dates))
+    monkeypatch.setattr(macro_mod, "_load_ohlcv_closes", lambda t, n: pd.Series(np.linspace(50, 54, 22), index=dates))
+    monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: -0.3)
+    monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: (15e9, 100e9))
+    monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda now=None: False)
+    monkeypatch.setattr(news_mod, "fetch_headlines", headlines)
+    monkeypatch.setattr(news_mod, "_get_sector_for_ticker", lambda t: None)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["raises", "blank", "no_stance"])
-async def test_a_round2_failure_keeps_the_round1_position_but_not_the_vote(failure):
-    from app.services.debate.engine import ROUND2_UNAVAILABLE_NOTE, AgentPosition
-    from app.services.debate.technical import StanceNotRecognised
+async def test_an_llm_outage_degrades_only_news_and_the_two_live_agents_still_vote(monkeypatch):
+    """Traces: "Degraded agents are defined by an untrustworthy stance, not by failed prose".
+    Technical and Macro never call a model, so an outage costs News's stance and nothing else."""
+    from app.services.debate.engine import DebateEngine
+    from app.services.debate.llm_client import LLMClient
 
-    outcome = {
-        "raises": RuntimeError("llm timeout"),
-        "blank": ValueError("empty LLM response"),
-        "no_stance": StanceNotRecognised("no stance line"),
-    }[failure]
-    r1 = {"technical": AgentPosition("technical", "bull", ["RSI high"], range_5s_pct=1.2),
-          "news": _position("news", "bull"), "macro": _position("macro", "neutral")}
-    r2 = {"technical": outcome, "news": _position("news", "bull", "held"),
-          "macro": _position("macro", "neutral", "held")}
-    engine, _, _ = _engine(r1, r2)
+    async def llm_down(self, messages):
+        raise RuntimeError("llm down")
 
-    result = await engine.run("VCB", eligibility=ELIGIBLE)
+    monkeypatch.setattr(LLMClient, "chat", llm_down)
+    _real_agent_data(monkeypatch)
 
-    technical = result.round2["technical"]
-    assert (technical.stance, technical.degraded_reason) == ("bull", "round2_failed")
-    assert technical.reasoning == ["RSI high", ROUND2_UNAVAILABLE_NOTE]
-    assert result.agents_degraded == ["technical"]
-    # Technical's kept "bull" does not vote: News bull vs Macro neutral is a split.
-    assert (result.verdict, result.agreement_level) == ("SPLIT", "split")
+    result = await DebateEngine().run("VCB", eligibility=ELIGIBLE)
 
-
-@pytest.mark.asyncio
-async def test_an_llm_outage_ends_in_insufficient_data():
-    r1 = {"technical": _position("technical", "bull"),
-          "news": _position("news", "neutral", "language-model analysis failed", reason="llm_failed"),
-          "macro": _position("macro", "bull")}
-    r2 = {"technical": RuntimeError("llm down"), "macro": RuntimeError("llm down")}
-    engine, _, prompts = _engine(r1, r2)
-
-    result = await engine.run("VCB", eligibility=ELIGIBLE)
-
-    assert result.verdict == "INSUFFICIENT_DATA"
-    assert result.agents_degraded == ["technical", "news", "macro"]
-    assert prompts == []
+    assert result.agents_degraded == ["news"]
+    assert result.round1["news"].degraded_reason == "llm_failed"
+    assert result.round1["technical"].degraded_reason is None and result.round1["macro"].degraded_reason is None
+    assert (result.round1["technical"].stance, result.round1["macro"].stance) == ("bull", "bull")
+    assert (result.verdict, result.agreement_level) == ("BUY_SIGNAL", "majority")  # not INSUFFICIENT_DATA
 
 
 @pytest.mark.asyncio
 async def test_as_of_is_the_eligibility_date_even_when_technical_raises():
     r1 = {"technical": RuntimeError("db locked"), "news": _position("news", "bull"),
           "macro": _position("macro", "bull")}
-    r2 = {"news": _position("news", "bull"), "macro": _position("macro", "bull")}
-    engine, _, _ = _engine(r1, r2)
+    engine, _ = _engine(r1)
     eligibility = {**ELIGIBLE, "as_of": "2020-01-03", "age_sessions": 7}  # never the system date
 
     result = await engine.run("VCB", eligibility=eligibility)
@@ -533,21 +473,21 @@ async def test_run_with_an_ineligible_ticker_abstains_without_running_any_agent(
     from app.services.debate.engine import AGENT_ORDER
 
     failing = {a: AssertionError("no agent may run") for a in AGENT_ORDER}
-    engine, calls, prompts = _engine(failing, failing)
+    engine, calls = _engine(failing)
 
     result = await engine.run("VCB", eligibility=eligibility)
 
     assert (result.verdict, result.agreement_level) == ("INSUFFICIENT_DATA", "none")
     assert result.eligibility == {"eligible": False, "reasons": ["stale", "near_gap"]}
-    assert (result.round1, result.round2, result.agents_degraded) == ({}, {}, [])
-    assert all(not c["run"] and not c["respond"] for c in calls.values()) and prompts == []
+    assert (result.round1, result.agents_degraded) == ({}, [])
+    assert all(not c for c in calls.values())
 
 
 @pytest.mark.asyncio
 async def test_run_without_eligibility_asks_assess_eligibility(monkeypatch):
     monkeypatch.setattr("app.services.data_eligibility.assess_eligibility", lambda ticker: ELIGIBLE)
     r1 = {a: _position(a, "bull") for a in ("technical", "news", "macro")}
-    engine, _, _ = _engine(r1, r1)
+    engine, _ = _engine(r1)
 
     result = await engine.run("VCB")
 
@@ -555,8 +495,9 @@ async def test_run_without_eligibility_asks_assess_eligibility(monkeypatch):
 
 
 # ===========================================================================
-# Response parsing, synthesis context, Round 2 fallback
+# Response parsing (the News reply)
 # ===========================================================================
+
 
 @pytest.mark.parametrize("first_line", [
     "bull", "Bull.", "**bull**", "Stance: bull", "**Final stance:** bull", "_bull_", "Bullish",
@@ -591,65 +532,6 @@ def test_parse_bullets_keeps_negative_sign_and_other_markers():
     assert bullets == ["-2.5% vs VN-Index", "star bullet", "dot bullet"]
 
 
-@pytest.mark.asyncio
-async def test_technical_reasoning_keeps_negative_sign(monkeypatch):
-    from app.services.debate.technical import TechnicalAgent
-
-    agent = TechnicalAgent()
-
-    async def fake_chat(messages):
-        return "- -0.15 MACD histogram"
-
-    monkeypatch.setattr(agent._llm, "chat", fake_chat)
-
-    out = await agent._generate_reasoning("VCB", "2026-10-05", "bear", {"macd_histogram": -0.15}, None)
-
-    assert out == ["-0.15 MACD histogram"]
-
-
-@pytest.mark.asyncio
-async def test_macro_reasoning_keeps_negative_sign(monkeypatch):
-    from app.services.debate.macro import MacroAgent
-
-    agent = MacroAgent()
-
-    async def fake_chat(messages):
-        return "- -0.8% relative to VN-Index"
-
-    monkeypatch.setattr(agent._llm, "chat", fake_chat)
-
-    out = await agent._generate_reasoning("VCB", "bear", {})
-
-    assert out == ["-0.8% relative to VN-Index"]
-
-
-@pytest.mark.asyncio
-async def test_synthesiser_prompts_carry_ticker_and_every_bullet(monkeypatch):
-    from app.services.debate.engine import AgentPosition
-    from app.services.debate.synthesiser import Synthesiser
-
-    synth = Synthesiser()
-    prompts: list[str] = []
-
-    async def capture(messages):
-        prompts.append(messages[-1]["content"])
-        return "ok"
-
-    monkeypatch.setattr(synth._llm, "chat", capture)
-    bullets = [f"bullet {i}" for i in range(5)]
-    round2 = {
-        a: AgentPosition(agent_id=a, stance="bear", reasoning=bullets)
-        for a in ("technical", "news", "macro")
-    }
-
-    await synth.run("VPB", round2, round2)
-
-    assert len(prompts) == 2
-    for prompt in prompts:
-        assert "VPB" in prompt and "unknown" not in prompt
-        assert "bullet 4" in prompt  # the 5th bullet used to be dropped
-
-
 @pytest.mark.parametrize("response", [
     "Bear — shifting because macro is weak\n- a",
     "bear (shifted from bull)\n- a",
@@ -659,13 +541,10 @@ async def test_synthesiser_prompts_carry_ticker_and_every_bullet(monkeypatch):
     "```\nbear\n```\n- a",
     "## Final Stance\nbear\n- a",
 ])
-def test_parse_stance_honours_a_deliberate_shift_when_annotated(response):
-    from app.services.debate.engine import AgentPosition
+def test_parse_stance_honours_an_annotated_stance_line(response):
     from app.services.debate.technical import _parse_stance_and_bullets
 
-    r1 = AgentPosition(agent_id="technical", stance="bull", reasoning=["r1"])
-
-    stance, bullets = _parse_stance_and_bullets(response, r1)
+    stance, bullets = _parse_stance_and_bullets(response, None)
 
     assert stance == "bear"
     assert bullets == ["a"]
@@ -696,174 +575,37 @@ def test_extract_bullets_ignores_markdown_rules():
 
 
 # ===========================================================================
-# Synthesiser prompts and fallback describe the vote neutrally (Rule 6)
-# ===========================================================================
-
-STANCES = ("bull", "neutral", "bear")
-ENUM_TEXT = re.compile(r"[A-Z]+_SIGNAL\b|INSUFFICIENT_DATA|\bSPLIT\b|\bOBSERVE\b")
-TRANSACTION_VERBS = re.compile(r"\b(buy|sell|hold)\b", re.IGNORECASE)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("stances", list(itertools.product(STANCES, repeat=3)))
-async def test_prompts_carry_no_enum_text_or_transaction_verbs(monkeypatch, stances):
-    _, prompts = await _synthesise(monkeypatch, _round2(*stances))
-
-    assert len(prompts) == 2
-    for prompt in prompts:
-        assert not ENUM_TEXT.search(prompt)
-        assert not TRANSACTION_VERBS.search(prompt)
-
-
-@pytest.mark.asyncio
-async def test_prompts_state_the_vote_as_counts_and_agreement(monkeypatch):
-    _, prompts = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"))
-
-    assert "2 bullish, 1 neutral, 0 bearish (majority)" in prompts[0]
-    assert "2 bullish, 1 neutral, 0 bearish" in prompts[1]
-
-
-@pytest.mark.asyncio
-async def test_synthesis_fallback_shows_the_vote_not_the_enum(monkeypatch):
-    async def llm_down(messages):
-        raise RuntimeError("llm down")
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=llm_down)
-
-    assert result.reasoning == "Vote: 2 bullish, 1 neutral, 0 bearish."
-    assert not ENUM_TEXT.search(result.reasoning)
-
-
-# ===========================================================================
-# harden-debate-runtime: engine seam, unusable synthesis text, concurrency, loop
+# harden-debate-runtime: the engine seam and the event loop
 # ===========================================================================
 
 ADVICE_BULLET = "Investors should consider buying on weakness"
-USABLE = "The technical picture and the news disagree on direction, and the macro read is thin."
-VOTE_LINE = "Vote: 2 bullish, 1 neutral, 0 bearish."
 
 
 @pytest.mark.asyncio
-async def test_a_withheld_round1_bullet_is_a_placeholder_in_round2_and_the_synthesis_and_the_stance_stays():
+async def test_a_withheld_bullet_is_a_placeholder_in_the_response_and_the_stance_stays():
+    from app.api.debate import _serialise_result
     from app.services.debate.prompt_safety import WITHHELD
 
     r1 = {"technical": _position("technical", "bull", ADVICE_BULLET), "news": _position("news", "bull"),
           "macro": _position("macro", "neutral")}
-    r2 = {"technical": _position("technical", "bull", ADVICE_BULLET), "news": _position("news", "bull", "held"),
-          "macro": _position("macro", "neutral", "held")}
-    engine, calls, prompts = _engine(r1, r2)
+    engine, _ = _engine(r1)
 
     result = await engine.run("VCB", eligibility=ELIGIBLE)
 
-    seen_by_news = calls["news"]["respond"][0][0]["technical"]
-    assert seen_by_news.reasoning == [WITHHELD] and seen_by_news.stance == "bull"
-    assert result.round1["technical"].reasoning == [WITHHELD]
-    assert result.round2["technical"].reasoning == [WITHHELD] and result.round2["technical"].stance == "bull"
+    assert result.round1["technical"].reasoning == [WITHHELD] and result.round1["technical"].stance == "bull"
+    assert _serialise_result(result)["round1"]["technical"]["reasoning"] == [WITHHELD]  # the response says so
     assert result.agents_degraded == []  # withholding is not a degradation
     assert (result.verdict, result.agreement_level) == ("BUY_SIGNAL", "majority")  # and does not move a vote
-    assert prompts and all(ADVICE_BULLET not in p and WITHHELD in p for p in prompts)
 
 
 @pytest.mark.asyncio
 async def test_descriptive_bullets_pass_the_engine_seam_untouched():
     r1 = {a: _position(a, "bull", "Foreign investors net sold 245B VND") for a in ("technical", "news", "macro")}
-    engine, _, _ = _engine(r1, r1)
+    engine, _ = _engine(r1)
 
     result = await engine.run("VCB", eligibility=ELIGIBLE)
 
     assert all(p.reasoning == ["Foreign investors net sold 245B VND"] for p in result.round1.values())
-
-
-UNUSABLE = [
-    "", "   \n", "Too short.", "I'm sorry, I can't help with that.", "I can't assist with this request at all.",
-    "I cannot provide an analysis of this stock for you.", "I am unable to write this analysis today, sorry.",
-    "As an AI language model, I do not have a view on this.",
-    "I’m sorry, but I can’t help with that request.",  # curly apostrophes, as models write them
-]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("reply", UNUSABLE)
-async def test_an_unusable_key_tension_reply_is_unavailable_and_the_summary_falls_back(monkeypatch, reply):
-    async def chat(messages):
-        return reply
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=chat)
-
-    assert result.key_tension is None
-    assert result.reasoning == VOTE_LINE  # the deterministic line, on the same test
-
-
-@pytest.mark.asyncio
-async def test_a_usable_reply_is_kept_trimmed(monkeypatch):
-    async def chat(messages):
-        return f"  {USABLE}\n"
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=chat)
-
-    assert result.key_tension == USABLE and result.reasoning == USABLE
-
-
-@pytest.mark.asyncio
-async def test_a_refusal_phrase_later_in_a_long_text_does_not_make_it_unusable(monkeypatch):
-    text = "The agents disagree about direction. Some analysts say they cannot rule out a pullback."
-
-    async def chat(messages):
-        return text
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=chat)
-
-    assert result.key_tension == text
-
-
-@pytest.mark.asyncio
-async def test_recommendation_wording_in_the_synthesis_text_is_withheld(monkeypatch):
-    from app.services.debate.prompt_safety import WITHHELD
-
-    async def chat(messages):
-        return "The agents are split on direction. Investors should buy this stock now for a quick gain."
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=chat)
-
-    assert result.key_tension == f"The agents are split on direction. {WITHHELD}"
-    assert "should buy" not in result.reasoning
-
-
-@pytest.mark.asyncio
-async def test_the_two_synthesiser_calls_overlap_in_time(monkeypatch):
-    import asyncio
-    import time
-
-    async def chat(messages):
-        await asyncio.sleep(0.3)
-        return USABLE
-
-    started = time.monotonic()
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=chat)
-
-    assert time.monotonic() - started < 0.5  # one call's time, not two
-    assert result.key_tension == USABLE and result.reasoning == USABLE
-
-
-@pytest.mark.asyncio
-async def test_one_failing_synthesiser_call_leaves_the_other_intact(monkeypatch):
-    async def chat(messages):
-        if "KEY TENSION" in messages[-1]["content"]:
-            raise RuntimeError("llm down")
-        return USABLE
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=chat)
-
-    assert result.key_tension is None and result.reasoning == USABLE
-
-    async def other_way(messages):
-        if "KEY TENSION" in messages[-1]["content"]:
-            return USABLE
-        raise RuntimeError("llm down")
-
-    result, _ = await _synthesise(monkeypatch, _round2("bull", "bull", "neutral"), chat=other_way)
-
-    assert result.key_tension == USABLE and result.reasoning == VOTE_LINE
 
 
 @pytest.mark.asyncio
@@ -912,8 +654,7 @@ async def test_blocking_reads_in_the_agents_do_not_stall_the_event_loop(monkeypa
         return "bull\n- a usable reasoning bullet for the test"
 
     agents = (technical_mod.TechnicalAgent(), news_mod.NewsAgent(), macro_mod.MacroAgent())
-    for agent in agents:
-        monkeypatch.setattr(agent._llm, "chat", chat)
+    monkeypatch.setattr(agents[1]._llm, "chat", chat)  # only News calls a model
 
     worst = 0.0
 

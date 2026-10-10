@@ -1,8 +1,8 @@
-"""Unit tests for the Technical Agent."""
+"""Unit tests for the Technical Agent: a computed stance, the range fields and the values list.
+
+The agent makes no language-model call (`retire-debate-round-two-and-model-prose`)."""
 
 from __future__ import annotations
-
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -72,6 +72,11 @@ def test_stance_partial_indicators():
 # TechnicalAgent.run
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# TechnicalAgent.run
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
 async def test_technical_agent_run_bull(monkeypatch):
     from app.services.debate import technical as tech_mod
@@ -87,13 +92,8 @@ async def test_technical_agent_run_bull(monkeypatch):
     monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: fake_row)
     monkeypatch.setattr(tech_mod, "compute_range", lambda t: _range_result())
 
-    async def fake_chat(messages):
-        return "- RSI at 62 is above the 55 bullish threshold\n- MACD histogram positive at 0.1\n- Tenkan above Kijun confirms uptrend"
+    pos = await tech_mod.TechnicalAgent().run("VCB")
 
-    agent = tech_mod.TechnicalAgent()
-    agent._llm.chat = fake_chat
-
-    pos = await agent.run("VCB")
     assert isinstance(pos, AgentPosition)
     assert pos.agent_id == "technical"
     assert pos.stance == "bull"
@@ -125,13 +125,8 @@ async def test_technical_agent_run_includes_volatility_range(monkeypatch):
     monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: fake_row)
     monkeypatch.setattr(tech_mod, "compute_range", lambda t: _range_result(range_5s_pct=5.1, sigma_daily_pct=1.9))
 
-    async def fake_chat(messages):
-        return "- RSI at 55\n- MACD positive\n- Tenkan above Kijun"
+    pos = await tech_mod.TechnicalAgent().run("TCB")
 
-    agent = tech_mod.TechnicalAgent()
-    agent._llm.chat = fake_chat
-
-    pos = await agent.run("TCB")
     assert (pos.range_5s_pct, pos.sigma_daily_pct, pos.range_coverage) == (5.1, 1.9, 0.68)
 
 
@@ -151,14 +146,8 @@ async def test_technical_agent_reads_the_features_row_of_as_of_not_the_latest(mo
     monkeypatch.setattr(tech_mod, "_get_features_row", by_date)
     monkeypatch.setattr(tech_mod, "get_latest_features_row", latest)
     monkeypatch.setattr(tech_mod, "compute_range", lambda t: _range_result())
-    agent = tech_mod.TechnicalAgent()
 
-    async def fake_chat(messages):
-        return "- RSI 62"
-
-    agent._llm.chat = fake_chat
-
-    pos = await agent.run("VCB", "2026-10-02")
+    pos = await tech_mod.TechnicalAgent().run("VCB", "2026-10-02")
 
     assert asked == [("VCB", "2026-10-02")]
     assert pos.stance == "bull" and pos.degraded_reason is None
@@ -186,98 +175,112 @@ def test_features_row_by_date_returns_that_days_values(tmp_path, monkeypatch):
     assert tech_mod._get_features_row("VCB", "2026-10-03") is None
 
 
-@pytest.mark.asyncio
-async def test_a_failing_llm_leaves_the_technical_agent_live_with_the_computed_values(monkeypatch):
-    from app.services.debate import technical as tech_mod
+_ROW = {"date": "2026-10-04", "rsi": 62.0, "macd_histogram": 0.1, "tenkan_sen": 25.0, "kijun_sen": 22.0}
 
-    row = {"date": "2026-10-04", "rsi": 62.0, "macd_histogram": 0.1, "tenkan_sen": 25.0, "kijun_sen": 22.0}
-    monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: row)
+
+@pytest.mark.asyncio
+async def test_no_model_is_needed_and_the_agent_stays_live(monkeypatch):
+    """Traces: "Technical Agent reasoning lists the computed indicator values", scenario "No model is needed"."""
+    from app.services.debate import technical as tech_mod
+    from app.services.debate.llm_client import LLMClient
+
+    async def llm_down(self, messages):
+        raise AssertionError("the Technical agent called a language model")
+
+    monkeypatch.setattr(LLMClient, "chat", llm_down)
+    monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: _ROW)
     monkeypatch.setattr(tech_mod, "compute_range", lambda t: _range_result())
     agent = tech_mod.TechnicalAgent()
 
-    async def llm_down(messages):
-        raise RuntimeError("llm down")
-
-    agent._llm.chat = llm_down
-
     pos = await agent.run("VCB")
 
-    assert pos.stance == "bull" and pos.degraded_reason is None  # the stance is computed, not LLM-made
-    assert pos.reasoning == [
-        "RSI: 62.0", "MACD histogram: 0.1", "Ichimoku Tenkan-sen: 25.0", "Ichimoku Kijun-sen: 22.0",
-    ]
+    assert not hasattr(agent, "_llm") and not hasattr(agent, "respond")
+    assert pos.stance == "bull" and pos.degraded_reason is None  # the stance is computed
     assert not any("unavailable" in bullet for bullet in pos.reasoning)
 
 
 # ---------------------------------------------------------------------------
-# The typical 5-session move in the prompt and on the position
+# Reasoning: the computed values, in order, rounded
 # ---------------------------------------------------------------------------
 
-_ROW = {"date": "2026-10-04", "rsi": 62.0, "macd_histogram": 0.1, "tenkan_sen": 25.0, "kijun_sen": 22.0}
-
-
-async def _run_and_capture_prompt(monkeypatch, served):
+async def _run(monkeypatch, served=None, row=None):
     from app.services.debate import technical as tech_mod
 
-    monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: _ROW)
-    monkeypatch.setattr(tech_mod, "compute_range", lambda t: served)
-    prompts: list[str] = []
-
-    async def fake_chat(messages):
-        prompts.append(messages[-1]["content"])
-        return "- RSI at 62 is above the 55 bullish threshold"
-
-    agent = tech_mod.TechnicalAgent()
-    agent._llm.chat = fake_chat
-    position = await agent.run("VCB")
-    return prompts[0], position
+    monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: row or _ROW)
+    monkeypatch.setattr(tech_mod, "compute_range", lambda t: served if served is not None else _range_result())
+    return await tech_mod.TechnicalAgent().run("VCB")
 
 
 @pytest.mark.asyncio
-async def test_calibrated_band_is_stated_with_its_coverage_and_the_daily_sigma(monkeypatch):
-    prompt, pos = await _run_and_capture_prompt(monkeypatch, _range_result())
+async def test_reasoning_is_the_values_list_in_the_specs_order(monkeypatch):
+    pos = await _run(monkeypatch)
 
-    assert "Typical 5-session move: ±4.0%" in prompt
-    assert "about 2 in 3 of past 5-session moves stayed within this band" in prompt
-    assert "daily volatility forecast 1.50%" in prompt
-    assert "not a direction" in prompt and "not a ceiling" in prompt and "not a prediction" in prompt
+    assert pos.reasoning == [
+        "RSI: 62.0", "MACD histogram: 0.1", "Ichimoku Tenkan-sen: 25.0", "Ichimoku Kijun-sen: 22.0",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_values_are_rounded_to_one_four_two_and_two_decimals_and_keep_a_negative_sign(monkeypatch):
+    row = {"date": "2026-10-04", "rsi": 41.37, "macd_histogram": -0.06521, "tenkan_sen": 43.084, "kijun_sen": 43.971}
+
+    pos = await _run(monkeypatch, row=row)
+
+    assert pos.reasoning == [
+        "RSI: 41.4", "MACD histogram: -0.0652", "Ichimoku Tenkan-sen: 43.08", "Ichimoku Kijun-sen: 43.97",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_only_available_indicators_are_listed(monkeypatch):
+    row = {"date": "2026-10-04", "rsi": 62.0, "macd_histogram": None, "tenkan_sen": 25.0, "kijun_sen": 22.0}
+
+    pos = await _run(monkeypatch, row=row)
+
+    assert pos.reasoning == ["RSI: 62.0", "Ichimoku Tenkan-sen: 25.0", "Ichimoku Kijun-sen: 22.0"]
+    assert pos.degraded_reason is None
+
+
+# ---------------------------------------------------------------------------
+# The typical 5-session move: on the position, never in the bullets
+# ---------------------------------------------------------------------------
+
+def _states_the_band(bullets):
+    text = " ".join(bullets).lower()
+    return any(phrase in text for phrase in ("typical 5-session", "5-session move", "2 in 3", "coverage", "daily"))
+
+
+@pytest.mark.asyncio
+async def test_calibrated_band_is_on_the_position_and_not_in_any_bullet(monkeypatch):
+    pos = await _run(monkeypatch, _range_result())
+
     assert (pos.range_5s_pct, pos.sigma_daily_pct, pos.range_coverage) == (4.02, 1.5, 0.68)
+    assert not _states_the_band(pos.reasoning)
+    assert not any(figure in " ".join(pos.reasoning) for figure in ("4.0", "1.50", "1.5%", "68"))
 
 
 @pytest.mark.asyncio
-async def test_the_prompt_never_calls_the_band_expected(monkeypatch):
-    for served in (_range_result(), _range_result("uncalibrated"), _range_result("range_out_of_bounds")):
-        prompt, _ = await _run_and_capture_prompt(monkeypatch, served)
-        assert "expected" not in prompt.lower()
+async def test_uncalibrated_band_carries_null_coverage_and_makes_no_coverage_claim(monkeypatch):
+    pos = await _run(monkeypatch, _range_result("uncalibrated"))
 
-
-@pytest.mark.asyncio
-async def test_uncalibrated_band_makes_no_coverage_claim(monkeypatch):
-    prompt, pos = await _run_and_capture_prompt(monkeypatch, _range_result("uncalibrated"))
-
-    assert "Typical 5-session move: ±4.0%" in prompt
-    assert "coverage not established for this stock" in prompt
-    assert "2 in 3" not in prompt
-    assert pos.range_5s_pct == 4.02 and pos.range_coverage is None
+    assert pos.range_5s_pct == 4.02 and pos.sigma_daily_pct == 1.5 and pos.range_coverage is None
+    assert not _states_the_band(pos.reasoning)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["ineligible", "range_out_of_bounds", "model_unavailable"])
-async def test_no_band_served_gives_unavailable_and_null_fields(monkeypatch, status):
-    prompt, pos = await _run_and_capture_prompt(monkeypatch, _range_result(status))
+async def test_no_band_served_gives_null_fields_and_no_estimate(monkeypatch, status):
+    pos = await _run(monkeypatch, _range_result(status))
 
-    assert "Typical 5-session move: unavailable" in prompt
-    assert "do not estimate" in prompt.lower()
     assert (pos.range_5s_pct, pos.sigma_daily_pct, pos.range_coverage) == (None, None, None)
+    assert not _states_the_band(pos.reasoning)
 
 
 @pytest.mark.asyncio
 async def test_an_out_of_bounds_sigma_is_not_passed_on_as_a_daily_figure(monkeypatch):
-    served = _range_result("range_out_of_bounds", sigma_daily_pct=41.7)
+    pos = await _run(monkeypatch, _range_result("range_out_of_bounds", sigma_daily_pct=41.7))
 
-    prompt, pos = await _run_and_capture_prompt(monkeypatch, served)
-
-    assert "41.7" not in prompt and pos.sigma_daily_pct is None
+    assert pos.sigma_daily_pct is None and "41.7" not in " ".join(pos.reasoning)
 
 
 @pytest.mark.asyncio
@@ -289,31 +292,8 @@ async def test_a_failing_range_service_does_not_stop_the_agent(monkeypatch):
 
     monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: _ROW)
     monkeypatch.setattr(tech_mod, "compute_range", broken)
-    agent = tech_mod.TechnicalAgent()
 
-    async def fake_chat(messages):
-        return "- RSI at 62"
+    pos = await tech_mod.TechnicalAgent().run("VCB")
 
-    agent._llm.chat = fake_chat
-
-    pos = await agent.run("VCB")
-
-    assert pos.stance == "bull" and pos.range_5s_pct is None
-
-
-@pytest.mark.asyncio
-async def test_round_two_keeps_the_round_one_range_fields(monkeypatch):
-    from app.services.debate import technical as tech_mod
-    from app.services.debate.engine import AgentPosition
-
-    agent = tech_mod.TechnicalAgent()
-
-    async def fake_chat(messages):
-        return "bull\n- RSI still above 55"
-
-    agent._llm.chat = fake_chat
-    r1 = AgentPosition("technical", "bull", ["RSI high"], range_5s_pct=4.02, sigma_daily_pct=1.5, range_coverage=0.68)
-
-    pos = await agent.respond("VCB", {"technical": r1})
-
-    assert (pos.range_5s_pct, pos.sigma_daily_pct, pos.range_coverage) == (4.02, 1.5, 0.68)
+    assert pos.stance == "bull" and (pos.range_5s_pct, pos.sigma_daily_pct, pos.range_coverage) == (None, None, None)
+    assert pos.reasoning[0] == "RSI: 62.0"  # the values list is still there

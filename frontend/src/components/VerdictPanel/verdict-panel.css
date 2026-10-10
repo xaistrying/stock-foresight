@@ -1,7 +1,7 @@
 /* The Verdict panel: the range block, then one of six states. Zone placement (sticky column, strip)
    is in App.css; this file is the panel's own look. Direction is told by an arrow and a word, never
-   by hue alone. The warn colours belong to Key tension, and nothing else. A failure is named in words
-   in the primary ink, with no up or down colour. */
+   by hue alone. No rule here uses the warn colours (their tokens stay defined, unused). A failure is
+   named in words in the primary ink, with no up or down colour. */
 .verdict-panel {
   box-sizing: border-box;
   display: flex;
@@ -42,8 +42,7 @@
 }
 
 .verdict-panel__meta,
-.verdict-panel__agreement,
-.verdict-panel__lm-note {
+.verdict-panel__agreement {
   margin: 0;
   color: var(--ink-muted);
 }
@@ -150,34 +149,6 @@
   flex-direction: column;
   align-self: stretch;
   gap: var(--space-1);
-}
-
-/* Key tension: the one use of the warn colours. The label is the warn line colour (4.5:1 on the warn
-   ground in both themes), the body the warn ink. */
-.verdict-panel__tension {
-  align-self: stretch;
-  padding: var(--space-3);
-  border: 1px solid var(--warn-line);
-  border-radius: var(--radius-md);
-  background: var(--warn-bg);
-  color: var(--warn-ink);
-}
-
-.verdict-panel__tension-label {
-  margin: 0;
-  color: var(--warn-line);
-}
-
-.verdict-panel__tension-text {
-  margin: var(--space-1) 0 0;
-}
-
-.verdict-panel__synthesis h3 {
-  margin: 0 0 var(--space-1);
-}
-
-.verdict-panel__synthesis p {
-  margin: 0;
 }
 
 .verdict-panel__reasons {

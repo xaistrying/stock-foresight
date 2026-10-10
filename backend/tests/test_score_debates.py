@@ -2,6 +2,10 @@
 
 The script lives under `backend/scripts/`, which is not a package, so it is loaded
 by path (the precedent in `test_evaluate_cross_sectional_momentum.py`).
+
+`add_row` writes a row as it was logged while a second round existed (`r2_*` stances set,
+so its verdict was voted on Round 2 stances); `NEW_STYLE` makes it a row logged since
+(`r2_*` NULL, verdict voted on Round 1 stances): `retire-debate-round-two-and-model-prose`.
 """
 
 from __future__ import annotations
@@ -24,6 +28,9 @@ BACKEND = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("score_debates", BACKEND / "scripts" / "score_debates.py")
 sd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sd)
+
+
+NEW_STYLE = {"r2_technical": None, "r2_news": None, "r2_macro": None}
 
 
 def day(n: int) -> str:
@@ -456,15 +463,19 @@ def test_the_per_agent_tables_skip_neutral_stances_and_separate_the_rounds(dbs):
     scored(dbs, r5=0.02, r1_news="bull", r2_news="neutral")
     scored(dbs, r5=-0.02, r1_news="bull", r2_news="bear")
     scored(dbs, r5=0.02, r1_news="neutral", r2_news="bull")
+    scored(dbs, r5=-0.02, r1_news="bull", **NEW_STYLE)  # logged since: no second round
     analysed, _ = sd.population(log_rows(dbs), max_age=0)
     for r in analysed:
         r["block"], r["market_r5"] = 0, None
 
-    round1 = sd.directional_stats(analysed, sd.stance_lean("r1_news"))
-    round2 = sd.directional_stats(analysed, sd.stance_lean("r2_news"))
+    round1 = sd.directional_stats(analysed, sd.stance_lean("r1_news"))  # every analysed row
+    round2 = sd.directional_stats(sd.rows_with_second_round(analysed), sd.stance_lean("r2_news"))
 
-    assert round1["bull"]["hits"] == [1, 0] and "bear" not in round1
+    assert round1["bull"]["hits"] == [1, 0, 0] and "bear" not in round1
     assert round2["bull"]["hits"] == [1] and round2["bear"]["hits"] == [1]
+    # The row with no second round is in no Round 2 figure, base rates included: 2 of the 3 rows
+    # that have one moved up, not 2 of 4.
+    assert round2["bull"]["base"] == pytest.approx(2 / 3)
 
 
 def test_verdict_minus_technical_only_on_the_same_rows(dbs):
@@ -682,3 +693,105 @@ def test_a_withheld_bootstrap_with_enough_blocks_says_why(dbs):
     line = sd.rate_line("hit", [1] * 8, list(range(8)))
 
     assert "no variance" in line and "blocks (need" not in line and len(rows) == 8
+
+
+# --- retire-debate-round-two-and-model-prose: the verdict statistics split by vote basis ---
+
+def basis_rows(dbs, *, old, new, old_rev="oldrev1", new_rev="newrev2"):
+    """`old` rows voted on Round 2 stances (BUY, all hit) and `new` rows voted on Round 1 stances
+    (BUY, all miss), one per day, each group on its own code_rev."""
+    day_no = 0
+    for _ in range(old):
+        day_no += 1
+        scored(dbs, r5=0.02, as_of=day(day_no), verdict="BUY_SIGNAL", code_rev=old_rev,
+               r1_technical="bull", r2_technical="bull")
+    for _ in range(new):
+        day_no += 1
+        scored(dbs, r5=-0.02, as_of=day(day_no), verdict="BUY_SIGNAL", code_rev=new_rev,
+               r1_technical="bull", **NEW_STYLE)
+    calendar_through(dbs, 14)
+
+
+def test_a_vote_basis_is_round2_when_any_r2_stance_exists_and_round1_when_all_are_null():
+    assert sd.vote_basis({"r2_technical": "bull", "r2_news": "bull", "r2_macro": "neutral"}) == "round2"
+    assert sd.vote_basis({"r2_technical": None, "r2_news": "bear", "r2_macro": None}) == "round2"
+    assert sd.vote_basis(NEW_STYLE) == "round1"
+
+
+def test_two_bases_two_figures_each_with_its_n_and_code_revs_and_no_pooled_verdict_rate(dbs):
+    basis_rows(dbs, old=3, new=2)
+
+    text = build(dbs)
+    lines = text.splitlines()
+
+    heads = {basis: next(l for l in lines if l.lstrip().startswith(f"Vote basis {basis}")) for basis in ("round2", "round1")}
+    assert "n=3" in heads["round2"] and "oldrev1" in heads["round2"] and "newrev2" not in heads["round2"]
+    assert "n=2" in heads["round1"] and "newrev2" in heads["round1"] and "oldrev1" not in heads["round1"]
+    first_basis = lines.index(heads["round2"])
+    verdict_lines = [i for i, l in enumerate(lines) if l.lstrip().startswith("verdict, bull-lean")]
+    assert len(verdict_lines) == 2 and all(i > first_basis for i in verdict_lines)  # none before a basis heading
+    # Each group's rate is its own: the older rows all hit, the newer all missed.
+    round2_rate = lines[verdict_lines[0]]
+    round1_rate = lines[verdict_lines[1]]
+    assert "hit: 100.0% (n=3)" in round2_rate and "hit: 0.0% (n=2)" in round1_rate
+    assert not any("hit: 60.0%" in l for l in lines if l.lstrip().startswith("verdict"))  # 3 of 5: never pooled
+
+
+def test_verdict_minus_technical_is_computed_per_basis(dbs):
+    scored(dbs, r5=0.02, as_of=day(1), verdict="BUY_SIGNAL", r1_technical="bull", r2_technical="bull")
+    scored(dbs, r5=0.02, as_of=day(2), verdict="CAUTION_SIGNAL", r1_technical="bull", **NEW_STYLE)
+    calendar_through(dbs, 14)
+
+    lines = [l.strip() for l in build(dbs).splitlines() if "verdict minus technical-only" in l]
+
+    assert len(lines) == 2
+    assert "+0.0 points" in lines[0] and "n=1" in lines[0]  # older: verdict and technical both hit
+    assert "-100.0 points" in lines[1] and "n=1" in lines[1]  # newer: the verdict missed, technical hit
+
+
+def test_with_one_basis_only_the_other_is_reported_as_having_no_rows(dbs):
+    basis_rows(dbs, old=0, new=3)
+
+    text = build(dbs)
+
+    assert "Vote basis round1" in text and "n=3" in text
+    assert "no analysed row was voted on Round 2 stances" in text
+    assert "Per agent, Round 2" in text and "no analysed row has Round 2 stances" in text
+
+
+def test_with_only_older_rows_the_round1_basis_is_reported_as_having_no_rows(dbs):
+    basis_rows(dbs, old=2, new=0)
+
+    text = build(dbs)
+
+    assert "no analysed row was voted on Round 1 stances" in text and "Vote basis round2" in text
+
+
+def test_coverage_the_funnel_and_the_round1_agent_tables_stay_pooled(dbs):
+    basis_rows(dbs, old=3, new=2)
+
+    text = build(dbs)
+
+    assert text.count("inside the stated band") == 1 and "(n=5)" in text.split("inside the stated band")[1].splitlines()[0]
+    assert text.count("Funnel:") == 1 and "5 analysed" in text
+    assert "technical round 1, bull-lean: hit: 60.0% (n=5)" in text  # pooled over both bases
+    assert "technical round 2, bull-lean: hit: 100.0% (n=3)" in text  # only the rows that have a Round 2
+
+
+def test_a_report_over_rows_with_null_r2_stances_does_not_fail(dbs):
+    scored(dbs, r5=0.02, as_of=day(1), verdict="BUY_SIGNAL", **NEW_STYLE)
+    calendar_through(dbs, 14)
+
+    text = build(dbs)
+
+    assert "=== Debate outcome report ===" in text and "Vote basis round1" in text
+
+
+def test_the_basis_labels_are_input_names_not_instructions(dbs):
+    basis_rows(dbs, old=1, new=1)
+
+    text = build(dbs)
+
+    assert "Confidence" not in text
+    for word in ("buy", "sell", "hold"):  # the verdict enum is printed only as its label, never as an instruction
+        assert word not in [w.lower().strip(",.:;()") for w in text.split()]

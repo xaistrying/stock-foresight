@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Inline } from '../Inline'
-import { DEGRADED_REASON_TEXT, agentLabel, degradedText, stanceMark } from '../../lib/debateText'
+import { AGENT_ORDER, DEGRADED_REASON_TEXT, agentLabel, degradedText, stanceMark } from '../../lib/debateText'
 
 // The text is clamped to five lines of body text by height (not -webkit-line-clamp, whose
 // display: -webkit-box drops list semantics in Safari and VoiceOver); "Show more" appears only when the
@@ -59,9 +59,9 @@ function ClampedBullets({ bullets }) {
 }
 
 /**
- * One agent's position in one round: its label (Rule 5), its stance as an arrow and a word, and its
- * reasoning. An agent that did not answer gets a dashed card reading "Unavailable — did not vote" with
- * the plain reason, and none of its placeholder reasoning.
+ * One agent's position: its label (Rule 5), its stance as an arrow and a word, and its reasoning. An
+ * agent that did not answer gets a dashed card reading "Unavailable — did not vote" with the plain
+ * reason, and none of its placeholder reasoning.
  */
 export function AgentCard({ agentId, position }) {
   const label = agentLabel(agentId)
@@ -89,9 +89,9 @@ export function AgentCard({ agentId, position }) {
   )
 }
 
-/** Six empty cells, hidden from assistive technology, while a run is going. */
+/** Three empty cells, one per agent, hidden from assistive technology, while a run is going. */
 export function SkeletonCells() {
-  return Array.from({ length: 6 }, (_, index) => (
+  return Array.from({ length: AGENT_ORDER.length }, (_, index) => (
     <div key={index} className="agent-card agent-card--skeleton" aria-hidden="true" />
   ))
 }

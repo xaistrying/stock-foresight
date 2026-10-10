@@ -1,14 +1,16 @@
 """Technical Agent for the debate engine.
 
 Reads the ticker's latest feature row, computes a stance from RSI/MACD/Ichimoku
-(Rule 5: technical proxy, labeled "Technical Signal" in the UI), adds a
-typical 5-session move (calibrated HAR-RV band, from the range service), then
-uses the LLM to produce readable bullet reasoning.
+(Rule 5: technical proxy, labeled "Technical Signal" in the UI) and carries the
+typical 5-session move (calibrated HAR-RV band, from the range service) on the position.
+Its reasoning is the list of computed indicator values; the agent calls no language
+model (`retire-debate-round-two-and-model-prose`).
 
 Rule 5: stance is derived from RSI, MACD histogram, Ichimoku Tenkan/Kijun —
 never from real news or NLP sentiment. Labeled "Technical Signal" in the UI.
 Rule 1: the typical move is for the next 5 trading sessions.
-Rule 2: range_5s_pct is a percentage, never a raw log return.
+Rule 2: range_5s_pct is a percentage, never a raw log return. The bullets do not state it:
+the range block and the export Summary do.
 """
 
 from __future__ import annotations
@@ -19,10 +21,8 @@ import re
 
 from app.db.connection import get_connection
 from app.services.debate.engine import AgentPosition, Stance
-from app.services.debate.llm_client import LLMClient
-from app.services.debate.prompt_safety import DESCRIBE_ONLY, fence
 from app.services.feature_rows import get_latest_features_row
-from app.services.range import RangeResult, compute_range, coverage_phrase
+from app.services.range import RangeResult, compute_range
 
 logger = logging.getLogger(__name__)
 
@@ -83,24 +83,6 @@ def _compute_stance_from_indicators(row: dict) -> tuple[Stance, list[str], dict]
     return stance, available, values
 
 
-_REASONING_PROMPT = """\
-You are a technical analysis assistant for Vietnamese stocks. Given the
-indicator values below, produce 3-5 concise plain-language bullet points
-(each starting with "- ") explaining the technical picture. Each bullet MUST
-reference a specific indicator name and value. Use English. Do not add any
-information beyond what is given. {describe_only}
-
-Ticker: {ticker}
-Date: {date}
-Stance: {stance}
-
-Indicator values:
-{indicator_lines}
-{range_line}
-The typical 5-session move is a size, not a direction, not a ceiling and not a prediction.
-If it is unavailable, do not estimate one.
-"""
-
 _FALLBACK_REASONING = ["Indicator data unavailable for this session."]
 _VALUE_LABELS = {
     "rsi": "RSI",
@@ -121,24 +103,8 @@ def _served_band(band: RangeResult | None) -> RangeResult | None:
     return band if band is not None and band.status in _SERVED_STATUSES else None
 
 
-def _range_line(band: RangeResult | None) -> str:
-    """The prompt line for the typical 5-session move (design.md Decision 14)."""
-    band = _served_band(band)
-    if band is None:
-        return "Typical 5-session move: unavailable"
-    coverage = (
-        f"{coverage_phrase(band.range_coverage)} of past 5-session moves stayed within this band"
-        if band.range_coverage is not None
-        else "coverage not established for this stock"
-    )
-    return (
-        f"Typical 5-session move: ±{band.range_5s_pct:.1f}% ({coverage}; "
-        f"daily volatility forecast {band.sigma_daily_pct:.2f}%)"
-    )
-
-
 async def _fetch_range(ticker: str) -> RangeResult | None:
-    """The range service answers or the line reads "unavailable"; it never stops the agent."""
+    """The range service answers or the band fields stay null; it never stops the agent."""
     try:
         return await asyncio.to_thread(compute_range, ticker)  # blocking sqlite
     except Exception as exc:
@@ -168,12 +134,14 @@ def _get_features_row(ticker: str, as_of: str) -> dict | None:
         conn.close()
 
 
-class TechnicalAgent:
-    def __init__(self) -> None:
-        self._llm = LLMClient()
+def _values_list(values: dict) -> list[str]:
+    """One bullet per available indicator, in the order of `_compute_stance_from_indicators`."""
+    return [f"{_VALUE_LABELS[name]}: {value}" for name, value in values.items()]
 
+
+class TechnicalAgent:
     async def run(self, ticker: str, as_of: str | None = None) -> AgentPosition:
-        """Round 1: compute stance + typical 5-session move, generate LLM reasoning.
+        """Compute the stance and the typical 5-session move; reasoning is the values list.
 
         Reads the features row dated `as_of` (the engine passes the eligibility
         date, so a refresh during the debate cannot change the data under the
@@ -204,97 +172,22 @@ class TechnicalAgent:
                 degraded_reason="no_input",
             )
 
-        reasoning = await self._generate_reasoning(
-            ticker, str(row.get("date", "unknown")), stance, values, band
-        )
         served = _served_band(band)
         return AgentPosition(
             agent_id="technical",
             stance=stance,
-            reasoning=reasoning,
+            reasoning=_values_list(values),
             **_band_fields(band),
             evidence={**values, "near_gap": row.get("near_gap"), "range_k": served.range_k if served else None},
         )
 
-    async def respond(self, ticker: str, round1: dict) -> AgentPosition:
-        """Round 2: review other agents' positions; update stance if warranted."""
-        my_r1 = round1.get("technical")
-        others = {k: v for k, v in round1.items() if k != "technical"}
-
-        other_lines = "\n".join(
-            f"- {k.capitalize()} agent ({v.stance}): {'; '.join(v.reasoning[:2])}"
-            for k, v in others.items()
-        )
-        peers = fence("PEERS", other_lines)  # the peers' bullets can quote scraped headlines
-
-        prompt = f"""\
-You are the Technical Analysis agent. Your Round 1 stance was: {my_r1.stance if my_r1 else "neutral"}.
-Your Round 1 reasoning: {'; '.join(my_r1.reasoning[:3]) if my_r1 else "N/A"}
-
-Other agents' Round 1 positions:
-{peers}
-
-Review these positions. Maintain your stance if your technical evidence supports it.
-Only shift if a SPECIFIC counter-argument from another agent is compelling — and
-state exactly why you are shifting. Produce 3-5 bullet points (each starting with
-"- ") for your updated reasoning. Do not capitulate without a concrete reason.
-{DESCRIBE_ONLY}
-
-Respond in English with your final stance on the first line as exactly one word:
-bull, bear, or neutral. Then list your updated reasoning bullets.
-"""
-        response = await self._llm.chat([
-            {"role": "system", "content": "You are a strict technical analyst. Be concise and evidence-based."},
-            {"role": "user", "content": prompt},
-        ])
-
-        stance, reasoning = _parse_stance_and_bullets(response, my_r1)
-        return AgentPosition(
-            agent_id="technical",
-            stance=stance,
-            reasoning=reasoning,
-            range_5s_pct=my_r1.range_5s_pct if my_r1 else None,
-            sigma_daily_pct=my_r1.sigma_daily_pct if my_r1 else None,
-            range_coverage=my_r1.range_coverage if my_r1 else None,
-        )
-
-    async def _generate_reasoning(
-        self,
-        ticker: str,
-        date: str,
-        stance: Stance,
-        values: dict,
-        band: RangeResult | None,
-    ) -> list[str]:
-        indicator_lines = "\n".join(f"  {k}: {v}" for k, v in values.items())
-        prompt = _REASONING_PROMPT.format(
-            ticker=ticker,
-            date=date,
-            stance=stance,
-            indicator_lines=indicator_lines,
-            range_line=_range_line(band),
-            describe_only=DESCRIBE_ONLY,
-        )
-        try:
-            response = await self._llm.chat([
-                {"role": "system", "content": "You are a concise technical analysis assistant."},
-                {"role": "user", "content": prompt},
-            ])
-            bullets = _extract_bullets(response)
-            if bullets:
-                return bullets[:5]
-        except Exception as exc:
-            logger.warning("TechnicalAgent LLM call failed: %s", exc)
-        # The stance is computed, so a failed LLM only costs the prose: state the
-        # values rather than claim the data is unavailable.
-        return [f"{_VALUE_LABELS[name]}: {value}" for name, value in values.items()]
-
 
 _BULLET = re.compile(r"^[-*•]\s+(.*)$")  # marker + whitespace: "-2.5%" is not a bullet
 # A line that STARTS with the stance word, tolerating markdown, a "Stance:" label
-# (even "Stance (Round 2):"), "bullish"/"bearish", and a trailing annotation after a
-# separator ("Bear — shifting because ...", "bear (shifted from bull)"). A sentence
-# such as "Bear market weighs on ..." is not a stance line.
+# (even "Stance (final):"), "bullish"/"bearish", and a trailing annotation after a
+# separator ("Bear — weak headlines", "bear (mostly market news)"). A sentence
+# such as "Bear market weighs on ..." is not a stance line. The News agent's reply is the
+# only text parsed here.
 _STANCE_LINE = re.compile(
     r"^[\W_]*(?:(?:my|final|updated)\s+)*(?:stance(?:\s*\([^)]*\))?[\W_]*)?"
     r"(bull|bear|neutral)(?:ish)?(?![A-Za-z])(?=[\W_]*$|\s*[—–:(,;.\-])",
@@ -319,9 +212,8 @@ def _parse_stance_and_bullets(response: str, fallback: AgentPosition | None) -> 
 
     A blank response raises `ValueError` and a reply with no recognisable stance
     line raises `StanceNotRecognised`, so the caller's own error handling runs
-    (Round 2: the agent is excluded from the vote; News Round 1: `llm_failed`)
-    instead of a formatting slip silently confirming or flipping a stance.
-    `fallback` only supplies bullets when the reply has none.
+    (News: `llm_failed`) instead of a formatting slip silently confirming or flipping
+    a stance. `fallback` only supplies bullets when the reply has none.
     """
     lines = [l.strip() for l in response.strip().splitlines() if l.strip()]
     if not lines:

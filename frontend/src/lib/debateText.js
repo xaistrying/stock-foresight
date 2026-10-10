@@ -36,15 +36,13 @@ export const DEGRADED_REASON_TEXT = {
   agent_error: 'The agent failed to run.',
   no_input: 'No usable input data.',
   llm_failed: 'The language-model analysis failed.',
-  round2_failed: 'Round 2 failed; its Round 1 position is shown but not counted.',
 }
 export const degradedText = (position) => DEGRADED_REASON_TEXT[position.degraded_reason] ?? position.degraded_reason
 
-// The stage the server reports while a run is going (progress `stage`). Not verdict labels.
+// The stage the server reports while a run is going (progress `stage`). Not verdict labels. The run has
+// one stage; a stage value with no label here (a stale server's `round2`, say) shows this one's label.
 export const STAGE_LABELS = {
   round1: 'Running agents…',
-  round2: 'Comparing positions…',
-  synthesis: 'Synthesising…',
 }
 
 const GENERIC_FAILURE = 'Analysis failed — please try again.'
@@ -114,8 +112,8 @@ export function reasonSentence(reason, ageSessions) {
  * that did not answer; a split keeps the count of unavailable ones.
  */
 export function agreementText(result) {
-  const { agreement_level: level, round2 } = result
-  const positions = Object.entries(round2)
+  const { agreement_level: level, round1 } = result
+  const positions = Object.entries(round1)
   const live = positions.filter(([, position]) => !position.degraded_reason)
   const unavailable = positions.filter(([, position]) => position.degraded_reason).map(([id]) => agentLabel(id))
 

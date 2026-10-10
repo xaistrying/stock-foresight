@@ -18,7 +18,8 @@ import './verdict-panel.css'
  * progress poll.
  *
  * Rule 6: the disclaimer is visible in every state, never collapsible, with the full text one step away.
- * Rule 5: agent labels name what each agent reads; language-model text is marked as such.
+ * Rule 5: agent labels name what each agent reads; the panel holds no language-model text, and the
+ * Debate matrix marks which reasoning is the model's.
  *
  * @param {{ticker: string|null, analysis: object, showRange?: boolean}} props
  */

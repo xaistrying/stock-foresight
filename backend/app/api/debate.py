@@ -1,7 +1,8 @@
 """Debate API endpoints.
 
 POST /tickers/{ticker}/debate
-  Runs the multi-agent debate for a loaded ticker and returns a DebateResult as JSON.
+  Runs the three agents once for a loaded ticker and returns a DebateResult as JSON
+  (`round1` holds the positions; there is no second round and no synthesis text).
   The run itself is the runner's (`app.services.debate.runner`): requests for a ticker
   already running join that run, at most DEBATE_MAX_CONCURRENT_RUNS run at once, and a
   run has a time budget. The runner also writes reports/YYYY-MM-DD_<TICKER>.md; an
@@ -73,13 +74,6 @@ def _serialise_result(result: DebateResult, report_file: str | None = None) -> d
         "eligibility": result.eligibility,
         "agents_degraded": result.agents_degraded,
         "round1": {k: pos_to_dict(v) for k, v in result.round1.items()},
-        "round2": {k: pos_to_dict(v) for k, v in result.round2.items()},
-        "synthesis": {
-            "verdict": result.synthesis.verdict,
-            "agreement_level": result.synthesis.agreement_level,
-            "key_tension": result.synthesis.key_tension,
-            "reasoning": result.synthesis.reasoning,
-        },
         "range_5s_pct": result.range_5s_pct,
         "sigma_daily_pct": result.sigma_daily_pct,
         "range_coverage": result.range_coverage,

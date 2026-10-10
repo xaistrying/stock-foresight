@@ -16,7 +16,7 @@ A debate run lives in a task owned by this module, not by the HTTP request:
   is released (design Decision 14);
 - one INFO line per run records the stage durations (design Decision 7).
 
-`progress(ticker)` reports the stage a run is in for the panel.
+`progress(ticker)` reports the stage a run is in for the panel (`round1`, the only one).
 
 ponytail: the registry is per process. Under `uvicorn --workers N` every worker would
 allow its own runs and a ticker could run once per worker; the Makefile starts one
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 RETRY_AFTER_SECONDS = 30
 # The report export is a local file write; this only stops a stalled mount from holding a slot for ever.
 EXPORT_TIMEOUT_SECONDS = 10
-STAGES = ("round1", "round2", "synthesis")
+STAGES = ("round1",)  # the agents run once; one stage, one model call (News)
 
 
 class DebateBusy(RuntimeError):
@@ -70,7 +70,7 @@ class RunContext:
     report_file: str | None  # basename written by the export, or None
     started_at: datetime  # timezone-aware UTC
     finished_at: datetime  # timezone-aware UTC
-    stage_ms: dict[str, int]  # round1, round2, synthesis, total
+    stage_ms: dict[str, int]  # round1, total
     provider: str
     model: str
     joined: int  # requests that waited on this run, the first included
@@ -239,11 +239,10 @@ async def _execute(ticker: str, eligibility: dict, serialise: Serialiser, run: _
     finally:
         stage_ms = stage_ms or _stage_ms(run.started, marks, time.monotonic(), finished=False)
         logger.info(
-            "Debate run ticker=%s provider=%s model=%s status=%s round1_ms=%s round2_ms=%s "
-            "synthesis_ms=%s total_ms=%s joined=%d hook_failures=%d",
+            "Debate run ticker=%s provider=%s model=%s status=%s round1_ms=%s total_ms=%s "
+            "joined=%d hook_failures=%d",
             ticker, provider, model, status,
-            stage_ms.get("round1", "n/a"), stage_ms.get("round2", "n/a"),
-            stage_ms.get("synthesis", "n/a"), stage_ms["total"], run.joined, hook_failures,
+            stage_ms.get("round1", "n/a"), stage_ms["total"], run.joined, hook_failures,
         )
 
 

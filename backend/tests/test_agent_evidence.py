@@ -1,4 +1,4 @@
-"""Round 1 `evidence` of the three agents (`debate-outcome-log`, task group 2).
+"""The `evidence` of the three agents (`debate-outcome-log`, task group 2).
 
 The outcome log stores what the agents actually used; it never re-fetches.
 """
@@ -31,13 +31,7 @@ async def test_technical_evidence_holds_the_voted_values_near_gap_and_range_k(mo
     band = RangeResult("VCB", "2026-10-04", "ok", (), 1.5, 4.02, 1.2, 0.68, None)
     monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: row)
     monkeypatch.setattr(tech_mod, "compute_range", lambda t: band)
-    agent = tech_mod.TechnicalAgent()
-
-    async def chat(messages):
-        return "- RSI 62"
-
-    agent._llm.chat = chat
-    pos = await agent.run("VCB")
+    pos = await tech_mod.TechnicalAgent().run("VCB")
 
     assert pos.evidence == {
         "rsi": 62.0, "macd_histogram": 0.1, "tenkan_sen": 25.0, "kijun_sen": 22.0,
@@ -52,13 +46,7 @@ async def test_technical_evidence_range_k_is_null_when_no_band_is_served(monkeyp
     monkeypatch.setattr(tech_mod, "get_latest_features_row", lambda t: row)
     monkeypatch.setattr(tech_mod, "compute_range",
                         lambda t: RangeResult("VCB", "x", "model_unavailable", (), None, None, None, None, None))
-    agent = tech_mod.TechnicalAgent()
-
-    async def chat(messages):
-        return "- RSI 62"
-
-    agent._llm.chat = chat
-    pos = await agent.run("VCB")
+    pos = await tech_mod.TechnicalAgent().run("VCB")
 
     assert pos.evidence["range_k"] is None and pos.evidence["near_gap"] == 1
 
@@ -158,13 +146,7 @@ def _macro_agent(monkeypatch, *, usdvnd, flow, settling):
     monkeypatch.setattr(macro_mod, "_get_usd_vnd_change", lambda n: usdvnd)
     monkeypatch.setattr(macro_mod, "_get_market_foreign_flow", lambda: flow)
     monkeypatch.setattr(macro_mod, "_foreign_flow_is_settling", lambda: settling)
-    agent = macro_mod.MacroAgent()
-
-    async def chat(messages):
-        return "- stub"
-
-    agent._llm.chat = chat
-    return agent
+    return macro_mod.MacroAgent()
 
 
 @pytest.mark.asyncio

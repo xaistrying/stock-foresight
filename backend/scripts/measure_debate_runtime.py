@@ -4,24 +4,26 @@ Measures the runtime behaviour `harden-debate-runtime` changes, with stubs only
 
 Drives `DebateEngine().run(ticker)` with
 - a stubbed `LLMClient.chat` that sleeps `--call-seconds` and records start, end
-  and a stage tag per call (tagged by its system prompt);
+  and a stage tag per call (every call is `round1`: the run has one stage);
 - stubbed headline and market fetches;
 - stubs for the SQLite reads and the volatility call that BLOCK for
   `--block-seconds` (time.sleep), standing in for the real blocking work;
 - a background probe that sleeps 10 ms in a loop and keeps the largest gap it
   saw, i.e. how long the event loop was stalled.
 
-Prints one JSON object: LLM call count, per-stage wall time against the sum of
-its calls (the synthesis stage is the interesting one: sum of two calls before
-the change, about one after), the largest event-loop gap, and the installed
-openai / anthropic SDK default timeout and retry count.
+Prints one JSON object: LLM call count (one per run: the News agent's; the other
+agents and the vote call no model), the one stage's wall time against the sum of its
+calls, the largest event-loop gap, and the installed openai / anthropic SDK default
+timeout and retry count.
 
 The engine part runs on the unchanged tree and after the change: the before / after
-comparison in tasks 1.2 and 8.2. When `app.services.debate.runner` exists it also
-measures run control: N concurrent requests for one ticker (expect one run's 8 calls
-and one shared result) and M distinct tickers over the cap (expect the surplus
-rejected with no LLM call); on the unchanged tree that part is `null`. The README's
-41 s run and the post-pivot review's 2.8 s cold model load are NOT reproduced by stubs.
+comparison in tasks 1.2 and 8.2 of `harden-debate-runtime` (a run was 8 calls in three
+stages before `retire-debate-round-two-and-model-prose`, and is 1 call in one stage
+since). When `app.services.debate.runner` exists it also measures run control: N
+concurrent requests for one ticker (expect one run's single call and one shared result)
+and M distinct tickers over the cap (expect the surplus rejected with no LLM call); on
+the unchanged tree that part is `null`. The README's 41 s run and the post-pivot
+review's 2.8 s cold model load are NOT reproduced by stubs.
 
 Writes nothing (the report export is stubbed). Run from the project root:
     backend/.venv/bin/python backend/scripts/measure_debate_runtime.py
@@ -50,21 +52,14 @@ FEATURE_ROW = {"date": "2026-10-07", "rsi": 60.0, "macd_histogram": 0.05,
                "tenkan_sen": 20.0, "kijun_sen": 18.0, "near_gap": 0}
 
 
-def stage_of(system_prompt: str) -> str:
-    """Round 1 / Round 2 / synthesis, from the agents' own system prompts."""
-    if "synthesiser" in system_prompt:
-        return "synthesis"
-    if "strict technical analyst" in system_prompt or "disciplined" in system_prompt:
-        return "round2"
-    return "round1"
+STAGE = "round1"  # the run has one stage and one model call (the News agent's)
 
 
 def install_stubs(call_seconds: float, block_seconds: float, calls: list[dict]) -> None:
     async def chat(self, messages):
         start = time.monotonic()
         await asyncio.sleep(call_seconds)
-        system = next((m["content"] for m in messages if m["role"] == "system"), "")
-        calls.append({"stage": stage_of(system), "start": start, "end": time.monotonic()})
+        calls.append({"stage": STAGE, "start": start, "end": time.monotonic()})
         return REPLY
 
     def blocking(value):
@@ -100,19 +95,19 @@ def install_stubs(call_seconds: float, block_seconds: float, calls: list[dict]) 
 
 
 def stage_summary(calls: list[dict]) -> dict:
-    stages = {}
-    for name in ("round1", "round2", "synthesis"):
-        mine = [c for c in calls if c["stage"] == name]
-        if not mine:
-            continue
-        lengths = [c["end"] - c["start"] for c in mine]
-        stages[name] = {
+    """The one stage's call count, wall time and call lengths; empty when no call was made."""
+    mine = [c for c in calls if c["stage"] == STAGE]
+    if not mine:
+        return {}
+    lengths = [c["end"] - c["start"] for c in mine]
+    return {
+        STAGE: {
             "calls": len(mine),
             "wall_s": round(max(c["end"] for c in mine) - min(c["start"] for c in mine), 3),
             "sum_of_calls_s": round(sum(lengths), 3),
             "max_call_s": round(max(lengths), 3),
         }
-    return stages
+    }
 
 
 def sdk_defaults() -> dict:
@@ -146,7 +141,7 @@ async def measure_runner(calls: list[dict], requests: int, tickers: int) -> dict
     same = await asyncio.gather(*(runner.run_debate("VCB", ELIGIBILITY, serialise) for _ in range(requests)))
     one_ticker = {
         "requests": requests,
-        "llm_calls": len(calls),  # one run's worth
+        "llm_calls": len(calls),  # one run's worth: a single call
         "distinct_results": len({id(result) for result in same}),  # 1: they share one
     }
 
@@ -160,7 +155,7 @@ async def measure_runner(calls: list[dict], requests: int, tickers: int) -> dict
         "tickers": tickers,
         "cap": max_concurrent_runs(),
         "rejected": len(rejected),
-        "llm_calls": len(calls),  # 8 per run that was allowed, none for a rejected one
+        "llm_calls": len(calls),  # 1 per run that was allowed, none for a rejected one
     }
     return {"same_ticker": one_ticker, "distinct_tickers": distinct}
 

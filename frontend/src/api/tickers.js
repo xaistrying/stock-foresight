@@ -87,9 +87,7 @@ function timeoutSignal(ms) {
  * @property {string|null} as_of
  * @property {'STRONG_BUY_SIGNAL'|'BUY_SIGNAL'|'OBSERVE'|'CAUTION_SIGNAL'|'STRONG_CAUTION_SIGNAL'|'SPLIT'|'INSUFFICIENT_DATA'} verdict
  * @property {'unanimous'|'majority'|'split'|'none'} agreement_level
- * @property {Record<string, object>} round1 Agent positions keyed by agent id.
- * @property {Record<string, object>} round2
- * @property {{verdict: string, agreement_level: string, key_tension: string|null, reasoning: string}} synthesis
+ * @property {Record<string, object>} round1 Agent positions keyed by agent id (the run's only round).
  * @property {number} duration_ms
  * @property {number|null} [range_5s_pct]
  * @property {number|null} [sigma_daily_pct]
@@ -105,7 +103,7 @@ function timeoutSignal(ms) {
 /**
  * POST /tickers/{ticker}/debate
  * Runs the multi-agent debate analysis for a loaded ticker.
- * Returns a DebateResult with verdict, agreement_level, round1, round2, synthesis, and
+ * Returns a DebateResult with verdict, agreement_level, round1 (no round2, no synthesis), and
  * `report_saved` / `report_file` (whether the server wrote the exported report).
  *
  * Gives up after `timeoutMs` (default DEBATE_CLIENT_TIMEOUT_MS) with an ApiError whose
@@ -121,7 +119,7 @@ export function runDebateAnalysis(ticker, { timeoutMs = DEBATE_CLIENT_TIMEOUT_MS
 
 /**
  * GET /tickers/{ticker}/debate/progress
- * { ticker, running, stage: 'round1'|'round2'|'synthesis'|null, elapsed_ms: number|null }
+ * { ticker, running, stage: 'round1'|null, elapsed_ms: number|null }
  * Never starts a run and never 404s.
  */
 export function getDebateProgress(ticker) {

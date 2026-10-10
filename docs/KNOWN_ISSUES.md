@@ -258,6 +258,11 @@ most Vietnamese phrasing pass the output check, a news item relaying a named
 broker's call ("BSC recommends buying VCB") is withheld although it is
 description, and a fence reduces injection risk without eliminating it.
 
+**Update (`retire-debate-round-two-and-model-prose`)**: the Round 2 and synthesis
+prompts no longer exist; the only prompt that carries RSS text is the News
+headline prompt, and the fence, the do-not-recommend wording and the output
+check on it are unchanged.
+
 **Status**: mitigated, not closed.
 
 ### 2. The `claude_cli` provider runs a subprocess with the prompt in argv

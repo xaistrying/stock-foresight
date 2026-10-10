@@ -1,11 +1,9 @@
-"""Tests for debate export service and debate API endpoint."""
+"""Tests for debate export service and debate API endpoint (one round, no synthesis)."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,33 +13,19 @@ from fastapi.testclient import TestClient
 # ===========================================================================
 
 def _make_debate_result(ticker="VCB", verdict="BUY_SIGNAL", date="2026-10-04"):
-    from app.services.debate.engine import (
-        AgentPosition, DebateResult, SynthesisResult
-    )
+    from app.services.debate.engine import AgentPosition, DebateResult
+
     r1 = {
-        "technical": AgentPosition("technical", "bull", ["RSI bullish", "MACD positive"], 1.85),
+        "technical": AgentPosition("technical", "bull", ["RSI: 62.0", "MACD histogram: 0.12"], 1.85),
         "news": AgentPosition("news", "bull", ["Positive Q3 results reported"]),
-        "macro": AgentPosition("macro", "neutral", ["VN-Index flat"]),
+        "macro": AgentPosition("macro", "neutral", ["VN-Index trend: flat"]),
     }
-    r2 = {
-        "technical": AgentPosition("technical", "bull", ["Maintained: RSI still above 55"], 1.85),
-        "news": AgentPosition("news", "bull", ["Maintained: earnings confirmation"]),
-        "macro": AgentPosition("macro", "neutral", ["Held: macro mixed"]),
-    }
-    synth = SynthesisResult(
-        verdict=verdict,
-        agreement_level="majority",
-        key_tension="Technical and news are bullish; macro is cautious about index momentum.",
-        reasoning="Two of three agents signal bullish conditions for VCB.",
-    )
     return DebateResult(
         ticker=ticker,
         as_of=date,
         verdict=verdict,
         agreement_level="majority",
         round1=r1,
-        round2=r2,
-        synthesis=synth,
         range_5s_pct=4.14,
         sigma_daily_pct=1.85,
         range_coverage=0.68,
@@ -92,6 +76,19 @@ def test_the_exporters_copy_equals_the_source_file():
     assert DISCLAIMER_FULL == _disclaimer_section("Full disclaimer")
 
 
+def test_the_disclaimer_says_a_model_writes_only_the_news_agents_text_and_revises_nothing():
+    """`retire-debate-round-two-and-model-prose`, design Decision 9: a text correction, not a rule edit."""
+    from app.services.debate.export import DISCLAIMER_FULL
+
+    assert (
+        "A language model reads the news headlines and writes the News Context agent's reasoning and "
+        "position; the other two agents report computed values. Wording and positions can be wrong or "
+        "incomplete." in DISCLAIMER_FULL
+    )
+    assert "second round" not in DISCLAIMER_FULL and "revises" not in DISCLAIMER_FULL
+    assert "about 2 in 3" in DISCLAIMER_FULL  # the coverage phrase is untouched
+
+
 def test_export_agent_labels_correct(tmp_path, monkeypatch):
     """TechnicalAgent → 'Technical Signal', NewsAgent → 'News Context', Macro → 'Macro'."""
     from app.services.debate import export as export_mod
@@ -120,6 +117,66 @@ def test_export_overwrite_on_rerun(tmp_path, monkeypatch):
     path2 = export_mod.export_debate_report(result2)
     content = path2.read_text()
     assert "**Verdict**: Observe" in content
+
+
+# ===========================================================================
+# Structure of a new report (Summary, Agent Positions, Agent Reasoning)
+# ===========================================================================
+
+def _headings(content: str) -> list[str]:
+    return [line for line in content.splitlines() if line.startswith("#")]
+
+
+def test_a_new_report_has_the_documented_sections_in_the_documented_order(tmp_path, monkeypatch):
+    from app.services.debate import export as export_mod
+
+    monkeypatch.setattr(export_mod, "REPORTS_DIR", tmp_path)
+
+    content = export_mod.export_debate_report(_make_debate_result()).read_text()
+    lines = content.splitlines()
+
+    assert _headings(content) == [
+        "# VCB · 2026-10-04",
+        "## Summary",
+        "## Agent Positions",
+        "## Agent Reasoning",
+        "### Technical Signal (↑ Bull)",
+        "### News Context (↑ Bull)",
+        "### Macro (→ Neutral)",
+    ]
+    assert lines.index("---") > lines.index("### Macro (→ Neutral)")
+    assert [l for l in lines if l.strip()][-1] == export_mod.DISCLAIMER_FULL  # the disclaimer is the last line
+    # Each agent's block holds its bullets: the whole values list, not only the first bullet.
+    technical = lines[lines.index("### Technical Signal (↑ Bull)") + 1:]
+    assert technical[:2] == ["- RSI: 62.0", "- MACD histogram: 0.12"]
+
+
+def test_a_new_report_has_no_key_tension_round_or_synthesis(tmp_path, monkeypatch):
+    content = _export(tmp_path, monkeypatch, _make_debate_result()).read_text()
+
+    assert "## Key Tension" not in content
+    assert not any("Round" in heading for heading in _headings(content))
+    assert "### Synthesis" not in content and "## Full Debate" not in content
+    assert "Key tension" not in content
+
+
+def test_the_table_cell_is_the_first_bullet_and_the_full_list_is_in_the_reasoning_section(tmp_path, monkeypatch):
+    content = _export(tmp_path, monkeypatch, _make_debate_result()).read_text()
+
+    assert "| Technical Signal | ↑ Bull | RSI: 62.0 |" in content.splitlines()
+    assert "- MACD histogram: 0.12" in content.splitlines()
+
+
+def test_an_older_report_file_is_not_modified_by_a_new_export(tmp_path, monkeypatch):
+    old_text = "# SAB · 2026-10-02\n\n## Key Tension\n\nan older structure\n\n### Round 2 — Responses\n"
+    older = tmp_path / "2026-10-02_SAB.md"
+    older.write_text(old_text, encoding="utf-8")
+    before = older.stat().st_mtime_ns
+
+    _export(tmp_path, monkeypatch, _make_debate_result())
+
+    assert older.read_text(encoding="utf-8") == old_text and older.stat().st_mtime_ns == before
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["2026-10-02_SAB.md", "2026-10-04_VCB.md"]
 
 
 # ===========================================================================
@@ -164,7 +221,7 @@ def test_debate_endpoint_503_for_failed_features(client, monkeypatch):
 async def test_debate_endpoint_200_with_valid_shape(monkeypatch):
     """200 response includes all required DebateResult fields (LLM calls mocked)."""
     from app.api import debate as debate_mod
-    from app.services.debate.engine import AgentPosition, DebateResult, SynthesisResult
+    from app.services.debate.engine import AgentPosition, DebateResult
 
     monkeypatch.setattr(debate_mod, "get_features_computed", lambda t: 1)
     monkeypatch.setattr(debate_mod, "get_latest_features_row", lambda t: {
@@ -194,15 +251,16 @@ async def test_debate_endpoint_200_with_valid_shape(monkeypatch):
 
     assert resp.status_code == 200
     data = resp.json()
-    for key in ("verdict", "agreement_level", "round1", "round2", "synthesis"):
+    for key in ("verdict", "agreement_level", "round1"):
         assert key in data, f"Missing key: {key}"
+    assert "round2" not in data and "synthesis" not in data
 
 
 def _result_with(agreement_level, stances):
-    """A DebateResult whose Round 2 stances are `stances` (technical, news, macro)."""
-    from app.services.debate.engine import AgentPosition, DebateResult, SynthesisResult
+    """A DebateResult whose Round 1 stances are `stances` (technical, news, macro)."""
+    from app.services.debate.engine import AgentPosition, DebateResult
 
-    r2 = {
+    r1 = {
         agent: AgentPosition(agent, stance, [f"{agent} reasoning"])
         for agent, stance in zip(("technical", "news", "macro"), stances)
     }
@@ -211,9 +269,7 @@ def _result_with(agreement_level, stances):
         as_of="2026-10-05",
         verdict="SPLIT" if agreement_level == "split" else "OBSERVE",
         agreement_level=agreement_level,
-        round1=r2,
-        round2=r2,
-        synthesis=SynthesisResult("SPLIT", agreement_level, "a tension", "a summary"),
+        round1=r1,
         range_5s_pct=2.93,
         sigma_daily_pct=1.31,
         range_coverage=0.68,
@@ -284,9 +340,9 @@ def test_an_ineligible_ticker_gets_a_200_abstention_without_llm_fetch_or_file(cl
     assert (body["verdict"], body["agreement_level"]) == ("INSUFFICIENT_DATA", "none")
     assert body["eligibility"] == {"eligible": False, "reasons": ["delisted", "stale", "hard_quality_flag"]}
     assert (body["as_of"], body["data_as_of"], body["data_age_sessions"]) == ("2026-09-07", "2026-09-07", 21)
-    assert (body["round1"], body["round2"], body["agents_degraded"]) == ({}, {}, [])
+    assert (body["round1"], body["agents_degraded"]) == ({}, [])
+    assert "round2" not in body and "synthesis" not in body
     assert body["range_5s_pct"] is None and "volatility_range_pct" not in body
-    assert body["synthesis"]["key_tension"] == "" and body["synthesis"]["reasoning"] == ""
     assert list(tmp_path.iterdir()) == []  # a refusal must not overwrite a real report
 
 
@@ -295,7 +351,7 @@ def test_an_eligible_ticker_returns_the_new_fields_and_the_engine_gets_the_eligi
 
     _loaded(monkeypatch, ELIGIBLE)
     result = _make_debate_result()
-    result.round2["news"] = AgentPosition("news", "neutral", ["placeholder"], degraded_reason="llm_failed")
+    result.round1["news"] = AgentPosition("news", "neutral", ["placeholder"], degraded_reason="llm_failed")
     result.agents_degraded = ["news"]
     result.data_as_of, result.data_age_sessions = "2026-10-04", 0
     result.eligibility = {"eligible": True, "reasons": []}
@@ -314,9 +370,9 @@ def test_an_eligible_ticker_returns_the_new_fields_and_the_engine_gets_the_eligi
     assert body["agents_degraded"] == ["news"]
     assert body["eligibility"] == {"eligible": True, "reasons": []}
     assert (body["data_as_of"], body["data_age_sessions"]) == ("2026-10-04", 0)
-    assert body["round2"]["news"]["degraded_reason"] == "llm_failed"
-    assert body["round2"]["technical"]["degraded_reason"] is None
+    assert body["round1"]["news"]["degraded_reason"] == "llm_failed"
     assert body["round1"]["technical"]["degraded_reason"] is None
+    assert "round2" not in body and "synthesis" not in body
 
 
 def test_an_abstention_after_the_agents_ran_is_not_exported(client, monkeypatch):
@@ -352,10 +408,9 @@ def _with_news_degraded(reason="llm_failed", news_stance="neutral", tech="bull",
     from app.services.debate.engine import AgentPosition
 
     result = _make_debate_result(verdict="BUY_SIGNAL")
-    for rnd in (result.round1, result.round2):
-        rnd["technical"] = AgentPosition("technical", tech, ["tech reasoning"], 1.85)
-        rnd["macro"] = AgentPosition("macro", macro, ["macro reasoning"])
-        rnd["news"] = AgentPosition("news", news_stance, ["PLACEHOLDER news"], degraded_reason=reason)
+    result.round1["technical"] = AgentPosition("technical", tech, ["tech reasoning"], 1.85)
+    result.round1["macro"] = AgentPosition("macro", macro, ["macro reasoning"])
+    result.round1["news"] = AgentPosition("news", news_stance, ["PLACEHOLDER news"], degraded_reason=reason)
     result.agents_degraded = ["news"]
     return result
 
@@ -393,12 +448,18 @@ def test_two_live_agents_that_disagree_read_as_a_split_with_the_unavailable_coun
 
 
 def test_a_degraded_cell_reads_unavailable_and_its_reasoning_is_marked_not_counted(tmp_path, monkeypatch):
-    content = _export(tmp_path, monkeypatch, _with_news_degraded("round2_failed")).read_text()
+    content = _export(tmp_path, monkeypatch, _with_news_degraded("no_input")).read_text()
 
     assert "| News Context | Unavailable | PLACEHOLDER news (not counted in the vote) |" in content
-    assert "#### News Context (Unavailable — not counted)" in content
-    assert "Round 2 failed; its Round 1 position is shown but not counted." in content
+    assert "### News Context (Unavailable — not counted)" in content
+    assert "- No usable input data." in content.splitlines()
     assert "News Context → Neutral" not in content and "| News Context | → Neutral" not in content
+
+
+def test_the_retired_round_two_reason_has_no_text():
+    from app.services.debate.export import DEGRADED_REASON_TEXT
+
+    assert set(DEGRADED_REASON_TEXT) == {"agent_error", "no_input", "llm_failed"}
 
 
 def test_no_unavailable_line_when_every_agent_is_live(tmp_path, monkeypatch):
@@ -459,7 +520,11 @@ EXPECTED_LABELS = {
     "SPLIT": "Split — no consensus",
     "INSUFFICIENT_DATA": "Insufficient data",
 }
-LM_NOTE = "Reasoning, key tension and synthesis are written by a language model."
+LM_NOTE = (
+    "News Context reasoning is written by a language model; "
+    "Technical Signal and Macro reasoning are computed values."
+)
+OLD_LM_NOTE = "Reasoning, key tension and synthesis are written by a language model."
 TRANSACTION_VERBS = re.compile(r"\b(buy|sell|hold)\b", re.IGNORECASE)
 ENUM_TEXT = re.compile(r"[A-Z]+_SIGNAL\b|INSUFFICIENT_DATA")
 CONFIDENCE = re.compile(r"\bconfiden(ce|t)\b", re.IGNORECASE)
@@ -489,6 +554,16 @@ def test_the_note_is_the_first_line_under_agent_positions(tmp_path, monkeypatch)
 
     after = [line for line in lines[lines.index("## Agent Positions") + 1:] if line.strip()]
     assert after[0] == LM_NOTE
+
+
+def test_the_exporters_note_is_the_exact_sentence_and_the_old_one_is_gone(tmp_path, monkeypatch):
+    from app.services.debate.export import LM_NOTE as exported
+
+    content = _export(tmp_path, monkeypatch, _make_debate_result()).read_text()
+
+    assert exported == LM_NOTE
+    assert OLD_LM_NOTE not in content and "key tension and synthesis are written" not in content
+    assert content.count("written by a language model") == 1  # no other fixed sentence says it
 
 
 @pytest.mark.parametrize("verdict", REPORTABLE)
@@ -559,7 +634,7 @@ def test_the_debate_json_carries_the_range_fields_and_no_old_name_anywhere(clien
     technical = AgentPosition(
         "technical", "bull", ["RSI bullish"], range_5s_pct=4.14, sigma_daily_pct=1.85, range_coverage=0.68
     )
-    result.round1["technical"] = result.round2["technical"] = technical
+    result.round1["technical"] = technical
     result.data_as_of, result.data_age_sessions = "2026-10-04", 0
 
     async def fake_engine_run(self, ticker, eligibility=None, on_stage=None):
@@ -571,8 +646,9 @@ def test_the_debate_json_carries_the_range_fields_and_no_old_name_anywhere(clien
     body = client.post("/tickers/VCB/debate").json()
 
     expected = {"range_5s_pct": 4.14, "sigma_daily_pct": 1.85, "range_coverage": 0.68}
-    for scope in (body, body["round1"]["technical"], body["round2"]["technical"]):
+    for scope in (body, body["round1"]["technical"]):
         assert {k: scope[k] for k in expected} == expected
+    assert "round2" not in body
     assert "volatility_range_pct" not in json.dumps(body)
 
 
@@ -693,26 +769,6 @@ def test_the_configuration_is_checked_before_eligibility_so_no_row_is_logged_for
     assert client.post("/tickers/VCB/debate").status_code == 503
 
 
-@pytest.mark.parametrize("unusable", [None, ""])
-def test_an_unavailable_key_tension_is_exported_in_plain_words_not_as_none(tmp_path, monkeypatch, unusable):
-    result = _make_debate_result()
-    result.synthesis.key_tension = unusable
-
-    content = _export(tmp_path, monkeypatch, result).read_text()
-
-    lines = content.splitlines()
-    under_heading = [line for line in lines[lines.index("## Key Tension") + 1:] if line.strip()]
-    assert under_heading[0] == "Key tension unavailable: the synthesiser returned no usable text."
-    assert "None" not in content
-
-
-def test_a_usable_key_tension_is_still_exported_as_written(tmp_path, monkeypatch):
-    content = _export(tmp_path, monkeypatch, _make_debate_result()).read_text()
-
-    assert "Technical and news are bullish; macro is cautious about index momentum." in content
-    assert "Key tension unavailable" not in content
-
-
 def test_the_response_says_the_report_was_saved_and_names_the_file(client, monkeypatch):
     _loaded(monkeypatch, ELIGIBLE)
 
@@ -777,7 +833,6 @@ async def test_progress_reports_the_stage_of_a_run_in_flight_then_goes_idle(monk
 
     async def slow_engine(self, ticker, eligibility=None, on_stage=None):
         on_stage("round1")
-        on_stage("round2")
         await gate.wait()
         return _make_debate_result()
 
@@ -792,7 +847,7 @@ async def test_progress_reports_the_stage_of_a_run_in_flight_then_goes_idle(monk
         response = await post
         idle = (await ac.get("/tickers/VCB/debate/progress")).json()
 
-    assert running["running"] is True and running["stage"] == "round2" and running["elapsed_ms"] >= 50
+    assert running["running"] is True and running["stage"] == "round1" and running["elapsed_ms"] >= 50
     assert other["running"] is False
     assert response.status_code == 200
     assert idle["running"] is False

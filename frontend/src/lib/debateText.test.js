@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  STAGE_LABELS,
   TYPICAL_ANALYSIS_SECONDS,
   agentLabel,
   agreementText,
@@ -42,7 +43,7 @@ describe('agreementText', () => {
   it('with no unavailable agent, unanimous reads "Agreement: Unanimous — 3 of 3 agents"', () => {
     const result = populated({
       agreement_level: 'unanimous',
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['a']),
         news: position('news', 'bull', ['b']),
         macro: position('macro', 'bull', ['c']),
@@ -59,7 +60,7 @@ describe('agreementText', () => {
   it('a three-way split reads "Split — 3 different positions"', () => {
     const result = populated({
       agreement_level: 'split',
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['a']),
         news: position('news', 'neutral', ['b']),
         macro: position('macro', 'bear', ['c']),
@@ -76,7 +77,7 @@ describe('agreementText', () => {
   it('a split of two live agents keeps the count of unavailable ones', () => {
     const result = oneDegraded({
       agreement_level: 'split',
-      round2: {
+      round1: {
         technical: position('technical', 'bull', ['a']),
         news: NEWS_DEGRADED,
         macro: position('macro', 'neutral', ['b']),
@@ -92,9 +93,31 @@ describe('agreementText', () => {
 
   it('names every unavailable agent', () => {
     const macro = position('macro', 'neutral', ['x'], { degraded_reason: 'agent_error' })
-    const result = oneDegraded({ round2: { ...oneDegraded().round2, macro } })
+    const result = oneDegraded({ round1: { ...oneDegraded().round1, macro } })
 
     expect(agreementText(result)).toBe('Agreement: 1 of 1 live agents (News Context, Macro unavailable)')
+  })
+})
+
+describe('agreementText reads round1', () => {
+  it('counts the stances of the one round the result carries', () => {
+    const result = populated({
+      agreement_level: 'majority',
+      round1: {
+        technical: position('technical', 'bear', ['a']),
+        news: position('news', 'bear', ['b']),
+        macro: position('macro', 'neutral', ['c']),
+      },
+    })
+
+    expect(agreementText(result)).toBe('Agreement: Majority — 2 of 3 agents')
+  })
+
+  it('does not need, and does not read, a round2 key', () => {
+    const result = populated()
+    expect('round2' in result).toBe(false)
+
+    expect(() => agreementText(result)).not.toThrow()
   })
 })
 
@@ -136,9 +159,17 @@ describe('degradedText', () => {
     expect(degradedText({ degraded_reason: 'agent_error' })).toBe('The agent failed to run.')
     expect(degradedText({ degraded_reason: 'no_input' })).toBe('No usable input data.')
     expect(degradedText({ degraded_reason: 'llm_failed' })).toBe('The language-model analysis failed.')
-    expect(degradedText({ degraded_reason: 'round2_failed' })).toBe(
-      'Round 2 failed; its Round 1 position is shown but not counted.',
-    )
+  })
+
+  it('shows a code it has no text for as received (a retired reason is not given a Round 2 sentence)', () => {
+    expect(degradedText({ degraded_reason: 'round2_failed' })).toBe('round2_failed')
+    expect(degradedText({ degraded_reason: 'something_new' })).toBe('something_new')
+  })
+})
+
+describe('STAGE_LABELS', () => {
+  it('has only the run\'s one stage', () => {
+    expect(STAGE_LABELS).toEqual({ round1: 'Running agents…' })
   })
 })
 
@@ -171,8 +202,9 @@ describe('describeFailure', () => {
 })
 
 describe('constants and clock', () => {
-  it('has one duration for the "about 45 seconds" notice', () => {
-    expect(TYPICAL_ANALYSIS_SECONDS).toBe(45)
+  it('has one duration for the "Analysis takes about N seconds" notice, a positive whole number of seconds', () => {
+    expect(Number.isInteger(TYPICAL_ANALYSIS_SECONDS)).toBe(true)
+    expect(TYPICAL_ANALYSIS_SECONDS).toBeGreaterThan(0)
   })
 
   it('formats a client timestamp as local HH:MM', () => {

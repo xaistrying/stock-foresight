@@ -80,17 +80,19 @@
 }
 
 /* Drawer mode (768 to 1143px): the Verdict panel is a full-width strip between the chart and the
-   Debate. The typical move and its range check sit at the left, the verdict with Agreement and the
-   stance chips in the middle, Key tension at the right and Synthesis in a full-width row under
-   them, the disclaimer at the foot. The panel's wrappers dissolve (display: contents) so each piece
-   is a cell of one grid, and it is still one DOM tree in reading order: nothing is rendered twice.
+   Debate, in two columns. The typical move and its range check sit at the left, the verdict with
+   Agreement and the stance chips (and Re-analyse) at the right; the result's data, time and report
+   lines and then the disclaimer follow on full-width rows under them. The panel's wrappers dissolve
+   (display: contents) so each piece is a cell of one grid, and it is still one DOM tree in reading
+   order: nothing is rendered twice. The result's lines and the foot are moved after Re-analyse by
+   `order` alone; none of them is focusable but the disclaimer's disclosure, which stays last.
    Chosen by the layout mode the hook reports, which uses the breakpoints above, so the two agree.
    Rows have no gap of their own (cells carry a bottom margin) so the unused rows of the grid, which
-   the spanning cells need, cost no height. */
+   the spanning range block needs, cost no height. */
 .app-shell[data-layout='drawer'] .verdict-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr);
-  grid-template-rows: repeat(9, auto) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  grid-template-rows: repeat(9, auto);
   column-gap: var(--space-4);
   row-gap: 0;
   align-items: start;
@@ -124,19 +126,12 @@
   margin-bottom: var(--space-2);
 }
 
-.app-shell[data-layout='drawer'] .verdict-panel__tension {
-  grid-column: 3;
-  grid-row: 1 / 10;
-  align-self: start;
-  margin-bottom: 0;
-}
-
-.app-shell[data-layout='drawer'] .verdict-panel__synthesis {
+.app-shell[data-layout='drawer'] .verdict-panel__result > .verdict-panel__meta {
   grid-column: 1 / -1;
-  grid-row: 10;
+  order: 1;
 }
 
 .app-shell[data-layout='drawer'] .verdict-panel__foot {
   grid-column: 1 / -1;
-  grid-row: 11;
+  order: 2;
 }

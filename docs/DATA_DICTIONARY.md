@@ -228,7 +228,7 @@ Percent columns are percentages, not log returns, except `r5`.
 | `eligible`, `eligibility_reasons` | INTEGER NOT NULL, TEXT (JSON list) | the data-eligibility verdict |
 | `agents_degraded` | TEXT (JSON list) | agents without a vote |
 | `sigma_daily_pct`, `range_5s_pct`, `range_k`, `range_coverage` | REAL | the displayed band; NULL when unavailable (`range_coverage` is also NULL for an uncalibrated ticker) |
-| `r1_technical`, `r1_news`, `r1_macro`, `r2_technical`, `r2_news`, `r2_macro` | TEXT | `bull`/`bear`/`neutral` per agent and round; NULL when the agent did not run or did not vote |
+| `r1_technical`, `r1_news`, `r1_macro`, `r2_technical`, `r2_news`, `r2_macro` | TEXT | `bull`/`bear`/`neutral` per agent and round; NULL when the agent did not run or did not vote. `r2_*` are NULL for every run after `retire-debate-round-two-and-model-prose` (one round only; the verdict is voted on the `r1_*` stances) and hold the Round 2 stance only for older rows; `score_debates.py` reads a row with any `r2_*` set as voted on Round 2 stances |
 | `verdict`, `agreement_level` | TEXT | the synthesised verdict (enum value, not label) and agreement |
 | `model_sha256` | TEXT | SHA-256 of `har_rv_model.json`; NULL if absent |
 | `llm_provider`, `llm_model`, `llm_effort` | TEXT | the language model behind the agents (`llm_effort` only for `claude_cli`) |

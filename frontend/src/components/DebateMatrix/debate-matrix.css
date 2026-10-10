@@ -1,4 +1,4 @@
-/* The Debate matrix: agent cards, three columns by two rows. The grid's own columns (three equal
+/* The Debate matrix: one agent card per column, three columns. The grid's own columns (three equal
    ones, whatever the Stage width) are in App.css, next to the other zone layout. A card is clamped to
    five lines of body text by height, with its list semantics intact. */
 .debate-matrix {
@@ -18,12 +18,6 @@
 .debate-matrix__disclaimer,
 .debate-matrix__lm-note,
 .debate-matrix__message {
-  color: var(--ink-muted);
-}
-
-.debate-grid__row-label {
-  grid-column: 1 / -1;
-  margin: var(--space-1) 0 0;
   color: var(--ink-muted);
 }
 
@@ -111,7 +105,7 @@
   border-color: transparent;
 }
 
-/* Phone: one agent per tab, Round 1 above Round 2. */
+/* Phone: one agent per tab, one card in each panel. */
 .debate-tabs {
   display: flex;
   flex-direction: column;

@@ -1,7 +1,8 @@
 """Macro Agent — quantitative macro signals for the debate engine.
 
 All data via vnstock API or the existing OHLCV table. No scraping.
-LLM is used only to translate computed numeric signals into readable bullets.
+No language model: the reasoning is the four computed signal lines (Rule 5), not model
+text (`retire-debate-round-two-and-model-prose`).
 
 Signals:
 1. VN-Index 20-session price trend (slope direction)
@@ -31,9 +32,7 @@ from vnstock.ui import Market  # noqa: E402
 from app.db.connection import get_connection
 from app.services.bulk_ingestion import _is_rate_limit_exit  # one definition of vnai's exit
 from app.services.debate.engine import AgentPosition, Stance
-from app.services.debate.llm_client import LLMClient
 from app.services.debate.news_feeds import ICT
-from app.services.debate.prompt_safety import DESCRIBE_ONLY, fence
 
 logger = logging.getLogger(__name__)
 
@@ -171,22 +170,6 @@ def _get_vnindex_closes(n: int) -> pd.Series | None:
     return None
 
 
-def _get_sector_closes(ticker: str, n: int) -> pd.Series | None:
-    """Get closes for the ticker's ICB sector index if available."""
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT icb_code2 FROM ticker_universe WHERE symbol = ?", (ticker,)
-        ).fetchone()
-        if not row or not row[0]:
-            return None
-        # Proxy: use the ticker's own OHLCV (we don't have sector index in DB)
-        # A proper implementation would load a basket of sector peers.
-        return None
-    finally:
-        conn.close()
-
-
 # Large caps whose summed foreign trading stands in for market-wide foreign flow.
 # vnstock's free providers implement no foreign-trade history for the index or any
 # ticker (foreign_trade raises NotImplementedError; the index quote's foreign fields
@@ -272,31 +255,19 @@ def _get_usd_vnd_change(n: int) -> float | None:
     return None
 
 
-_REASONING_PROMPT = """\
-You are a macro analysis assistant for Vietnamese stocks. Given these computed
-macro signals, produce 3-4 plain-language bullet points (each starting with "- ")
-explaining the macro environment. Translate the numbers into readable insights.
-Do NOT add any macro context beyond the provided values.
-A signal marked "not counted in the stance vote" is provisional: mention it as
-context, but do not infer a direction from it. {describe_only}
-
-Ticker: {ticker}
-Overall macro stance: {stance}
-
-Computed signals:
-- VN-Index 20-session trend: {vnindex_trend}
-- {ticker}'s own 20-session return relative to VN-Index: {sector_vs_market}
-- USD/VND 5-session change: {usdvnd_change}
-- Market-wide foreign net flow, latest session ({sample} large caps): {foreign_flow}
-"""
+def _signal_lines(signals: dict) -> list[str]:
+    """The four signals as the agent's reasoning, one bullet each, in a fixed order."""
+    return [
+        f"VN-Index trend: {signals.get('vnindex_trend', 'unavailable')}",
+        f"Relative performance: {signals.get('sector_vs_market', 'unavailable')}",
+        f"USD/VND: {signals.get('usdvnd_change', 'unavailable')}",
+        f"Market foreign flow (latest session): {signals.get('foreign_flow', 'unavailable')}",
+    ]
 
 
 class MacroAgent:
-    def __init__(self) -> None:
-        self._llm = LLMClient()
-
     async def run(self, ticker: str) -> AgentPosition:
-        """Round 1: compute four macro signals, derive stance, generate reasoning."""
+        """Compute four macro signals, derive the stance; reasoning is the four signal lines."""
         signals: dict = {}
         votes: list[int] = []  # +1 bull, -1 bear, 0 neutral
         # Raw numbers for the outcome log, beside the prompt strings in `signals`.
@@ -329,7 +300,6 @@ class MacroAgent:
         # the SAME two dates: the ticker's 20th-latest and latest stored closes. A
         # stale ticker is compared with the index on its own dates, never the index's
         # latest 20 positions; if the index lacks either date there is no vote.
-        window_note = None
         ticker_closes = await asyncio.to_thread(_load_ohlcv_closes, ticker, 22)  # blocking SQLite
         if len(ticker_closes) >= 20 and vnindex is not None:
             window = ticker_closes.iloc[-20:]
@@ -342,8 +312,9 @@ class MacroAgent:
                 signals["sector_vs_market"] = f"{rel:+.2f}% relative to VN-Index ({d_first}..{d_last})"
                 votes.append(1 if rel > 1 else (-1 if rel < -1 else 0))
             else:
-                window_note = f"ticker window {d_first}..{d_last} not covered by the VN-Index data"
-                signals["sector_vs_market"] = f"unavailable ({window_note})"
+                signals["sector_vs_market"] = (
+                    f"unavailable (ticker window {d_first}..{d_last} not covered by the VN-Index data)"
+                )
         else:
             signals["sector_vs_market"] = "unavailable"
 
@@ -388,69 +359,4 @@ class MacroAgent:
         total = sum(votes)
         stance: Stance = "bull" if total > 0 else ("bear" if total < 0 else "neutral")
 
-        reasoning = await self._generate_reasoning(ticker, stance, signals)
-        # The LLM may not repeat a mismatch note, and the spec says the reasoning does.
-        if window_note and window_note not in " ".join(reasoning):
-            reasoning = [*reasoning, f"Relative performance vs VN-Index not counted: {window_note}."]
-        return AgentPosition(agent_id="macro", stance=stance, reasoning=reasoning, evidence=evidence)
-
-    async def respond(self, ticker: str, round1: dict) -> AgentPosition:
-        """Round 2: review other positions and maintain/update macro stance."""
-        my_r1 = round1.get("macro")
-        others = {k: v for k, v in round1.items() if k != "macro"}
-        other_lines = "\n".join(
-            f"- {k.capitalize()} agent ({v.stance}): {'; '.join(v.reasoning[:2])}"
-            for k, v in others.items()
-        )
-        peers = fence("PEERS", other_lines)  # the peers' bullets can quote scraped headlines
-        prompt = f"""\
-You are the Macro agent. Your Round 1 stance was: {my_r1.stance if my_r1 else "neutral"}.
-Your Round 1 reasoning: {'; '.join(my_r1.reasoning[:3]) if my_r1 else "N/A"}
-
-Other agents' positions:
-{peers}
-
-Maintain your stance unless a specific counter-argument from the other agents
-is compelling. A position resting on provisional or partial data must not move it
-(and must not move yours). Respond: first line = bull/bear/neutral, then 3-4
-bullet points.
-{DESCRIBE_ONLY}
-"""
-        response = await self._llm.chat([
-            {"role": "system", "content": "You are a disciplined macro analyst."},
-            {"role": "user", "content": prompt},
-        ])
-        from app.services.debate.technical import _parse_stance_and_bullets
-        stance, reasoning = _parse_stance_and_bullets(response, my_r1)
-        return AgentPosition(agent_id="macro", stance=stance, reasoning=reasoning)
-
-    async def _generate_reasoning(
-        self, ticker: str, stance: Stance, signals: dict
-    ) -> list[str]:
-        prompt = _REASONING_PROMPT.format(
-            ticker=ticker,
-            stance=stance,
-            vnindex_trend=signals.get("vnindex_trend", "unavailable"),
-            sector_vs_market=signals.get("sector_vs_market", "unavailable"),
-            usdvnd_change=signals.get("usdvnd_change", "unavailable"),
-            foreign_flow=signals.get("foreign_flow", "unavailable"),
-            sample=len(FOREIGN_FLOW_SAMPLE),
-            describe_only=DESCRIBE_ONLY,
-        )
-        try:
-            response = await self._llm.chat([
-                {"role": "system", "content": "You are a concise macro analysis assistant."},
-                {"role": "user", "content": prompt},
-            ])
-            from app.services.debate.technical import _extract_bullets
-            bullets = _extract_bullets(response)
-            if bullets:
-                return bullets[:4]
-        except Exception as exc:
-            logger.warning("MacroAgent LLM call failed: %s", exc)
-        return [
-            f"VN-Index trend: {signals.get('vnindex_trend', 'unavailable')}",
-            f"Relative performance: {signals.get('sector_vs_market', 'unavailable')}",
-            f"USD/VND: {signals.get('usdvnd_change', 'unavailable')}",
-            f"Market foreign flow (latest session): {signals.get('foreign_flow', 'unavailable')}",
-        ]
+        return AgentPosition(agent_id="macro", stance=stance, reasoning=_signal_lines(signals), evidence=evidence)

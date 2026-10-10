@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from app.api import debate as debate_mod
 from app.db import debate_log as debate_log_mod
 from app.services.debate import outcome_log
-from app.services.debate.engine import AgentPosition, DebateResult, SynthesisResult
+from app.services.debate.engine import AgentPosition, DebateResult
 
 # Captured at import, before the autouse fixture redirects the path for each test.
 REAL_LOG_PATH = debate_log_mod.DEBATE_LOG_DB_PATH
@@ -36,8 +36,7 @@ def _result() -> DebateResult:
     }
     return DebateResult(
         ticker="VCB", as_of="2026-10-06", verdict="BUY_SIGNAL", agreement_level="majority",
-        round1=round1, round2=dict(round1),
-        synthesis=SynthesisResult("BUY_SIGNAL", "majority", "tension", "reason"),
+        round1=round1,
         duration_ms=5, range_5s_pct=4.1, sigma_daily_pct=1.8, range_coverage=0.68,
         data_as_of="2026-10-06", data_age_sessions=0,
     )

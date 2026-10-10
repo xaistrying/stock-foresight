@@ -1,5 +1,3 @@
-import { Inline } from '../Inline'
-import { LM_NOTE } from '../../lib/disclaimer'
 import {
   UNKNOWN_VERDICT,
   VERDICT_CONFIG,
@@ -30,11 +28,11 @@ export function VerdictBadge({ verdict }) {
   )
 }
 
-/** One chip per agent for its Round 2 position: agent, arrow and word. An agent that did not vote says so. */
-export function StanceChips({ round2 }) {
+/** One chip per agent for its position: agent, arrow and word. An agent that did not vote says so. */
+export function StanceChips({ round1 }) {
   return (
     <div className="verdict-panel__chips">
-      {Object.entries(round2).map(([id, position]) =>
+      {Object.entries(round1).map(([id, position]) =>
         position.degraded_reason ? (
           <span key={id} className="stance-chip stance-chip--unavailable">
             {agentLabel(id)} unavailable
@@ -56,46 +54,16 @@ export function DataLine({ result }) {
 }
 
 /**
- * Key tension: the synthesiser's one or two sentences, in the warn colours (the only place they are
- * used), or a plain statement that it is unavailable (the call failed or its reply was unusable; no
- * text stands in for it).
- */
-function KeyTension({ text }) {
-  return (
-    <section className="verdict-panel__tension">
-      <h3 className="verdict-panel__tension-label t-label">Key tension</h3>
-      {text ? (
-        <p className="verdict-panel__tension-text t-body">
-          <Inline text={text} />
-        </p>
-      ) : (
-        <p className="verdict-panel__tension-text t-body">Key tension unavailable</p>
-      )}
-    </section>
-  )
-}
-
-/**
- * A finished run, in the design's order: badge, Agreement, stance chips, Key tension, Synthesis, the
- * data line, when it was produced, whether a report was saved, and Re-analyse. Nothing is behind a toggle.
+ * A finished run: the badge, Agreement, stance chips, the data line, when it was produced, whether a
+ * report was saved, and Re-analyse. Nothing is behind a toggle, and the panel holds no language-model
+ * text (the Debate matrix says which reasoning is the model's).
  */
 export function ResultBody({ ticker, result, completedAt, onAnalyse }) {
-  const synthesis = result.synthesis ?? {}
   return (
     <div className="verdict-panel__result">
       <VerdictBadge verdict={result.verdict} />
       <p className="verdict-panel__agreement t-small">{agreementText(result)}</p>
-      <StanceChips round2={result.round2} />
-      <p className="verdict-panel__lm-note t-small">{LM_NOTE}</p>
-      <KeyTension text={synthesis.key_tension} />
-      {synthesis.reasoning ? (
-        <section className="verdict-panel__synthesis">
-          <h3 className="t-heading">Synthesis</h3>
-          <p className="t-body">
-            <Inline text={synthesis.reasoning} />
-          </p>
-        </section>
-      ) : null}
+      <StanceChips round1={result.round1} />
       <DataLine result={result} />
       {completedAt != null ? <p className="verdict-panel__meta t-small">Analysed {formatClock(completedAt)}</p> : null}
       {/* Only when the server says it saved it, under the name it gives (older servers send neither). */}

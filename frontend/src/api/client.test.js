@@ -173,10 +173,10 @@ describe('runDebateAnalysis', () => {
 describe('getDebateProgress', () => {
   it('reads the progress endpoint', async () => {
     const fetchMock = stubFetch(async () =>
-      jsonResponse(200, { ticker: 'VCB', running: true, stage: 'round2', elapsed_ms: 1200 }),
+      jsonResponse(200, { ticker: 'VCB', running: true, stage: 'round1', elapsed_ms: 1200 }),
     )
 
-    await expect(getDebateProgress('VCB')).resolves.toMatchObject({ running: true, stage: 'round2' })
+    await expect(getDebateProgress('VCB')).resolves.toMatchObject({ running: true, stage: 'round1' })
 
     expect(fetchMock.mock.calls[0][0]).toMatch(/\/tickers\/VCB\/debate\/progress$/)
   })

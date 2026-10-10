@@ -31,7 +31,7 @@ function arrangeApi(run) {
     range_5s_pct: 4.12, range_k: 1.1, range_coverage: 0.68, range_hit_rate: { rate: 0.68, n: 50 },
   }))
   vi.spyOn(tickersApi, 'runDebateAnalysis').mockImplementation(run)
-  vi.spyOn(tickersApi, 'getDebateProgress').mockResolvedValue({ ticker: 'TCB', running: true, stage: 'round2', elapsed_ms: 100 })
+  vi.spyOn(tickersApi, 'getDebateProgress').mockResolvedValue({ ticker: 'TCB', running: true, stage: 'round1', elapsed_ms: 100 })
 }
 
 function renderApp() {
@@ -61,7 +61,7 @@ const STATES = {
     reach: async () => {
       await selectRow(/^TCB/)
       await analyse()
-      await screen.findByText('Comparing positions…', {}, { timeout: 3000 }).catch(() => screen.findByText('Running agents…'))
+      await screen.findByText('Running agents…')
     },
   },
   result: {

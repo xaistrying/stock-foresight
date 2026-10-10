@@ -36,8 +36,8 @@ function useElapsedSeconds(startedAt) {
 
 /**
  * Running: the stage label comes from the server (the progress poll), never from a timer; the elapsed
- * time is counted here. Until the first poll answers, the first stage's label stands in. Never a
- * spinner alone.
+ * time is counted here. The run has one stage; until the first poll answers, or for a stage this panel
+ * has no label for, that stage's label stands in. Never a spinner alone.
  */
 export function RunningState({ stage, startedAt }) {
   const elapsed = useElapsedSeconds(startedAt)
@@ -110,7 +110,7 @@ function Reasons({ result, context }) {
         <p className="verdict-panel__meta t-small">Fewer than two agents produced a usable position.</p>
         <ul className="verdict-panel__reasons t-body">
           {degraded.map((id) => (
-            <li key={id}>{`${agentLabel(id)} — ${degradedText(result.round2[id] ?? {})}`}</li>
+            <li key={id}>{`${agentLabel(id)} — ${degradedText(result.round1[id] ?? {})}`}</li>
           ))}
         </ul>
       </>
@@ -130,7 +130,7 @@ function Reasons({ result, context }) {
 /**
  * Insufficient data: the ticker cannot be analysed (known from its eligibility, before any run) or a
  * run refused or abstained. Reasons in plain words, the data date and age when known, and Refresh.
- * No verdict, Agreement, stance, Key tension or Synthesis, and no report-saved note.
+ * No verdict, Agreement or stance, and no report-saved note.
  */
 export function InsufficientBody({ ticker, result, context, canReanalyse, onAnalyse }) {
   const dataLine = result
