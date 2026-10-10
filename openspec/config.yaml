@@ -5,11 +5,11 @@ schema: spec-driven
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
 context: |
   Product: web app for Vietnamese HOSE stocks. A HAR-RV volatility model gives
-  a 5-session typical-move band; a three-agent LLM debate (technical, news,
-  macro; two rounds) gives a verdict by deterministic vote over Round 2
-  stances. The XGBoost return predictor is retired (served until
-  `retire-direction-model` lands; docs/MODEL_CARD.md). SageMaker (M7) is not
-  implemented.
+  a 5-session typical-move band; a three-agent debate panel (technical, news,
+  macro; one round, and only the news agent calls a language model) gives a
+  verdict by deterministic vote over the agents' stances. The XGBoost return
+  predictor is retired (served until `retire-direction-model` lands;
+  docs/MODEL_CARD.md). SageMaker (M7) is not implemented.
 
   Tech stack: FastAPI (Python, pip + requirements.txt — no poetry/uv without
   asking first), Vite + React (npm), SQLite, XGBoost. Data source is the

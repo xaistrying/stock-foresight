@@ -67,11 +67,11 @@ Delete only tests whose subject is a removed prompt, response or section; rewrit
 
 ## 7. Docs and config
 
-- [ ] 7.1 `openspec/config.yaml` context lines 6-10: replace "a three-agent LLM debate (technical, news, macro; two rounds) gives a verdict by deterministic vote over Round 2 stances" with "a three-agent debate panel (technical, news, macro; one round, and only the news agent calls a language model) gives a verdict by deterministic vote over the agents' stances"; edit no rule text and not the "Current focus" list (P3's config edit); `CLAUDE.md` does not repeat this passage and is not edited
+- [x] 7.1 `openspec/config.yaml` context lines 6-10: replace "a three-agent LLM debate (technical, news, macro; two rounds) gives a verdict by deterministic vote over Round 2 stances" with "a three-agent debate panel (technical, news, macro; one round, and only the news agent calls a language model) gives a verdict by deterministic vote over the agents' stances"; edit no rule text and not the "Current focus" list (P3's config edit); `CLAUDE.md` does not repeat this passage and is not edited
 - [ ] 7.2 `README.md`: update the "up to 8 LLM calls in four steps" passage, the run-line example (`round1_ms=… total_ms=…`) and the measured-latency paragraph (keep the dated 2026-10-07 measurement as history and add the new one from 1.3)
-- [ ] 7.3 `docs/DATA_DICTIONARY.md` line for `r1_*`/`r2_*`: say `r2_*` are NULL for every run after this change and hold the Round 2 stance only for older rows
-- [ ] 7.4 `docs/KNOWN_ISSUES.md`: add one factual line to #1 (the Round 2 and synthesis prompts no longer exist; only the News headline prompt carries RSS text); leave #1, #2, #4 and the unauthenticated-endpoint entries open, as the entries close only when no model call remains
-- [ ] 7.5 Confirm and write nothing: `/insight` is retired (`ticker-prediction`) and `VITE_DEBATE_PANEL_ENABLED` is absent from `frontend/src` (`grep -rn VITE_DEBATE_PANEL_ENABLED frontend/src` is empty); the archived design's `/insight` and feature-flag open question stays closed
+- [x] 7.3 `docs/DATA_DICTIONARY.md` line for `r1_*`/`r2_*`: say `r2_*` are NULL for every run after this change and hold the Round 2 stance only for older rows
+- [x] 7.4 `docs/KNOWN_ISSUES.md`: add one factual line to #1 (the Round 2 and synthesis prompts no longer exist; only the News headline prompt carries RSS text); leave #1, #2, #4 and the unauthenticated-endpoint entries open, as the entries close only when no model call remains
+- [x] 7.5 Confirm and write nothing: `/insight` is retired (`ticker-prediction`) and `VITE_DEBATE_PANEL_ENABLED` is absent from `frontend/src` (`grep -rn VITE_DEBATE_PANEL_ENABLED frontend/src` is empty); the archived design's `/insight` and feature-flag open question stays closed
 
 ## 8. Verification
 
