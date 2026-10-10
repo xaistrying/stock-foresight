@@ -302,7 +302,9 @@ Items in a ticker's and kind's first successful fetch are history, not "known on
 `latest_items` marks them `from_first_fetch`. Not stored, on purpose: the body
 (`news_full_content`, `news_short_content`), the vendor's own `id` and `news_id`, the English
 event title, exception messages, and any environment value. Never updated or deleted by the
-company feed; no retention limit.
+company feed; no retention limit. Known limit: a version that returns after a different one
+(A, then B, then A again) is already stored, so it is not inserted again and `latest_items`
+keeps returning B, the highest `id`.
 
 ## Files outside the database
 

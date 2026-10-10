@@ -55,7 +55,7 @@
 - [x] 9.3 First real run: `--tickers SAB,VPB --from-debate-log` with RSS. Record the row counts per kind and the `items_returned` per call; run it again at once and confirm `items_new = 0` for the vendor items and only genuinely new RSS items. If anything failed, the exit code and summary say so.
 - [ ] 9.4 Pin check in a fresh virtual environment built from `backend/requirements.txt` in a scratch directory: it resolves to `vnstock 4.0.5` and `vnai 2.5.5`, and `test_vnstock_guard.py` passes there with `HOME` and cwd redirected. **Not done (2026-10-10):** PyPI lists `vnstock` and `vnai` as quarantined with no files, so a fresh venv cannot be built from the file; see `docs/KNOWN_ISSUES.md`.
 - [x] 9.5 Run the whole backend suite once. Confirm `backend/data/company_feed_log.db` was not created or changed by it, no `AGENTS.md` appeared, and the earlier focused tests still pass.
-- [ ] 9.6 Review: run the `code-reviewer` and `security-reviewer` agents over the new package, the script and the db module (untrusted text, parameterised SQL, key handling, the `SystemExit` paths) and fix CRITICAL and HIGH findings.
+- [x] 9.6 Review: run the `code-reviewer` and `security-reviewer` agents over the new package, the script and the db module (untrusted text, parameterised SQL, key handling, the `SystemExit` paths) and fix CRITICAL and HIGH findings. **Done (2026-10-10):** no CRITICAL or HIGH finding; fixed the reviewer's two MEDIUM bugs (integral values hashed differently as int or float; the gap warning missed a frame with a repeated row) and the vnai message chained into a logged traceback; the rest is listed in the apply report.
 - [x] 9.7 `openspec validate add-company-feed-news-and-events` passes.
 
 ## 10. Docs and the backup
