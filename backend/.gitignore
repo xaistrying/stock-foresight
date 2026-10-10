@@ -42,3 +42,6 @@ data/*.db*
 # Reproducible by re-running training against app.db — do not commit.
 data/models/*
 !data/models/.gitkeep
+# VN-Index closes cached by backend/scripts/evaluate_band_coverage_by_regime.py
+# (vendor data, reproducible with --fetch-index) — do not commit.
+data/study_cache/
