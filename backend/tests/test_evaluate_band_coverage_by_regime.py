@@ -915,3 +915,23 @@ def test_a_series_shorter_than_the_warm_up_gives_inconclusive(study_db):
 
     assert report["outcome"]["outcome"] == "INCONCLUSIVE"
     assert report["regime"]["exclusions"]["with_regime"] == 0
+
+
+def test_the_report_records_the_vendor_walk_and_warning_and_the_quarter_block_half_width(
+    study_db, tmp_path, monkeypatch, capsys
+):
+    series = _index_series()
+    calls = [{"end": "x", "count": 1, "rows": 1, "first": "a", "last": "b"}] * 2
+    monkeypatch.setattr(ebr, "fetch_index_history", lambda *a, **k: ebr.IndexHistory(series, calls, True, ("limited",)))
+
+    ebr.main(["--db", str(study_db), "--fetch-index", str(tmp_path / "vnindex.csv")])
+    fetched = capsys.readouterr().out
+
+    assert "vendor calls: 2 (walked end backwards); vendor history-limit warning logged: yes" in fetched
+    quarter = [line for line in fetched.splitlines() if "quarter-block 95% interval" in line]
+    assert quarter and all("half-width" in line and "of draws dropped" in line for line in quarter)
+
+    ebr.write_index_csv(tmp_path / "cached.csv", series)
+    _no_network(monkeypatch)
+    ebr.main(["--db", str(study_db), "--index-csv", str(tmp_path / "cached.csv")])
+    assert "not recorded for a cached CSV" in capsys.readouterr().out

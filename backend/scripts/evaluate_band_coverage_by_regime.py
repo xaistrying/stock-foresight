@@ -498,6 +498,7 @@ def evaluate_half(cells: pd.DataFrame, labels: pd.Series) -> dict:
         "gap": month["gap"], "ci": month["ci"], "half_width": month["half_width"],
         "dropped_share": month["dropped_share"],
         "quarter_ci": quarter["ci"], "quarter_half_width": quarter["half_width"],
+        "quarter_dropped_share": quarter["dropped_share"],
         "disagreement": interval_disagreement(month["ci"], quarter["ci"]),
         "months": int(cells["date"].str[:7].nunique()) if len(cells) else 0,
         "calm_months": stats[CALM]["months"] if stats[CALM] else 0,
@@ -755,7 +756,10 @@ def _half_lines(name: str, half: dict) -> list[str]:
         f"{half['half_width'] * 100:.1f} points ({half['dropped_share']:.1%} of draws dropped for an empty third)"
     )
     flag = "  DISAGREES with the month-block interval about excluding zero" if half["disagreement"] else ""
-    lines.append(f"    quarter-block 95% interval {_interval(half['quarter_ci'])}{flag}")
+    lines.append(
+        f"    quarter-block 95% interval {_interval(half['quarter_ci'])}, half-width "
+        f"{half['quarter_half_width'] * 100:.1f} points ({half['quarter_dropped_share']:.1%} of draws dropped){flag}"
+    )
     return lines
 
 
@@ -765,6 +769,12 @@ def _provenance_lines(index: dict) -> list[str]:
              f"{index['sessions']} sessions, calendar gaps over {GAP_DAYS} days: {gaps}"]
     if index.get("source"):
         lines.append(f"  source: {index['source']}; {index.get('fetched_label', 'fetched')}: {index.get('fetched')}")
+    if "calls" in index:
+        walked = "walked end backwards" if len(index["calls"]) > 1 else "no walk-back needed"
+        lines.append(f"  vendor calls: {len(index['calls'])} ({walked}); vendor history-limit warning logged: "
+                     f"{'yes' if index['history_limit_warning'] else 'no'}")
+    else:
+        lines.append("  vendor history-limit warning and walk-back: not recorded for a cached CSV (see --depth-only)")
     if index.get("sha256"):
         lines.append(f"  csv: {index['path']}  SHA-256 {index['sha256']}")
     return lines
@@ -793,7 +803,8 @@ def format_report(report: dict) -> str:
         "  year-adjusted gap: unavailable (no year has both thirds on at least "
         f"{MIN_DATES_PER_YEAR_CELL} dates)" if adjusted is None else
         f"  year-adjusted gap {_points(adjusted['gap'])} over years {adjusted['years']}; 95% interval "
-        f"{_interval(adjusted['ci'])}, half-width {adjusted['half_width'] * 100:.1f} points"
+        f"{_interval(adjusted['ci'])}, half-width {adjusted['half_width'] * 100:.1f} points "
+        f"({adjusted['dropped_share']:.1%} of draws dropped because a year had an empty third)"
     )
     lines += ["", "Sensitivity, expanding percentile (does not enter the outcome):"]
     for name in ("early", "late"):
