@@ -86,7 +86,7 @@ def fetch_company_frame(symbol: str, kind: str) -> pd.DataFrame:
     except SystemExit as exit_request:
         if not _is_rate_limit_exit(exit_request):
             raise
-        raise RateLimited(f"vnai rate limit on {symbol} {kind}") from exit_request
+        raise RateLimited(f"vnai rate limit on {symbol} {kind}") from None  # its promotional text stays out of logged tracebacks
     except RetryError as error:
         underlying = _unwrap(error)
         if isinstance(underlying, RateLimitError):

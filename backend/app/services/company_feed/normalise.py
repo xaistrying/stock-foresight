@@ -119,7 +119,7 @@ def _scalar(value: Any) -> Any:
     if isinstance(value, (bool, np.bool_)):
         return bool(value)
     if isinstance(value, (int, np.integer)):
-        return int(value)
+        return float(value)  # pandas makes a column int64 or float64 by its nulls: one form keeps the hash stable
     if isinstance(value, (float, np.floating)):
         number = float(value)
         return number if math.isfinite(number) else None

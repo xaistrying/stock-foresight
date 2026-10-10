@@ -140,6 +140,7 @@ def test_vnais_rate_limit_exit_is_reported_as_a_rate_limit_not_an_exit(monkeypat
 
     assert isinstance(caught.value, Exception)
     assert RATE_LIMIT_MESSAGE not in str(caught.value)  # the promotional text is not carried along
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__  # nor chained into a logged traceback
 
 
 def test_any_other_exit_is_reraised(monkeypatch):

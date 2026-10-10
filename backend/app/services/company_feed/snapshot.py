@@ -153,7 +153,7 @@ class _Run:
             write_failed = True
         possible_gap = (
             row.kind in VENDOR_KINDS and row.status == store.STATUS_OK and previous_at is not None
-            and row.items_returned == fetch.VENDOR_ITEM_CAP and items_new == row.items_returned
+            and row.items_returned == fetch.VENDOR_ITEM_CAP and items_new == len(plan.records)  # a repeated row is one record
         )
         if possible_gap:
             logger.warning(

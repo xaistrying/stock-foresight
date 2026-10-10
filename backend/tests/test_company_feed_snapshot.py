@@ -443,6 +443,18 @@ def test_fifty_items_all_new_after_an_earlier_successful_fetch_is_a_possible_gap
     assert "possible gap: SAB news" in format_summary(summary, NOW)
 
 
+def test_a_repeated_row_in_a_fifty_row_frame_does_not_hide_a_possible_gap():
+    """Scenario: A possible gap is reported (the vendor can repeat a row, so 50 returned is 49 distinct)."""
+    _earlier_fetch("news", days_ago=2, items=5)
+    fresh = many_news(49, prefix="Mới")
+    world = World({("SAB", "news"): pd.concat([fresh, fresh.iloc[:1]], ignore_index=True)})
+
+    summary = _run(world, ["SAB"])
+
+    assert len(world._outcomes[("SAB", "news")][0]) == fetch.VENDOR_ITEM_CAP
+    assert [r.possible_gap for r in summary.reports] == [True, False]
+
+
 def test_a_first_fifty_item_fetch_is_not_a_gap(caplog):
     """Scenario: A first fetch is not a gap."""
     world = World({("SAB", "news"): many_news(50)})

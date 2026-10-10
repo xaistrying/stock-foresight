@@ -149,16 +149,16 @@ def record_fetch(
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            new_records = [record for record in records if _is_new(conn, record)]
+            fresh = [record for record in records if _is_new(conn, record)]
             cursor = conn.execute(
                 "INSERT INTO company_feed_fetch "
                 "(ticker, source, kind, fetched_at, status, items_returned, items_new, error_class, vnstock_version) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (fetch.ticker, fetch.source, fetch.kind, stamp, fetch.status, fetch.items_returned,
-                 len(new_records), error_class, fetch.vnstock_version),
+                 len(fresh), error_class, fetch.vnstock_version),
             )
             fetch_id = cursor.lastrowid
-            for record in new_records:
+            for record in fresh:
                 conn.execute(
                     "INSERT OR IGNORE INTO company_feed_item "
                     "(fetch_id, ticker, source, kind, item_id, content_hash, fetched_at, published_at, title, fields) "
@@ -172,7 +172,7 @@ def record_fetch(
             raise
     finally:
         conn.close()
-    return StoredFetch(fetch_id=fetch_id, items_new=len(new_records), fetched_at=stamp)
+    return StoredFetch(fetch_id=fetch_id, items_new=len(fresh), fetched_at=stamp)
 
 
 # --- reading -----------------------------------------------------------------------------------

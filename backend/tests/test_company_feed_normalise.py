@@ -131,6 +131,23 @@ def test_missing_values_and_numpy_scalars_become_plain_json_values():
     assert second["issue_date"] == "2026-04-23T00:00:00"
 
 
+def test_a_whole_number_hashes_the_same_whether_pandas_made_it_an_int_or_a_float():
+    """pandas makes a column int64 when no row is null and float64 when one is: the same event
+    must not look revised (a new version, a false `possible gap`) when only that changes."""
+    whole_frame = events_frame(events_row(value_per_share=3000, exercise_ratio=1))
+    assert whole_frame["value_per_share"].dtype.kind == "i"
+    with_null = events_frame(
+        events_row(value_per_share=3000, exercise_ratio=1),
+        events_row(event_title_vi="Khác", value_per_share=np.nan, exercise_ratio=np.nan),
+    )
+    assert with_null["value_per_share"].dtype.kind == "f"
+
+    whole = frame_to_records(whole_frame, kind="events", ticker="SAB", source="vci").records[0]
+    mixed = frame_to_records(with_null, kind="events", ticker="SAB", source="vci").records[0]
+
+    assert whole.content_hash == mixed.content_hash and whole.fields_json == mixed.fields_json
+
+
 def test_a_blank_string_and_a_null_store_the_same_value():
     blank, null = _event(action_type_vi=""), _event(action_type_vi=None)
 
