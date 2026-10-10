@@ -59,8 +59,9 @@ function ClampedBullets({ bullets }) {
 }
 
 /**
- * One agent's position: its label (Rule 5), its stance as an arrow and a word, and its reasoning. An agent that did not answer gets a dashed card reading "Unavailable — did not vote" with
- * the plain reason, and none of its placeholder reasoning.
+ * One agent's position: its label (Rule 5), its stance as an arrow and a word, and its reasoning. An
+ * agent that did not answer gets a dashed card reading "Unavailable — did not vote" with the plain
+ * reason, and none of its placeholder reasoning.
  */
 export function AgentCard({ agentId, position }) {
   const label = agentLabel(agentId)
