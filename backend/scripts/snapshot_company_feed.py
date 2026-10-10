@@ -91,7 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exit_request:  # argparse's own exit: 0 for --help, 2 for a usage error
         return int(exit_request.code or 0)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # INFO from this app's own loggers; third-party libraries (vnai, matplotlib) stay at WARNING.
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("app").setLevel(logging.INFO)
+    logger.setLevel(logging.INFO)
     for warning in inputs.api_key_warnings():
         print(f"WARNING: {warning}")
         logger.warning("%s", warning)

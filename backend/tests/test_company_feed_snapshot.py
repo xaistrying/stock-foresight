@@ -143,6 +143,17 @@ def test_both_kinds_are_fetched_for_every_ticker():
     ]
 
 
+def test_the_vendor_cap_is_a_recorded_fact_not_a_claim_about_earlier_items():
+    """Scenario: The vendor cap is a recorded fact."""
+    world = World({("SAB", "news"): many_news(snapshot.fetch.VENDOR_ITEM_CAP)})
+
+    summary = _run(world, ["SAB"])
+
+    assert _query("SELECT items_returned, items_new FROM company_feed_fetch WHERE kind = 'news'") == [(50, 50)]
+    assert fetch.VENDOR_ITEM_CAP == 50 and summary.exit_code == 0
+    assert not any(r.possible_gap for r in summary.reports)
+
+
 def test_a_non_positive_pace_is_refused():
     with pytest.raises(ValueError):
         Options(tickers_per_minute=0)

@@ -166,6 +166,16 @@ def test_no_key_means_no_warning(tmp_path):
     assert inputs.api_key_warnings(env={}, home=tmp_path) == ()
 
 
+def test_no_key_runs_without_a_key_warning(runs, capsys, caplog):
+    """Scenario: No key."""
+    with caplog.at_level(logging.WARNING):
+        code = script.main(["--tickers", "SAB"])
+
+    assert code == EXIT_OK and len(runs) == 1
+    assert "WARNING" not in capsys.readouterr().out
+    assert not any(inputs.API_KEY_ENV_VAR in r.getMessage() for r in caplog.records)
+
+
 def test_a_key_in_the_environment_is_warned_about_by_name_never_by_value(runs, capsys, caplog, monkeypatch):
     """Scenario: A key is present."""
     monkeypatch.setenv(inputs.API_KEY_ENV_VAR, SECRET)
