@@ -1,7 +1,7 @@
 # domain-rules Specification
 
 ## Purpose
-TBD - created by archiving change align-rules-with-weekly-brief. Update Purpose after archive.
+Keeps the six non-negotiable domain rules (horizon, display of returns, volatility-relative thresholds, measured reliability, provenance labels, personal use and the no-advice boundary) identical in `CLAUDE.md` and `openspec/config.yaml`, and keeps the single disclaimer source `docs/DISCLAIMER.md` and every verbatim copy of it in step. Any change to a rule needs the owner's approval of the exact text.
 ## Requirements
 ### Requirement: The six domain rules are identical in CLAUDE.md and config.yaml
 `CLAUDE.md` (section "Non-Negotiable Domain Rules") and `openspec/config.yaml` (the "Non-negotiable domain rules" block) SHALL each state exactly six numbered rules, and rule N SHALL read the same in both files after stripping bold, backticks and line wrapping. A change to any rule SHALL be made in both files in the same change, after the owner has approved the exact text, and SHALL name the rule number it touches.
@@ -23,7 +23,7 @@ TBD - created by archiving change align-rules-with-weekly-brief. Update Purpose 
 
 #### Scenario: A copy of the brief disclaimer is added
 - **WHEN** a module adds a copy of the brief disclaimer
-- **THEN** the same change adds a test that compares it with the "Brief disclaimer" section of `docs/DISCLAIMER.md`
+- **THEN** the same change adds a test that compares it with the "Brief version" section of `docs/DISCLAIMER.md`
 
 ### Requirement: The advice relaxation is limited to the investor's own rules
 Rule 6 SHALL apply as relaxed only for the owner's personal, non-commercial use. The tool SHALL NOT produce its own buy, sell or hold label and SHALL NOT make a claim about price direction that has no measured edge against a base rate. Where the tool reports whether a level or rule the investor wrote was reached, the investor's rule text SHALL be shown verbatim and labelled as theirs with its entry date, and the tool's own words in that line SHALL be limited to reached or not reached and the distance. The ban on any figure called Confidence, the provenance labels with the language-model note, and the prompt-injection safeguards SHALL stay in force.
