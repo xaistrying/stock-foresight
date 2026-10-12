@@ -200,10 +200,12 @@ unpatched upstream `vnstock`, and covered by regression tests.
    PyPI's simple index listed both `vnstock` and `vnai` as `quarantined`
    with no files, so `pip install -r backend/requirements.txt` fails with
    "No matching distribution" (checked from a scratch venv, nothing
-   installed). The existing `backend/.venv` holds the only known copy of
-   the pinned versions; the pin test passes, but the fresh-venv check of the
-   pin (task 9.4) and a bump are blocked until the vendor packages are
-   installable again or the wheels are kept somewhere (not done here).
+   installed). Besides `backend/.venv`, a copy of the pinned versions is kept
+   in `~/backups/stock-foresight/vnstock-4.0.5-vnai-2.5.5-site-packages/`
+   (as of 2026-10-12, PyPI still lists both as `quarantined`). Task 9.4 was
+   rewritten to check against that copy; the original fresh-venv check
+   (both pins resolving from PyPI) and a bump stay blocked until the vendor
+   packages are installable again, and the check runs as written then.
 
 ## Uncaught `tenacity.RetryError` for a well-formed ticker with no real data
 
