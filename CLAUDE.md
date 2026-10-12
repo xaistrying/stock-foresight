@@ -34,19 +34,32 @@ rather than silently changing it.
    its `0.5` coefficient are retired with Advice.)
 4. **Reliability is measured, never asserted**: the only reliability
    figure shown is the range hit-rate, measured from price history and
-   labelled as such. The agent vote count is labelled **Agreement**,
-   never Confidence. The band states its nominal coverage; it is not a
-   guaranteed interval.
-5. **Label by provenance**: name each agent for what it reads
-   (Technical Signal, News Context, Macro) and mark language-model
-   text as such. "Market Sentiment" is reserved for the technical
-   proxy (RSI, MACD, Ichimoku) and is never applied to news, macro or
-   a verdict.
-6. **Never frame output as investment advice.** Use "technical
-   observation" framing. Verdict labels contain no buy, sell, hold or
-   other instruction. Show the disclaimer from `docs/DISCLAIMER.md`
-   wherever a verdict, Agreement, a range or agent reasoning is
-   displayed or exported.
+   labelled as such, and no figure is called Confidence. The band
+   states its nominal coverage; it is not a guaranteed interval.
+   Output that carries no measured directional edge says in one fixed
+   sentence that it does not predict direction. While the debate
+   verdict is still displayed, its vote count is labelled **Agreement**.
+5. **Label by provenance**: name each source for what it reads
+   (Technical Signal, News Context, Macro, and any new source by what
+   it reads) and mark language-model text as such. Anything the
+   investor wrote (levels, notes, rules) is labelled as theirs with its
+   entry date. "Market Sentiment" is reserved for the technical proxy
+   (RSI, MACD, Ichimoku) and is never applied to news, macro or a
+   verdict.
+6. **This tool is for the owner's personal, non-commercial use**; if
+   anyone else will use or receive its output, restore the old Rule 6
+   or obtain sign-off first. Output is technical observation and
+   conditions. It makes no unmeasured claim about direction, and the
+   tool never produces its own buy, sell or hold label. Where the tool
+   reports whether a level or rule the investor wrote was reached, the
+   investor's rule text is shown verbatim and labelled as theirs
+   (Rule 5), and the tool's own words in that line are limited to
+   reached or not reached and the distance. Verdict labels contain no
+   buy, sell, hold or other instruction. Show the full disclaimer from
+   `docs/DISCLAIMER.md` wherever a verdict, Agreement or agent
+   reasoning is displayed or exported, and the short brief disclaimer
+   wherever a range or reliability figure is displayed without them;
+   the coverage phrase must match the range's nominal coverage.
 
 ## Open Discussions and Backlog
 

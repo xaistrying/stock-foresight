@@ -17,6 +17,14 @@ into both copies. The tests fail until all three agree. The coverage phrase
 The panel always shows the inline version and puts the full version behind
 "About this analysis"; exported reports end with the full version.
 
+This file holds three texts. The **full** and **inline** texts describe the
+three-agent verdict and are shown wherever a verdict, Agreement or agent
+reasoning is displayed or exported (Rule 6). The **brief** text, at the end of
+this file, is shown wherever only a range or reliability figure is displayed
+(the weekly holdings brief). A copy of the brief text elsewhere in the
+repository needs its own test that compares it with the section below; the
+change that creates the first copy writes that test.
+
 ## Full disclaimer
 
 > This analysis shows technical observations, not investment advice. The
@@ -33,3 +41,7 @@ The panel always shows the inline version and puts the full version behind
 ## Inline version
 
 > Technical observation from automated agents and a statistical range — not investment advice.
+
+## Brief version
+
+> Technical observation, not investment advice. Figures can be wrong or incomplete. "About 2 weeks in 3" is an estimate from price history, not a promise.
