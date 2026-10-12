@@ -3,15 +3,13 @@
 ## Purpose
 
 TBD
-
 ## Requirements
-
 ### Requirement: Debate engine runs three agents in parallel for Round 1
-The engine SHALL invoke TechnicalAgent, NewsAgent, and MacroAgent concurrently (asyncio) for Round 1. Each agent returns a `AgentPosition` object: `{ agent_id, stance, reasoning, degraded_reason }` where `stance ∈ {bull, bear, neutral}`, `reasoning` is a list of 3–5 bullet strings and `degraded_reason` is `null` for a live agent or one of the codes defined by the degraded-agent requirement. The Technical agent's position additionally carries the range fields defined by the `volatility-range` capability. An agent that raises, or that reports it could not form a stance, is **degraded**: it SHALL NOT be given a neutral vote.
+The engine SHALL invoke TechnicalAgent, NewsAgent, and MacroAgent concurrently (asyncio) in one round, named Round 1 in the result (`round1`); there is no second round. Each agent returns a `AgentPosition` object: `{ agent_id, stance, reasoning, degraded_reason }` where `stance ∈ {bull, bear, neutral}`, `reasoning` is a list of bullet strings and `degraded_reason` is `null` for a live agent or one of the codes defined by the degraded-agent requirement. The Technical agent's position additionally carries the range fields defined by the `volatility-range` capability. Only the News agent calls a language model (to read the headlines and give its stance and bullets); the Technical and Macro stances and bullets are computed. An agent that raises, or that reports it could not form a stance, is **degraded**: it SHALL NOT be given a neutral vote.
 
 #### Scenario: All three agents complete Round 1
 - **WHEN** `POST /tickers/{ticker}/debate` is called for an eligible ticker
-- **THEN** all three agents are invoked concurrently and all three positions are collected before Round 2 begins
+- **THEN** all three agents are invoked concurrently, all three positions are collected in `round1`, and the verdict is computed from them with no further agent or language-model call
 
 #### Scenario: One agent fails in Round 1
 - **WHEN** one agent raises an exception or times out during Round 1
@@ -19,33 +17,14 @@ The engine SHALL invoke TechnicalAgent, NewsAgent, and MacroAgent concurrently (
 
 #### Scenario: Two agents fail in Round 1
 - **WHEN** two agents are degraded after Round 1
-- **THEN** Round 2 and the synthesis LLM calls are not made and the result is `INSUFFICIENT_DATA`
+- **THEN** the result is `INSUFFICIENT_DATA`
 
-### Requirement: Debate engine runs a response round (Round 2) in parallel
-After collecting Round 1 positions, the engine SHALL pass each **live** agent its own Round 1 position plus the other positions, and invoke those response calls concurrently. Degraded agents SHALL NOT be called in Round 2. Each live agent returns an updated `AgentPosition` (may differ from Round 1 or remain unchanged). A Round 2 call that raises, returns a blank reply, or returns a reply without a recognisable stance line makes that agent degraded with `degraded_reason: "round2_failed"`: its Round 1 position and a note stay visible in `round2`, but it is excluded from the vote.
-
-#### Scenario: Agent holds its Round 1 position in Round 2
-- **WHEN** an agent's Round 2 prompt does not find a compelling counter-argument
-- **THEN** the Round 2 position has the same `stance` as Round 1 but MAY add a rebuttal to `reasoning`
-
-#### Scenario: Agent shifts stance in Round 2
-- **WHEN** an agent finds a specific counter-argument from another agent compelling
-- **THEN** the Round 2 `stance` MAY differ from Round 1, and `reasoning` MUST explain the shift
-
-#### Scenario: Round 2 call fails
-- **WHEN** the Round 2 call for a live agent raises
-- **THEN** that agent is in `agents_degraded` with `degraded_reason: "round2_failed"`, its `round2` entry shows its Round 1 stance and reasoning plus "Round 2 unavailable — Round 1 position kept, not counted in the vote.", and it does not vote
-
-#### Scenario: Unrecognised Round 2 stance
-- **WHEN** a Round 2 reply has no recognisable stance line
-- **THEN** the call is treated as failed (`round2_failed`), not as a kept stance
-
-#### Scenario: LLM provider down
-- **WHEN** every LLM call fails
-- **THEN** News is degraded (`llm_failed`) in Round 1, Technical and Macro are degraded (`round2_failed`) in Round 2, and the verdict is `INSUFFICIENT_DATA`
+#### Scenario: Only News calls a language model
+- **WHEN** a run completes for an eligible ticker
+- **THEN** the only language-model call made is the News agent's, and the Technical and Macro agents construct no language-model client
 
 ### Requirement: Debate engine produces a structured `DebateResult` object
-After synthesis, the engine SHALL return a `DebateResult`:
+After the vote, the engine SHALL return a `DebateResult`:
 ```
 {
   ticker, as_of, data_as_of, data_age_sessions,
@@ -53,26 +32,25 @@ After synthesis, the engine SHALL return a `DebateResult`:
   eligibility: { eligible, reasons },
   agents_degraded,
   round1: { technical, news, macro },
-  round2: { technical, news, macro },
-  synthesis: { verdict, agreement_level, key_tension, reasoning },
   range_5s_pct, sigma_daily_pct, range_coverage,
   duration_ms
 }
 ```
+The result has no `round2` and no `synthesis` (no key tension and no synthesis text).  
 `verdict ∈ {STRONG_BUY_SIGNAL, BUY_SIGNAL, OBSERVE, CAUTION_SIGNAL, STRONG_CAUTION_SIGNAL, SPLIT, INSUFFICIENT_DATA}`  
 `agreement_level ∈ {unanimous, majority, split, none}` (`none` only with `INSUFFICIENT_DATA`)  
-`agents_degraded` is the list of degraded agent ids in the order technical, news, macro; each position in `round1` and `round2` carries `degraded_reason`. `range_5s_pct`, `sigma_daily_pct` and `range_coverage` (the nominal coverage of the band, `null` when the range is uncalibrated or unavailable) are defined by the `volatility-range` capability (they replace `volatility_range_pct`); the Technical agent's position carries the same three fields. With three live agents the verdict follows the stance mapping below; verdicts for fewer live agents are defined by the `debate-synthesiser` capability.
+`agents_degraded` is the list of degraded agent ids in the order technical, news, macro; each position in `round1` carries `degraded_reason`. `range_5s_pct`, `sigma_daily_pct` and `range_coverage` (the nominal coverage of the band, `null` when the range is uncalibrated or unavailable) are defined by the `volatility-range` capability (they replace `volatility_range_pct`); the Technical agent's position carries the same three fields. With three live agents the verdict follows the stance mapping below; verdicts for fewer live agents are defined by the `debate-synthesiser` capability.
 
 #### Scenario: All agents agree bullish
-- **WHEN** all three Round 2 stances are `bull` and no agent is degraded
+- **WHEN** all three Round 1 stances are `bull` and no agent is degraded
 - **THEN** `verdict = STRONG_BUY_SIGNAL`, `agreement_level = unanimous`, `agents_degraded = []`
 
 #### Scenario: Two agents agree, one dissents
-- **WHEN** two Round 2 stances are `bull` and one is `bear` or `neutral`, all three live
+- **WHEN** two Round 1 stances are `bull` and one is `bear` or `neutral`, all three live
 - **THEN** `verdict = BUY_SIGNAL`, `agreement_level = majority`
 
 #### Scenario: Agents split with no majority direction
-- **WHEN** Round 2 stances are one of each (`bull`, `neutral`, `bear`)
+- **WHEN** Round 1 stances are one of each (`bull`, `neutral`, `bear`)
 - **THEN** `verdict = SPLIT`, `agreement_level = split`
 
 #### Scenario: Range fields on the result
@@ -80,8 +58,12 @@ After synthesis, the engine SHALL return a `DebateResult`:
 - **THEN** the result carries `range_5s_pct`, `sigma_daily_pct` and `range_coverage`; when it is uncalibrated `range_coverage` is `null`, and on an `INSUFFICIENT_DATA` result all three are `null`
 
 #### Scenario: Two neutral and one directional
-- **WHEN** two Round 2 stances are `neutral` and one is `bull` or `bear`, all three live
+- **WHEN** two Round 1 stances are `neutral` and one is `bull` or `bear`, all three live
 - **THEN** `verdict = OBSERVE`, `agreement_level = majority` (the directional stance is not enough for a directional verdict)
+
+#### Scenario: No second round and no synthesis in the result
+- **WHEN** a result is serialised for a completed run
+- **THEN** it has a `round1` object and no `round2` key and no `synthesis` key
 
 ### Requirement: Debate endpoint is `POST /tickers/{ticker}/debate`
 The API SHALL expose `POST /tickers/{ticker}/debate` returning a `DebateResult` JSON. The endpoint requires the ticker to be loaded (features exist); returns HTTP 404 if not loaded, HTTP 503 if feature computation failed.
@@ -92,10 +74,10 @@ The API SHALL expose `POST /tickers/{ticker}/debate` returning a `DebateResult` 
 
 #### Scenario: Analysis completes successfully
 - **WHEN** `POST /tickers/{ticker}/debate` is called for a loaded ticker
-- **THEN** HTTP 200 is returned with a complete `DebateResult` object including all round positions and synthesis
+- **THEN** HTTP 200 is returned with a complete `DebateResult` object including the `round1` positions, and with no `round2` and no `synthesis`
 
 ### Requirement: Ineligible tickers return INSUFFICIENT_DATA without running agents
-Before any agent runs, `POST /tickers/{ticker}/debate` SHALL call `assess_eligibility` (after the existing 404 and 503 checks). When the ticker is not eligible it SHALL return HTTP 200 with `verdict = INSUFFICIENT_DATA`, `agreement_level = none`, `eligibility` (with every reason), `data_as_of`, `data_age_sessions`, empty `round1`, `round2` and `agents_degraded`, null range fields, and empty `synthesis.key_tension` and `synthesis.reasoning`. It SHALL make no LLM call, no market-data fetch, and SHALL NOT write a report file.
+Before any agent runs, `POST /tickers/{ticker}/debate` SHALL call `assess_eligibility` (after the existing 404 and 503 checks). When the ticker is not eligible it SHALL return HTTP 200 with `verdict = INSUFFICIENT_DATA`, `agreement_level = none`, `eligibility` (with every reason), `data_as_of`, `data_age_sessions`, empty `round1` and `agents_degraded`, and null range fields. It SHALL make no LLM call, no market-data fetch, and SHALL NOT write a report file.
 
 #### Scenario: Stale ticker
 - **WHEN** the ticker's `age_sessions` is 21
@@ -129,7 +111,7 @@ Before any agent runs, `POST /tickers/{ticker}/debate` SHALL call `assess_eligib
 - **THEN** `as_of = "2026-10-02"` and `data_age_sessions` reflects the difference
 
 ### Requirement: Degraded agents are defined by an untrustworthy stance, not by failed prose
-An agent is degraded when its stance, not just its wording, cannot be trusted. `degraded_reason` SHALL be one of: `agent_error` (the agent raised in Round 1), `no_input` (nothing to form a stance from), `llm_failed` (a stance that only the LLM can supply failed or had no recognisable stance line, Round 1), `round2_failed` (see Round 2). Technical: no usable indicator is `no_input`. News: every feed failing, or no headlines, is `no_input`; the LLM raising, or a reply with no recognisable stance line, is `llm_failed`. Macro: no counted signal is `no_input`. An LLM failure that only affects the written bullets of Technical or Macro SHALL NOT degrade the agent, and Technical's fallback bullets SHALL state the computed indicator values rather than claim the data is unavailable.
+An agent is degraded when its stance, not just its wording, cannot be trusted. `degraded_reason` SHALL be one of: `agent_error` (the agent raised), `no_input` (nothing to form a stance from), `llm_failed` (a stance that only the LLM can supply failed or had no recognisable stance line). Technical: no usable indicator is `no_input`. News: every feed failing, or no headlines, is `no_input`; the LLM raising, or a reply with no recognisable stance line, is `llm_failed`. Macro: no counted signal is `no_input`. The Technical and Macro agents make no language-model call, so neither can be `llm_failed`, and each states its computed values as its reasoning.
 
 #### Scenario: News LLM fails
 - **WHEN** headlines were fetched but the News LLM call raises
@@ -143,10 +125,11 @@ An agent is degraded when its stance, not just its wording, cannot be trusted. `
 - **WHEN** every news feed fails
 - **THEN** News is degraded with `no_input`
 
-#### Scenario: Technical prose fails, stance computed
-- **WHEN** the indicators give `bull` but the LLM call raises
-- **THEN** the Technical agent stays live with stance `bull` and reasoning bullets listing the computed values
+#### Scenario: Technical stance computed with no model
+- **WHEN** the indicators give `bull`
+- **THEN** the Technical agent is live with stance `bull` and reasoning bullets listing the computed values, and no language-model call was made
 
 #### Scenario: No technical indicator
 - **WHEN** RSI, MACD histogram and Tenkan/Kijun are all null
 - **THEN** the Technical agent is degraded with `no_input`
+

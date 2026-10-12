@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD
-
 ## Requirements
-
 ### Requirement: Macro Agent computes quantitative macro signals from vnstock data
 The MacroAgent SHALL compute four signals entirely from vnstock API data (the 4.x `Market` API) or the existing OHLCV table — no scraping, no LLM data fetching:
 1. VN-Index 20-session price trend (slope sign: up/flat/down)
@@ -24,7 +22,7 @@ Each signal maps to a partial stance contribution. The overall stance is majorit
 - **THEN** stance is `neutral` or `bear` depending on majority; reasoning cites which signals conflict
 
 ### Requirement: Macro Agent falls back gracefully when VN-Index is not in OHLCV
-The MacroAgent SHALL check whether `VNINDEX` is present in the `ohlcv` table. If not, it SHALL fetch VN-Index data via the vnstock market API before computing the trend signal. If the fetch also fails, VN-Index trend is excluded from the stance vote and the reasoning notes its absence.
+The MacroAgent SHALL check whether `VNINDEX` is present in the `ohlcv` table. If not, it SHALL fetch VN-Index data via the vnstock market API before computing the trend signal. If the fetch also fails, VN-Index trend is excluded from the stance vote and the reasoning lists the signal as unavailable.
 
 #### Scenario: VNINDEX not in local OHLCV
 - **WHEN** `VNINDEX` has no rows in the `ohlcv` table
@@ -32,10 +30,10 @@ The MacroAgent SHALL check whether `VNINDEX` is present in the `ohlcv` table. If
 
 #### Scenario: VN-Index data completely unavailable
 - **WHEN** local OHLCV has no VNINDEX rows and the vnstock API call also fails
-- **THEN** VN-Index trend is omitted from the stance calculation; stance is derived from the remaining 3 signals; reasoning notes "VN-Index data unavailable"
+- **THEN** VN-Index trend is omitted from the stance calculation; stance is derived from the remaining 3 signals; reasoning lists `VN-Index trend: unavailable`
 
 ### Requirement: Macro Agent foreign flow is market-wide, latest-session, and degrades to unavailable
-The free vnstock API provides no foreign-flow history and no per-ticker foreign-trade series, so the MacroAgent SHALL derive signal 4 from one price-board request for the sample of large caps and describe it as market-wide, latest session. The price board's foreign values are cumulative-so-far during the session and still move after the close, so the signal SHALL be shown to the LLM at all times but SHALL cast a vote only once the board has settled: on a weekday, not before 15:15 Vietnam time (UTC+7); on a weekend the last session's figure counts. Until then it SHALL be labelled provisional ("session in progress or just closed, not counted in the stance vote"); once settled, "latest session, final". The MacroAgent SHALL read the clock before starting the fetch, and the clock value MUST be timezone-aware. When the signal is unavailable it SHALL cast no vote and the reasoning SHALL say it is unavailable; failures SHALL log a warning once per process and thereafter at debug level.
+The free vnstock API provides no foreign-flow history and no per-ticker foreign-trade series, so the MacroAgent SHALL derive signal 4 from one price-board request for the sample of large caps and describe it as market-wide, latest session. The price board's foreign values are cumulative-so-far during the session and still move after the close, so the signal SHALL be shown in the reasoning at all times but SHALL cast a vote only once the board has settled: on a weekday, not before 15:15 Vietnam time (UTC+7); on a weekend the last session's figure counts. Until then it SHALL be labelled provisional ("session in progress or just closed, not counted in the stance vote"); once settled, "latest session, final". The MacroAgent SHALL read the clock before starting the fetch, and the clock value MUST be timezone-aware. When the signal is unavailable it SHALL cast no vote and the reasoning SHALL say it is unavailable; failures SHALL log a warning once per process and thereafter at debug level.
 
 #### Scenario: Net foreign selling after the board has settled
 - **WHEN** the summed foreign net value is -90B VND of 640B gross turnover (-14%) at 16:00 on a weekday
@@ -76,17 +74,6 @@ The MacroAgent SHALL run its market-data fetches off the event loop, in parallel
 - **WHEN** vnai's rate limiter calls `sys.exit()` during a fetch
 - **THEN** the fetch returns unavailable and the server keeps running
 
-### Requirement: Macro Agent uses LLM only to translate computed signals into readable reasoning
-The MacroAgent SHALL pass the four computed signal values to an LLM with a prompt instructing it to produce plain-language bullet reasoning from those values. The LLM MUST NOT be used to fetch or independently assess macro conditions — it translates already-computed numbers into readable bullets only. The prompt MUST describe signal 2 as the ticker's own return and signal 4 as market-wide and latest-session. The prompt MUST tell the model that a signal marked "not counted in the stance vote" is provisional context and that it MUST NOT infer a direction from it, and the Round 2 prompt MUST tell the model that a position resting on provisional or partial data must not move a stance.
-
-#### Scenario: LLM produces reasoning from computed signals
-- **WHEN** VN-Index 20-session slope is +2.3%, the ticker's relative return is +1.1%, USD/VND -0.3%, market-wide foreign flow is net +12B VND
-- **THEN** reasoning includes 3–4 bullets translating these values into plain language without inventing additional macro context
-
-#### Scenario: Provisional signal gets no direction
-- **WHEN** the foreign-flow figure is marked "not counted in the stance vote"
-- **THEN** the reasoning may mention its size but does not call it bullish or bearish, and the prompt for Round 2 states that provisional data must not move a stance
-
 ### Requirement: Macro Agent compares the ticker and VN-Index over the same dates
 Signal 2 (the ticker's own return relative to VN-Index) SHALL be computed over the two dates `d_first` and `d_last`, the dates of the ticker's 20th-latest and latest stored closes. The VN-Index return SHALL use the VN-Index closes dated exactly `d_first` and `d_last`. Both series SHALL keep their dates; alignment by list position is not permitted. If the VN-Index data has no close on either date (a window the fetched range does not cover, or a calendar mismatch), the window is mismatched: signal 2 SHALL cast no vote and the reasoning SHALL state that the ticker window `<d_first>..<d_last>` is not covered by the VN-Index data. When it is computed, the signal text SHALL include both dates.
 
@@ -120,3 +107,23 @@ When none of the four signals casts a vote, the MacroAgent SHALL return a positi
 #### Scenario: One counted signal
 - **WHEN** exactly one signal votes
 - **THEN** the Macro position is live with the stance from that vote
+
+### Requirement: Macro Agent reasoning lists the computed signal values (Rule 5)
+The MacroAgent SHALL produce `reasoning` as one bullet per signal, in this order: `VN-Index trend: <value>`, `Relative performance: <value>`, `USD/VND: <value>`, `Market foreign flow (latest session): <value>`, where `<value>` is the signal text the agent computed or `unavailable`. The relative-performance value SHALL describe the ticker's own return against VN-Index over the two stated dates and SHALL NOT call it a sector comparison; the foreign-flow value SHALL describe a market-wide, latest-session figure and, when it is provisional, SHALL carry the provisional label and no direction word. The MacroAgent SHALL NOT call a language model, and its bullets are computed values, not model-written text (Rule 5).
+
+#### Scenario: Every signal has a line
+- **WHEN** the four signals are computed
+- **THEN** reasoning has four bullets in the stated order, each with its value
+
+#### Scenario: Provisional signal gets no direction
+- **WHEN** the foreign-flow figure is marked "not counted in the stance vote"
+- **THEN** its bullet states its size and the provisional label and does not call it bullish or bearish
+
+#### Scenario: A window the index does not cover
+- **WHEN** the VN-Index data has no close on the ticker's `d_first`
+- **THEN** the relative-performance bullet reads `unavailable` and names the ticker window `<d_first>..<d_last>` as not covered by the VN-Index data, and signal 2 casts no vote
+
+#### Scenario: No model is needed
+- **WHEN** the agent runs while every language-model call would raise
+- **THEN** it returns its position with the four bullets and is not degraded
+

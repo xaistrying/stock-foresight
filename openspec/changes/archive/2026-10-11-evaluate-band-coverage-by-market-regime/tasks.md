@@ -40,4 +40,4 @@
 
 - [x] 6.1 Run `openspec validate evaluate-band-coverage-by-market-regime` and fix what it reports
 - [x] 6.2 Confirm the rules by reading the diff: Rule 1 (the outcome is still `build_window_frame`'s 5-session `r5`), Rule 4 (no reliability figure reaches an API, UI or export), Rules 2, 3, 5 and 6 (nothing displayed; no model text; the header line carries the two labels), and that no rule text was edited
-- [ ] 6.3 When the owner asks, sync the delta spec to `openspec/specs/band-coverage-regime-evaluation/` and archive the change
+- [x] 6.3 When the owner asks, sync the delta spec to `openspec/specs/band-coverage-regime-evaluation/` and archive the change

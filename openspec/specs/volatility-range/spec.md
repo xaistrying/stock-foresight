@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD
-
 ## Requirements
-
 ### Requirement: The displayed range is a calibrated 5-session band (Rule 1, Rule 2)
 The system SHALL compute `sigma_daily_pct`, the HAR-RV forecast of the daily standard deviation of log returns in percent (`exp(pred) × 100`), and from it the displayed band half-width `range_5s_pct = range_k × √5 × sigma_daily_pct`, in percent, for a horizon of 5 TRADING SESSIONS (Rule 1; a session is one stored OHLCV row, as in `compute_target`). `sigma_daily_pct` MUST NOT be labelled as a 5-session figure anywhere. `range_k` is the multiplier stored in the model artifact, fitted so that the band contains `|ln(close[t+5]/close[t])| × 100` with the artifact's nominal coverage `range_coverage` (0.68). The UI MUST show a percentage, never a raw log value (Rule 2). The band is called "typical 5-session move" and is described as a size, not a direction, a ceiling or a prediction.
 
@@ -128,7 +126,7 @@ The HAR-RV model SHALL be stored in `backend/data/models/har_rv_model.json` cont
 
 #### Scenario: Debate response shape
 - **WHEN** a debate completes for a ticker with status `ok`
-- **THEN** the JSON has `range_5s_pct`, `sigma_daily_pct` and `range_coverage` at the top level and in `round1.technical` and `round2.technical`, and no `volatility_range_pct` key anywhere
+- **THEN** the JSON has `range_5s_pct`, `sigma_daily_pct` and `range_coverage` at the top level and in `round1.technical`, has no `round2` key, and has no `volatility_range_pct` key anywhere
 
 #### Scenario: No band served
 - **WHEN** the range status is `range_out_of_bounds` or `model_unavailable`
@@ -144,3 +142,4 @@ The HAR-RV model SHALL be stored in `backend/data/models/har_rv_model.json` cont
 #### Scenario: Review figures are reproduced or flagged
 - **WHEN** the script runs against the shipped pickle
 - **THEN** it prints in-sample coverage over the modelling universe at ×1 and ×√5 next to the review's figures (32.3% and 61.0% on 385,909 windows) so a difference is visible
+

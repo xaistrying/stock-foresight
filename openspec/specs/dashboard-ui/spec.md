@@ -3,9 +3,7 @@
 ## Purpose
 
 TBD
-
 ## Requirements
-
 ### Requirement: Chart panel shows an OHLCV legend for the hovered or most recent session
 The chart panel SHALL display a fixed-position legend showing that
 session's Open, High, Low, Close, and Volume values. The legend SHALL
@@ -114,7 +112,7 @@ The dashboard SHALL render a fixed topbar (brand, the one ticker search, a theme
 - **THEN** the page scrolls so the element is not covered by the fixed topbar
 
 ### Requirement: Layout mode follows the viewport width and each component renders in one place
-The dashboard SHALL choose one layout mode from the viewport width: `wide` (1440 px and up), `collapsed` (1144 to 1439 px), `drawer` (768 to 1143 px) or `phone` (below 768 px). The breakpoints in the stylesheet and in the script that selects the mode SHALL be equal, and a test SHALL fail if they differ. In `collapsed` mode the Rail SHALL be `--rail-w-min` (56 px) wide and show symbols only. In `drawer` mode the Rail SHALL be a drawer opened from a "Tickers" button in the topbar, and the Verdict panel SHALL be a full-width strip between the chart and the Debate matrix: the typical move and its range check at the left, the verdict with Agreement and the stance chips in the middle, Key tension at the right, and Synthesis in a full-width row under them. In `phone` mode the page SHALL be one column ordered: the typical move and its range check, the chart (240 px high, the chart history control above it), the verdict with Agreement, Key tension, Synthesis, then the Debate matrix as three tabs. The Debate matrix SHALL keep three columns down to 768 px, each at least 220 px wide. A component whose content is the only place a figure may appear (the range check, Key tension, the disclaimer) SHALL be rendered once in every mode, never twice with one hidden.
+The dashboard SHALL choose one layout mode from the viewport width: `wide` (1440 px and up), `collapsed` (1144 to 1439 px), `drawer` (768 to 1143 px) or `phone` (below 768 px). The breakpoints in the stylesheet and in the script that selects the mode SHALL be equal, and a test SHALL fail if they differ. In `collapsed` mode the Rail SHALL be `--rail-w-min` (56 px) wide and show symbols only. In `drawer` mode the Rail SHALL be a drawer opened from a "Tickers" button in the topbar, and the Verdict panel SHALL be a full-width strip between the chart and the Debate matrix: the typical move and its range check at the left, the verdict with Agreement and the stance chips at the right, and the data line, the report-saved line and the disclaimer in a full-width row under them. In `phone` mode the page SHALL be one column ordered: the typical move and its range check, the chart (240 px high, the chart history control above it), the verdict with Agreement and the stance chips, then the Debate matrix as three tabs. The Debate matrix SHALL keep three columns down to 768 px, each at least 220 px wide. A component whose content is the only place a figure may appear (the range check, the disclaimer) SHALL be rendered once in every mode, never twice with one hidden.
 
 #### Scenario: Collapsed Rail keeps three Debate columns
 - **WHEN** the viewport is 1144 px wide with a ticker selected and a result present
@@ -122,7 +120,7 @@ The dashboard SHALL choose one layout mode from the viewport width: `wide` (1440
 
 #### Scenario: Drawer mode moves the Verdict panel between chart and Debate
 - **WHEN** the viewport is 900 px wide
-- **THEN** the Verdict panel is a strip in the flow after the chart and before the Debate matrix, and the Rail is reachable only through the topbar "Tickers" button
+- **THEN** the Verdict panel is a strip in the flow after the chart and before the Debate matrix with the range block at the left and the verdict at the right, and the Rail is reachable only through the topbar "Tickers" button
 
 #### Scenario: Phone mode puts the typical move first
 - **WHEN** the viewport is 390 px wide and a ticker with a served band is selected
@@ -130,7 +128,7 @@ The dashboard SHALL choose one layout mode from the viewport width: `wide` (1440
 
 #### Scenario: One copy of each single-place element
 - **WHEN** the dashboard renders in each of the four modes with a result present
-- **THEN** the range check text, the Key tension text and the inline disclaimer each occur exactly once in the Verdict panel in every mode
+- **THEN** the range check text and the inline disclaimer each occur exactly once in the Verdict panel in every mode
 
 #### Scenario: Breakpoints cannot drift
 - **WHEN** the breakpoint constants in the layout script are compared with the `@media` widths in the layout stylesheet
@@ -395,7 +393,7 @@ The dashboard's colours, type styles, spacing, radii and layout sizes SHALL come
 - **THEN** it contains no link to a font host
 
 ### Requirement: Token colour pairs meet the contrast the design claims
-Every foreground and background pair the design relies on SHALL meet its contrast ratio in both themes, measured on the dashboard's actual stylesheet: 4.5:1 for text (ink and muted ink on each of the three surfaces; accent text on the page and panel surfaces; the on-accent text on the accent fill; up and down ink on the panel surface and on their own tinted backgrounds; the Key tension body text on the warn ink and the Key tension label text on the warn border colour, each on the warn background) and 3:1 for non-text (the strong line on the page and panel surfaces; the candle colours on the panel surface; the focus ring on every surface it appears on). A test SHALL compute these ratios from the stylesheet's token values and fail if any pair falls below its requirement.
+Every foreground and background pair the design relies on SHALL meet its contrast ratio in both themes, measured on the dashboard's actual stylesheet: 4.5:1 for text (ink and muted ink on each of the three surfaces; accent text on the page and panel surfaces; the on-accent text on the accent fill; up and down ink on the panel surface and on their own tinted backgrounds; the warn ink and the warn border colour on the warn background, which are the design's tokens for a notice and which no element uses while Key tension is removed) and 3:1 for non-text (the strong line on the page and panel surfaces; the candle colours on the panel surface; the focus ring on every surface it appears on). A test SHALL compute these ratios from the stylesheet's token values and fail if any pair falls below its requirement.
 
 #### Scenario: Contrast is computed from the real stylesheet
 - **WHEN** the contrast test reads the dashboard's token stylesheet
@@ -404,6 +402,10 @@ Every foreground and background pair the design relies on SHALL meet its contras
 #### Scenario: A token edit that breaks a pair fails the test
 - **WHEN** a text token is changed so that its ratio on a surface drops below 4.5:1
 - **THEN** the contrast test fails and names the pair and the theme
+
+#### Scenario: No element uses the warn tokens
+- **WHEN** the component stylesheets are read
+- **THEN** none of them refers to a `--warn-` token
 
 ### Requirement: No Rail, Stage or Verdict element implies direction except stance and verdict marks
 The up and down colours, the `↑`, `↓` and `→` glyphs and the words Bullish and Bearish SHALL appear only on stance chips, verdict badges and agent-card headings, always as the glyph together with the word (Rule 6), and the chart's candle and volume marks SHALL use the candle colours, but the OHLCV legend's value text SHALL use the primary ink with a colour swatch in the candle colour, and candle colours SHALL NOT be used as text colour anywhere. Nowhere else SHALL the dashboard show a signed or "predicted" return, a target price, a projected candle or point, a status or freshness dot, `▲` or `▼`, or the word "Confidence" in any case for a vote count or a reliability figure (Rule 4). Error and notice text SHALL carry no up or down colour and SHALL name the failure in words. A test SHALL render every Verdict state and the Rail and fail on any of these.
@@ -471,3 +473,4 @@ Every interactive element SHALL show a 2 px solid accent outline with a 2 px off
 #### Scenario: Keyboard-only walkthrough
 - **WHEN** a keyboard user, starting at the topbar, selects a ticker, presses Analyse and expands an agent card
 - **THEN** each step is reachable with Tab, Shift+Tab, Enter, Space and the arrow keys, and no step needs a pointer
+
