@@ -4,8 +4,11 @@ import { DEBATE_CLIENT_TIMEOUT_MS } from '../api/tickers'
 // Pure text and display rules for the Verdict panel and the Debate matrix, moved out of the earlier
 // single debate component unchanged in behaviour, except where the new layout changed what they say.
 
-/** The sentence "Analysis takes about N seconds." uses this, from one place (design Open Question 9). */
-export const TYPICAL_ANALYSIS_SECONDS = 45
+/**
+ * The sentence "Analysis takes about N seconds." uses this, from one place (design Open Question 9).
+ * Measured 2026-10-11/12: three runs, `claude_cli` / `sonnet`, 7.4 to 9.8 s (one stage, one call); the slowest, rounded up.
+ */
+export const TYPICAL_ANALYSIS_SECONDS = 10
 
 // Verdict display config. Labels are non-transactional (Rule 6); the keys are the API enum. `arrow` is
 // shown only for a directional lean, `tone` picks the badge's look.
