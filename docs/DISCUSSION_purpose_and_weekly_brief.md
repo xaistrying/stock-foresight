@@ -900,7 +900,7 @@ Cost note: the 35 readers used about 61,000 tokens each, around 2.1 million toke
 **Check run for edit 9 (announcement tags; read-only, 2026-10-11)**
 - The structured events feed already records insider and major-shareholder trades: category
   `MAJOR_SHAREHOLDER_TRADING`, event codes `DDIND`, `DDINS`, `DDRP`, with an action type ("Buy" or "Sell"),
-  a start and end date, and the quantity inside the title ("Phạm Thị Nhung - Đăng kí Mua 30,000,000 VPB",
+  a start and end date, and the quantity inside the title ("<name> - Đăng kí Mua 30,000,000 <TICKER>",
   where "Đăng kí" means registered). So this tag comes from the event record, not from keywords, and
   "registered, planned" can be stated. The 100 stored news titles for SAB and VPB contain no such item.
   VPB has such events (the engineering review counted 35 of its 50 stored event rows as insider rows; I
@@ -910,7 +910,7 @@ Cost note: the 35 readers used about 61,000 tokens each, around 2.1 million toke
   comes from is open.
 - A provisional keyword classifier (script in the scratchpad, not in the repo) assigned a class to 97 of
   the 100 stored news titles; **only coverage was checked, not whether each class is right.** The three
-  unclassified included "SAB: Thông báo nhận được Quyết định xử phạt của Cơ quan thuế" (a tax-authority
+  unclassified included "<TICKER>: notice of receiving a tax-authority penalty decision" (a tax-authority
   penalty decision), which is the kind of item a "routine" label would bury.
 - Design consequences: never use a "routine" label. My provisional "routine administrative" keyword bucket
   caught 43 of the 100 titles, and it includes board resolutions (`Nghị quyết HĐQT`), which can carry real
@@ -918,7 +918,7 @@ Cost note: the 35 readers used about 61,000 tokens each, around 2.1 million toke
   registration, share issue or capital change, dividend, shareholder meeting, results, personnel or
   disclosure officer) and show everything else as "other announcement, not classified: read the notice".
   A title that starts with the ticker and a colon is a company filing; others are press and may concern
-  another company ("Bia Sài Gòn - Miền Trung (SMB)" appears under SAB).
+  another company (a press item naming a different company appears under SAB).
 
 **v5.1 template**
 
@@ -1557,8 +1557,8 @@ Share issue ex 2026-09-24, 10 new shares per 100 held. Your shares after it: 1,1
 
 ```
 For information:
-  2026-10-08 · Other announcement, not classified; the title gives no amount · SAB: Thông báo nhận được
-  Quyết định xử phạt của Cơ quan thuế
+  2026-10-08 · Other announcement, not classified; the title gives no amount · <TICKER>: notice of receiving
+  a tax-authority penalty decision
   The title does not give the amount; the notice does.
 ```
 
@@ -1629,9 +1629,10 @@ shows no active change.
 | Order | Change | Holds | Depends on | Status |
 |---|---|---|---|---|
 | 1 | `add-weekly-holdings-brief` (N1) | Core script: holdings file outside the repo plus a `.gitignore` line, refresh before computing, band in VND, the week just ended and whether last week's range held, issued-brief log, the investor's levels checked against the Friday close, fixed sentences, output not under `reports/`, no model call. Also `--redact` mode, the brief-disclaimer guard test, narrowing `TRANSACTION_VERBS`, re-reading the three agents. | R1 (done) | Next; not started |
-| 2 | `add-dividends-and-share-count-block` (N2) | Dividend list and per-share total, share-issue handling, the net line. Amends the company-feed spec and its isolation test, which forbid outside consumers. | N1 | Not started |
-| 3 | `add-announcement-tags-and-insider-sizing` (N3) | Type tags, "needs a look" versus "for information", insider event parsing, shares outstanding from `ratio_summary()` cross-checked with `overview()`, benchmark and fallback, source-health line. | N1, N2 | Not started |
-| any | `evaluate-band-against-trailing-stdev` (E1) | Read-only study with a kill criterion stated first; the band may be no better than a plain trailing-stdev band (0.431 vs 0.424). | none | Not started; can run in parallel |
+| 2 | `add-dividend-and-ex-date-lines` (N2a) | **Split from N2 on 2026-10-12** (see "N1 and N2 shaping session" at the end). One feed adapter, dividend list since purchase, ex-date and share-issue lines with the shifted range, feed "last fetched" line, "level set before ex-date" note, the count-changing-issue rule, the week-1 recompute fallback. Amends the company-feed spec and its isolation test. | N1 | Not started |
+| 2b | `add-dividend-totals-and-share-count` (N2b) | Net line, dividends times running share count, share count and cost per share after an issue. | N2a, 4-week check | Gated (owner may pull forward) |
+| 3 | `add-announcement-tags-and-insider-sizing` (N3) | Type tags, "needs a look" versus "for information", insider event parsing, shares outstanding from `ratio_summary()` cross-checked with `overview()`, benchmark and fallback, source-health line. | N1, N2a (not N2b) | Not started |
+| any | `evaluate-band-against-trailing-stdev` (E1) | Read-only study with a kill criterion stated first; the band may be no better than a plain trailing-stdev band (0.431 vs 0.424). | none | **Run 2026-10-12** (208 symbols, 2020 to 2026, 334,341 windows). Against the trailing 20-session band: `NOT_BETTER` (relative gain +0.6%, 97.5% month-block interval -0.4% to +1.7%, so the study neither shows the HAR band better nor the trailing band better; the pre-registered 2% margin is ruled out). Against the fitted constant band: `HAR_BETTER` (+9.0%, +7.0% to +11.1%, positive in 7 of 7 years). Per the pre-registered consequence this allows a follow-up change that swaps in the simpler trailing band, only if the owner decides; it does not stop the weekly brief. Detail: the change's `design.md` ("Result" and "Decision record") and `docs/MODEL_CARD.md`. |
 | gate | `retire-debate-engine-and-verdict-ui` (C1) | Removes the debate engine and verdict UI; needs a band-only log writer first; must also delete the Agreement clause of Rule 4 and the "agreement label is transitional" requirement. | 4-week check | Waiting |
 | gate | `archive-experiments-and-dead-model` (C2) | Small cleanup of the retired XGBoost code and one-off scripts. Scope is a guess from file names only: `backend/app/ml/training.py`, `feature_engineering.py`, `docs/MODEL_CARD.md`, and the one-off scripts in `backend/scripts/`. HAR-RV (`volatility.py`, `train_har_rv.py`) stays. Needs a read-only inventory of what imports what before it is written. | 4-week check | Waiting |
 
@@ -1700,3 +1701,201 @@ over the modelled tickers the band is no better than a constant ±2.5% range or 
 - Decision 8 (foreign-flow snapshots) is not simply missing from the proposals. The review revised it to
   "defer" and every brief draft from v5 on lists it as deferred. What is missing is the owner's recorded
   confirmation of the deferral; see decision 8 above.
+
+### N1 and N2 shaping session (added 2026-10-12)
+
+**Decided by the owner**
+- N2 is split into N2a and N2b (status table). N2b waits for the 4-week check unless the owner pulls it forward. N3's
+  fallback needs only N2a's count-changing-issue rule.
+- Holdings live in a TOML file outside the repo (file mode 600, directory 700), never in `app.db` or any database
+  (`app.db` is rebuildable, pytest's lifespan runs against the real file, the API has no auth). The issued-brief log is
+  a JSONL file in the same directory. Neither is under `reports/`.
+- The redacted copy (`--redact`) keeps tickers and drops everything derived from holdings.
+- Week-1 recompute: percent only, labelled "recomputed today from prices up to <date>; not an issued range", never
+  written to the issued-brief log. **Placed in N2a, not N1**, because of the test below. N1 prints "first brief: no
+  previous range".
+
+**Measured 2026-10-12 (read-only; scripts were in the scratchpad, not the repo)**
+- Recompute against issued bands: for 6 distinct ticker and date pairs in `debate_log` (SAB 10-07, 10-08, 10-09; VPB
+  10-05, 10-07; ABS 10-07) the band recomputed from today's stored closes up to `as_of`, with the current model, equals
+  the issued band to two decimals. A constant rescale of earlier closes cannot change log returns, so a later ex-date
+  does not change the band percentage.
+- Ex-date after the issue (SAB ex 2026-07-28, 3,000 VND; raw prev close implied 46.60, factor 0.9356): band percentage
+  identical (2.77 and 2.71), but the recomputed VND range is 6.4% lower than the one an investor would have seen
+  (as_of 07-23: 45.69 to 48.30 issued, 42.75 to 45.19 recomputed), and for the window containing the ex-date the board
+  move was -7.65% (outside the band) against -1.30% (inside) in adjusted terms. **A recompute or an adjusted-space
+  comparison reports "inside" for a week where the broker shows a large fall, unless the ex-date is stated.** Detecting
+  the ex-date needs the feed, so the fallback and the dividend-aware wording of THE WEEK JUST ENDED belong to N2a; N1
+  compares in adjusted return space (stored closes) and does not claim more.
+- Retrain: the model's per-year fold `k` ranges 1.186 to 1.260 (served 1.1927); SAB's latest band would be 2.68% to
+  2.84% against 2.69% served. Small, nonzero. The issued-brief log should store the model version (`debate_log` stores
+  `model_sha256`).
+- Provisional close: VPB 2026-10-05 has two logged rows with closes 22.90 and 23.00 (stored final 23.00), consistent
+  with a run before the close. The brief should be run after the close and log what it issued. (Inference.)
+
+**Code findings for the N1 proposal (read from the code 2026-10-12)**
+1. `load_ticker` catches only `RateLimitError`; vnai's limiter `sys.exit`s. Wrap each refresh with the existing
+   `_is_rate_limit_exit` and degrade to "refresh failed; last bar <date>".
+2. `compute_range` has five non-happy statuses; each holding needs plain wording and must not vanish. `uncalibrated`
+   has a band but no `range_coverage`, so the "about 2 weeks in 3" sentence cannot be shown for it. SAB, VPB and VIB are
+   in the 208-ticker universe (coverage 0.68).
+3. Derive the coverage sentence from `coverage_phrase`; the brief disclaimer hard-codes "About 2 weeks in 3", so its
+   guard test compares with `docs/DISCLAIMER.md` and also ties the phrase to `model.range_coverage`.
+4. No trading calendar exists (`macro.py` says so). Anchor on the last bar date ("the 5 sessions after <date>"), not
+   "Mon to Fri"; the week just ended is the last 5 stored sessions.
+5. `--redact` as drafted is reversible: gain or loss percent plus the close gives the cost, and "level N% below the
+   close" gives the level. Drop cost-derived and level-derived percentages, weights, amounts and the free-text rule.
+   Test that no holdings-derived number survives.
+6. `TRANSACTION_VERBS` has one user, the debate export test; it never sees the brief. N1 needs a new guard over the
+   brief's tool text with the investor's verbatim rule block stripped first. The old test goes with C1. Confirm when
+   writing the proposal.
+7. The "no model client" check is feasible: `compute_range`'s import closure reaches `news_feeds` (httpx, defusedxml
+   only) and `debate/__init__.py` is a comment; scan `sys.modules` after importing the brief.
+8. Holdings entry: TOML (`tomllib`), fields ticker, shares, shares_as_of (default purchase date), cost,
+   purchase_date, and levels (comparator, price, entry date, verbatim text). Refuse to read a file that is group or
+   world readable.
+9. Layout follows `snapshot_company_feed.py`: a package `backend/app/services/brief/` plus a thin script. Run after the
+   close.
+
+**N2a rules proposed (from stored data; small samples)**
+- Dividend completeness: complete for a holding iff `purchase_date >= oldest stored event published_at + MAX_LAG`.
+  Announcement to ex-date lag over stored DIV events: SAB 8 to 85 days (n = 18), VPB 2 to 20 (n = 4); two tickers only.
+  SAB's oldest event is 2017-05-15, VPB's 2022-07-19.
+- Count-changing issue: `event_code = 'ISS'`, non-null `exright_date`, `exercise_ratio > 0`. Separates all four stored
+  ISS rows (SAB 100% bonus ex 2023-09-14 and VPB 26.04% stock dividend ex 2026-09-24 change the count; VPB's private
+  placement and employee issue, both without an ex-date, do not). No rights issue is stored, so the "calculated,
+  check with broker" label stays.
+- Isolation test: `test_company_feed_isolation.py` fails in two places if the brief package references the feed
+  (`test_no_module_outside_the_package_references_the_company_feed` and
+  `test_only_the_script_and_the_tests_import_the_package_outside_it`). Amend both to allowlist one adapter file; keep
+  the no-route, no-startup and no-debate tests. The spec's "read by nothing else" becomes "the snapshot script and the
+  brief's one adapter".
+- Freshness: the log holds SAB and VPB only (none for VIB); the last fetch was 2026-10-10 and the snapshot runs only by
+  hand. The DIVIDENDS and "Scheduled" lines must say when the feed was last fetched, and distinguish "never fetched"
+  from "nothing found". The brief may print the snapshot command but must not run it.
+- "Ex-date in the window" cannot use a trading calendar; approximate with calendar days and print the exact date.
+
+**Not verified**: vendor adjustment lag after an ex-date (the log-ratio detector for re-adjusted prices depends on it);
+the 85-day maximum lag beyond SAB; behaviour for a rights issue; a retrain on live data.
+
+**Verification results (added 2026-10-12; live probes and a wider feed snapshot)**
+Probe scripts live outside the repo in `~/stock-foresight-probes/`. They were run with a persistent vnai home, pauses
+between calls and no retry; the feed log gained VIB, FPT, VNM, HPG, MWG, VCB, KBC and SSI (16 calls through the
+project's own snapshot script).
+- `ratio_summary()` (`Company(source="vci", symbol=S)`, 41 rows by 61 columns for SAB and VPB): period columns are
+  `year_report` (int) and `quarter` (int); `year` is a string, do not sort by it. The count is
+  `number_of_shares_mkt_cap` (int64). `ratio_type` is `RATIO_TTM` (33 rows) or `RATIO_YEAR` (8 rows, annual, with
+  quarter = 5). Take the latest **`RATIO_TTM`** row; an unfiltered sort by year and quarter would pick an annual row.
+- The latest TTM row is live, not "as of the quarter": VPB's 2026-Q2 row already shows 10,000,000,000 after the
+  2026-09-24 stock dividend. Label the count "latest-quarter row, fetched <date>", not "as of <quarter>".
+- `overview()` returns four `issue_share` columns (duplicate names; read by position). SAB: all four equal the
+  ratio_summary count. VPB on 2026-10-12, 18 days after the ex-date: two columns 10,000,000,000 and two
+  7,933,923,601, while ratio_summary already shows 10,000,000,000. So the vendor updates the sources at different
+  times, the disagreement rule fires, and it is a real signal. When both sources are still equal and old right after
+  an issue, only a settling window catches it (one example, so the length is a policy, not a measurement).
+- Announcement-to-ex lag over 44 cash dividends in 9 tickers: maximum 85 days (SAB; the next is SAB at 81), every
+  other ticker 21 days or fewer (VCB 21, SSI 17, VPB 20). The 120-day `MAX_LAG_DAYS` margin stands, and the long lags
+  look like a SAB trait.
+- **The N2a count-changing rule (ISS, non-null ex-date, ratio above 0) is wrong.** Against 40 stored issue rows (an earlier draft of this note said 41; a recount gives 40) from
+  10 tickers it also fires for employee issues ("Phát hành cho CBCNV", FPT, MWG, SSI, VIB, ratios 0.1% to 0.5%, most with
+  an ex-date), for KBC's private placement (ex 2025-06-24, ratio 32.6%), and for SSI's rights offer to existing
+  shareholders (ex 2025-12-08, ratio 20%), none of which change an existing holder's share count automatically. It
+  also misses VCB's 12.8% bonus announced 2026-04-28 with no ex-date yet. What fits: only titles for a bonus issue
+  ("Cổ phiếu thưởng") or a stock dividend ("Trả Cổ tức bằng Cổ phiếu") change the count, and only once an ex-date is
+  set; a rights offer is shown as "read the notice", never calculated; the rest are listed, not applied. N3's widened
+  denominator rule (any ISS or AIS after the quarter) would withhold sizing after every trivial employee issue; a size
+  threshold or the disagreement rule alone would be better.
+- Adjustment lag, upper bounds only: MWG's cash dividend (1,000 VND, ex 2026-10-07) was already applied in vendor
+  history when fetched on 2026-10-12 around 11:50 ICT, at most 3 sessions later (ratio to the stored closes 0.9867 to
+  0.9869, constant across bars); FPT's 10% bonus (ex 2026-09-21) shows exactly 1/1.1 (0.9091); SSI, VIB and VPB were
+  already adjusted by their stored load times (+21, +25 and +13 days). Conventions confirmed: stock factor 1/(1+ratio),
+  cash factor (price minus dividend) over price, a constant rescale of every earlier bar. **No lower bound exists
+  yet**; the feed holds no future ex-dates today, so `adjustment_lag.py` has nothing to watch until the next
+  announcement.
+- Still open: a lower bound on the adjustment lag; whether the 85-day maximum and the title classes hold beyond these
+  10 tickers; how long the settling window after an issue should be.
+
+**Owner decisions on the four proposals (added 2026-10-12)**
+Five simulated readers (P1 to P5, one per profile, same model as the author, caricatures, n = 1 each) answered ten
+investor-facing choices from a neutral pack. Their answers informed the defaults below; they are not evidence about
+real investors. (The pack's Q5 example mixed numbers: 46.60 to 43.40 with a 3,000 VND dividend gives about -0.5%
+excluding the dividend, not the -1.3% printed; it did not change the picks.)
+- Personal use confirmed by the owner: the tool is used by the owner only, not commercially. No Rule change.
+- N1: narrower ignore patterns (`holdings*.toml`, `holdings*.jsonl`, `holdings*.json`); VND range edges as
+  `close x exp(-/+ band/100)`; label "Usual range (typical 5-session move)"; unit line; `cost` required;
+  `--no-refresh`; staleness 5 days; provisional-bar warning at the top of the brief and "(provisional)" on the close,
+  never a refusal; a counts-only line of re-read triggers near the top, with no judgement words.
+- N2a: the level note stays on its own line under the level; UNCLEAR threshold is 2 daily sigmas (Rule 3); both moves
+  shown for an ex-date week with the dividend explanation in the same line as the board move; undated announcements
+  shown 365 days, then one line saying how many older ones are no longer shown; `MAX_LAG_DAYS` 120.
+- N3: no Rule 6 carve-out; a registered trade reads "filed a notice of a sale (or purchase) of <qty> <TICKER> shares
+  (window ...; status: not started, under way or ended)"; sizing on by default with `--no-sizing` (the `ratio_summary`
+  free-tier terms stay unchecked, accepted for personal use); stored titles shown (personal use); 30-day settling
+  window and 1% materiality; small share issues summarised in one counted line; the triggers line extended with
+  announcement triggers.
+- E1: margin 0.02, the fitted constant decides, a MODEL_CARD paragraph for every outcome, month blocks, flag-only after
+  a "not better than constant" result, independent of N1.
+- Not adopted: showing an adjusted version of the investor's level (the tool never adjusts it), and computing what
+  following the investor's own rule would realise (Rule 6 limits the tool's words about a level to reached or not
+  reached and the distance).
+- Foreign-flow snapshots (decision 8) stay deferred; the 4-week check remains the gate for N2b, C1 and C2.
+- Remaining open items resolved the same day, as recommended by the assistant: the triggers-line banned-word list
+  keeps its words and adds "recommend" and "consider", matched as whole words (a substring ban on "act" would reject
+  "exact" or "contact"); levels that could not be checked are appended to the triggers line as a count with the
+  reason; `AIS` listings go to "For information" and are not counted; employee issues of missing or zero ratio are
+  counted in the quiet summary as "under 1% of the shares or of unstated size"; the redacted copy gets no
+  announcement-only line; the week line stays percent only; the older-announcements line does not say whether items
+  lapsed. DISCLAIMER.md's heading "Brief version" is authoritative; the `domain-rules` spec's "Brief disclaimer" wording
+  is aligned by the small tasks below, not inside any of the four changes.
+- **N1 applied 2026-10-12** (`add-weekly-holdings-brief`): all 42 tasks ticked, full backend suite 1,788 passed,
+  line coverage of `app/services/brief` about 96% (measured with a trace script; `pytest-cov` is not installed). A
+  security review and a code review ran on the code before N2a started and their fixes are applied (recorded in the
+  change's design.md, "Review fixes 2026-10-12"): the issued log no longer stores levels, `--out` is refused anywhere in
+  the repo, the redacted copy drops all log-derived week text, and the log and holdings files are opened without
+  following symlinks. No Open Question defaults were needed (all were answered). The 4-week clock starts at the first
+  real run, which has not happened: no real holdings file exists yet. Decisions still pending from the reviews: quoting
+  the investor's level text, and restricting `brief-auditor`'s tools (`Bash(sqlite3:*)` can read any file with
+  `readfile()`).
+- **N2a applied 2026-10-12** (`add-dividend-and-ex-date-lines`), after a re-diff against N1's final, review-fixed
+  code: full backend suite 2,049 passed. The brief gains the feed adapter (`feed_source.py`, the only brief file that
+  references the company feed; `test_company_feed_isolation.py` now allowlists exactly it), dividend and share-issue
+  lines, an ex-date window with the shifted range, the combined week line, the adjustment-status check, the
+  "older announcements no longer shown" line and the week-1 recompute. Real-data checks (read-only, counts only):
+  the keyword classes over 40 stored issue rows are BONUS 10, STOCK_DIVIDEND 8, PRIVATE_PLACEMENT 8, EMPLOYEE 13,
+  RIGHTS_OFFER 1, OTHER 0, with no row matching two classes (15 count-changing); the adjustment-status check over 59
+  stored events gives 36 ADJUSTED, 20 UNCLEAR, 0 NOT_YET_ADJUSTED and 3 with no stored ex-date bar; the week-1
+  recompute equals the issued band in 5 of 6 `debate_log` pairs (VPB 2026-10-07 differs, 3.45 against 3.41, because
+  the issued run used a provisional close). The real feed log was not changed by the apply or the test run. The
+  `openspec/specs` are not synced: N1 must be synced before N2a.
+- **N3 applied 2026-10-12 to 2026-10-13** (`add-announcement-tags-and-insider-sizing`), after a re-diff against N1 and
+  N2a as built, then a security review whose fixes are applied: the Rule 6 scan now exempts the investor's level text
+  by position (a one-character level text could hide a tool word under the earlier substring removal), the
+  third-party sanitiser strips invisible variation and filler characters and maps look-alike quotes, the redacted copy
+  shows no title and no counterparty name (it goes to a language model; the full copy still shows them for personal
+  use), any `SystemExit` from the share-count call degrades to "size not shown", and the first vendor failure in a
+  run stops further share-count calls. Full backend suite 2,852 passed, 10 skipped. A scan of every changed or new
+  file against all 1,040 stored titles and 134 counterparty names found no hit. Task 2.4 done 2026-10-13: the keyword classes capital,
+  meeting and personnel are enabled after a labelled check (38, 28 and 7 claimed titles, none wrong); dividend (2 wrong)
+  and results (9 wrong) stay disabled; the labels were written by an AI model at the owner's request, not by the owner,
+  and only claimed titles were labelled, so missed titles are unmeasured. Still pending: task 5.2 (a run on real holdings, never
+  done by an agent). Done 2026-10-13: the three agent definitions were re-read against the finished brief (task 5.4);
+  `brief-auditor` lost `Bash(sqlite3:*)`, `Grep` and `Glob` (the `sqlite3` CLI reads any file with `readfile()`) and now
+  queries only through `backend/scripts/brief_audit_query.py` (three fixed databases, `mode=ro`, one SELECT, an
+  authoriser that refuses everything but reading; 20 tests); `reader-sim`'s `ANNOUNCEMENT_STATUS` now takes "not started,
+  under way, ended" (earlier runs used planned, executed, unclear). `Read` is still granted to the auditor and cannot be
+  limited to one path in an agent definition: a Read deny rule for `~/.config/stock-foresight/**` in the owner's own
+  settings would close that, and is not set. The effect of the sized line against the fallback remains untested with real
+  people, and the 4-week check will include whether the owner used the COMPANY block (task 5.5).
+- **Security finding, history (added 2026-10-13):** earlier versions of this file, already pushed to `origin/main`
+  (commit 308aa45), quoted a stored insider-trade title that names a private individual with a share quantity, and
+  two company announcement titles. They are replaced by placeholders in the working tree; git history still holds the
+  originals. Whether the repository is public is unchecked, and rewriting history is the owner's decision. A press
+  headline in `DISCUSSION_describe_not_vote_redesign.md` and a real-looking sample row in
+  `backend/tests/company_feed_helpers.py` (both older) were not changed.
+- Small tasks (not proposals), done 2026-10-12: the "TBD" Purpose line in `openspec/specs/domain-rules/spec.md` is
+  replaced and its "Brief disclaimer" wording now says "Brief version"; the Rule 6 quote in the docstring at
+  `backend/app/services/debate/prompt_safety.py:2` now matches the current rule (`test_domain_rules_in_sync.py` and
+  `test_prompt_safety.py` pass, 68 tests). Still to do: commit the working tree in separate commits (the three edited
+  files and the four change folders).
+
+**Consolidated handover (added 2026-10-13):** `docs/WEEKLY_BRIEF_HANDOVER_2026-10-13.md` summarises what was built, the evidence, the reviews, the concerns and the open items, and records the deferred idea of entering holdings through a database and UI.
