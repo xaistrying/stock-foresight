@@ -1,5 +1,5 @@
 """Prompt contract for untrusted text, and the recommendation-wording check
-(`harden-debate-runtime`, design Decisions 8-9; Rule 6: never frame output as investment advice).
+(`harden-debate-runtime`, design Decisions 8-9; Rule 6: the tool never produces its own buy, sell or hold label).
 
 - `fence(label, text)`: scraped headlines go into a prompt only inside a fence, with every
   `<` and `>` of the text replaced by a space so the text cannot close or forge a marker.
