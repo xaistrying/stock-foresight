@@ -1,0 +1,48 @@
+WEEKLY CHECK · newest last bar 2026-10-09 · covers the 5 sessions after 2026-10-09
+Re-read triggers this run: your levels reached: 1.
+Prices refreshed this run. Last bar for every holding is 2026-10-09.
+Prices are per share in thousand VND.
+This brief does not update during the week. It does not predict direction.
+
+HOLDINGS LISTED (2): AAA 85%, BBB 15%
+If every holding moved to the edge of its own range in the same direction, the listed holdings would move about 2.3% (an upper bound for the usual ranges, not a forecast; larger moves are possible).
+1 listed holding has no range and is left out of this figure.
+
+--- AAA · 1,234 shares · cost 41.80 · bought 2025-06-10 ---
+Close 41.20 (2026-10-09)
+Value 50.84M VND; gain/loss on price against your cost -0.74M VND (-1.4%).
+Shares and cost are shown as entered; they are not adjusted for share issues or dividends in this version.
+
+THE WEEK JUST ENDED (2026-10-05 to 2026-10-09)
+Move: +2.2% (40.30 on 2026-10-02 -> 41.20 on 2026-10-09).
+Last week's range was ±2.7% (39.91 to 42.12): the close was inside it.
+Compared on stored prices, which may be adjusted for dividends and share issues.
+
+NEXT 5 TRADING DAYS
+Usual range (typical 5-session move): about 40.10 to 42.34 per share (±2.7%).
+About 2 weeks in 3 stay inside a range like this; about 1 in 3 is bigger, up or down.
+On your 1,234 shares: about ±1.37M VND.
+
+YOUR LEVELS (you wrote these; the brief only checks them against the close)
+Trim 300 shares if the close is below 41.60 (you wrote this on 2026-10-02): REACHED. The last close, 41.20, is below it, by 1.0%.
+This brief does not place orders; what you do is your decision.
+
+--- BBB · 500 shares · cost 18.25 · bought not entered ---
+Close 17.90 (2026-10-09)
+Value 8.95M VND; gain/loss on price against your cost -0.18M VND (-1.9%).
+Shares and cost are shown as entered; they are not adjusted for share issues or dividends in this version.
+
+THE WEEK JUST ENDED (2026-10-05 to 2026-10-09)
+Move: -1.1% (18.10 on 2026-10-02 -> 17.90 on 2026-10-09).
+last week's brief gave no range (the ticker was not eligible for a range).
+Compared on stored prices, which may be adjusted for dividends and share issues.
+
+NEXT 5 TRADING DAYS
+No range this week: stored prices are out of date; there is a gap in recent prices.
+
+YOUR LEVELS (you wrote these; the brief only checks them against the close)
+none set
+This brief does not place orders; what you do is your decision.
+
+These would make a re-read worthwhile: a registered sale or purchase by a major shareholder or insider, a share issue or capital change, or one of your levels appearing or being reached. Other new announcements are listed for information. Re-run this brief to refresh.
+Technical observation, not investment advice. Figures can be wrong or incomplete. "About 2 weeks in 3" is an estimate from price history, not a promise.

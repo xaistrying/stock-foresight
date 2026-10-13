@@ -1,0 +1,48 @@
+WEEKLY CHECK · newest last bar 2026-10-09 · covers the 5 sessions after 2026-10-09
+Re-read triggers this run: your levels reached: 0; registered sales or purchases by a major shareholder or insider since the last brief: 1; share issues or capital changes since the last brief: 0.
+Prices refreshed this run. Last bar for every holding is 2026-10-09.
+Prices are per share in thousand VND.
+This brief does not update during the week. It does not predict direction.
+
+--- AAA · 1,000 shares · cost 41.80 · bought 2025-06-10 ---
+Close 42.90 (2026-10-09)
+Value 42.90M VND; gain/loss on price against your cost +1.10M VND (+2.6%).
+Shares and cost are shown as entered; they are not adjusted for share issues or dividends in this version.
+
+THE WEEK JUST ENDED (2026-10-05 to 2026-10-09)
+Move: +2.4% (41.00 on 2026-10-02 -> 42.00 on 2026-10-09).
+Last week's range was ±2.7% (39.91 to 42.12): the close was inside it.
+Compared on stored prices, which may be adjusted for dividends and share issues.
+
+NEXT 5 TRADING DAYS
+Usual range (typical 5-session move): about 41.76 to 44.07 per share (±2.7%).
+About 2 weeks in 3 stay inside a range like this; about 1 in 3 is bigger, up or down.
+On your 1,000 shares: about ±1.16M VND.
+
+DIVIDENDS (company-announcement source; events last fetched 2026-10-10 12:11 UTC, 1 calendar day after the last bar)
+Cash, per share, ex-dates since your purchase date (company-announcement source, nothing stored): none found.
+This list is not shown as complete: the source holds no stored announcement for this ticker to count from.
+Share issues since your purchase date (company-announcement source; ratio not checked against your broker): none.
+
+COMPANY (company-announcement source from VCI; text in curly quotes is third-party text, shown as the source gave it, not written or checked by this brief)
+announcement source answered 2026-10-10; 3 items returned; newest 2026-10-08, 1 day before the last bar; nothing newer was returned; the last answer was 1 calendar day after the last bar
+corporate events: answered 2026-10-10; 3 items returned; newest 2026-10-08, 1 day before the last bar; nothing newer was returned; the last answer was 1 calendar day after the last bar
+An announcement made after the last fetch is not shown.
+Needs a look since the last brief:
+- 2026-10-08, Insider or major-shareholder trade (event record)
+  “Example Holdings Ltd” filed a notice of a sale of 30,000,000 AAA shares (window 2026-10-12 to 2026-10-23; status: not started). The window runs 2 weeks; this brief covers one.
+  Size: 2.3% of the shares outstanding (the vendor's count is 1,282,562,372: VCI share count via vnstock, latest-quarter row 2026-Q2, fetched 2026-10-12).
+  Earlier registrations of this kind in the source (13 sales with a stated quantity, 2018 onward): 1 was larger than this one; the largest of the others was 0.016% of the shares then. Each is measured against the share count at its own date, estimated from today's count and the share issues with a ratio in the source.
+  Title (third-party text): “Example Holdings Ltd - Đăng kí Bán 30,000,000 AAA”
+  The usual range is built from past prices only. It does not account for this announcement, so the real swing could be larger.
+For information:
+- 2026-10-07, Dividend (event record)
+  Title (third-party text): “Example dividend notice”
+Scheduled (company-announcement source, events fetched 2026-10-10 12:11 UTC; dated after the last bar, 2026-10-09): none found. An announcement made after the last fetch is not shown.
+
+YOUR LEVELS (you wrote these; the brief only checks them against the close)
+none set
+This brief does not place orders; what you do is your decision.
+
+These would make a re-read worthwhile: a registered sale or purchase by a major shareholder or insider, a share issue or capital change, or one of your levels appearing or being reached. Other new announcements are listed for information. Re-run this brief to refresh.
+Technical observation, not investment advice. Figures can be wrong or incomplete. "About 2 weeks in 3" is an estimate from price history, not a promise.

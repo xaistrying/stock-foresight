@@ -9,3 +9,11 @@ reports/*.md
 backend/.env
 
 .playwright-mcp
+
+# Weekly holdings brief: the owner's own positions, levels and the log of issued briefs. They live
+# outside the repository (the script refuses a holdings file inside it); these narrow patterns only
+# catch a copy made by accident. Not a bare `holdings*`, which would hide source files such as
+# backend/app/services/brief/holdings.py.
+holdings*.toml
+holdings*.jsonl
+holdings*.json

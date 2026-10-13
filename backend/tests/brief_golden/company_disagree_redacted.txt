@@ -1,0 +1,40 @@
+WEEKLY CHECK · newest last bar 2026-10-09 · covers the 5 sessions after 2026-10-09
+This is the redacted copy: it shows market figures only, not your holdings, costs or levels.
+Prices refreshed this run. Last bar for every holding is 2026-10-09.
+Prices are per share in thousand VND.
+This brief does not update during the week. It does not predict direction.
+
+--- AAA ---
+Close 42.90 (2026-10-09)
+
+THE WEEK JUST ENDED (2026-10-05 to 2026-10-09)
+Move: +2.4% (41.00 on 2026-10-02 -> 42.00 on 2026-10-09).
+
+NEXT 5 TRADING DAYS
+Usual range (typical 5-session move): about 41.76 to 44.07 per share (±2.7%).
+About 2 weeks in 3 stay inside a range like this; about 1 in 3 is bigger, up or down.
+
+DIVIDENDS (company-announcement source; events last fetched 2026-10-10 12:11 UTC, 1 calendar day after the last bar)
+
+COMPANY (company-announcement source from VCI; the redacted copy shows no title and no counterparty name, because they are third-party text)
+announcement source answered 2026-10-10; 3 items returned; newest 2026-10-08, 1 day before the last bar; nothing newer was returned; the last answer was 1 calendar day after the last bar
+corporate events: answered 2026-10-10; 3 items returned; newest 2026-10-08, 1 day before the last bar; nothing newer was returned; the last answer was 1 calendar day after the last bar
+An announcement made after the last fetch is not shown.
+Needs a look, last 14 days before the last bar:
+- 2026-10-08, Insider or major-shareholder trade (event record)
+  A notice of a sale of 30,000,000 AAA shares was filed (window 2026-10-12 to 2026-10-23; status: not started). The window runs 2 weeks; this brief covers one.
+  Size: size not shown, because the vendor's two share counts disagree. To size it, read the notice: who filed it, whether it is a sale or a purchase, how many shares in total against the shares outstanding, how it will be done, and the window.
+  Title and name: not shown in the redacted copy; read the notice.
+  The usual range is built from past prices only. It does not account for this announcement, so the real swing could be larger.
+- 2026-10-07, Insider or major-shareholder trade (event record)
+  A notice of a purchase of AAA shares was filed (quantity not stated in the title; window 2026-10-12 to 2026-11-10; status: not started). The window runs 5 weeks; this brief covers one.
+  Size: not calculated, because the title gives no quantity. To size it, read the notice: who filed it, whether it is a sale or a purchase, how many shares in total against the shares outstanding, how it will be done, and the window.
+  Title and name: not shown in the redacted copy; read the notice.
+  The usual range is built from past prices only. It does not account for this announcement, so the real swing could be larger.
+For information: none found in what the source returned
+Scheduled (company-announcement source, events fetched 2026-10-10 12:11 UTC; dated after the last bar, 2026-10-09): none found. An announcement made after the last fetch is not shown.
+
+YOUR LEVELS: not shown in the redacted copy
+
+These would make a re-read worthwhile: a registered sale or purchase by a major shareholder or insider, a share issue or capital change, or one of your levels appearing or being reached. Other new announcements are listed for information. Re-run this brief to refresh.
+Technical observation, not investment advice. Figures can be wrong or incomplete. "About 2 weeks in 3" is an estimate from price history, not a promise.

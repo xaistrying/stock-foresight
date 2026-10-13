@@ -260,7 +260,9 @@ A row with a non-NULL `outcome_status` is never rewritten.
 written by `backend/scripts/snapshot_company_feed.py` (`app/services/company_feed/`): VCI
 company news and events per ticker, and the News agent's three RSS feeds. Nothing reads it yet
 except the two helpers `latest_items` and `last_fetch` in `company_feed/store.py` (read-only, no
-route, no UI).
+route, no UI) and, through them, the weekly brief's one adapter
+`app/services/brief/feed_source.py` (the only brief file that names the feed; it reads the `events`
+rows' dates and numbers, plus an issue class derived from the title, and shows no stored text).
 
 **It cannot be rebuilt**: the vendor returns at most 50 items per call and the RSS feeds hold
 about four days. Back it up (see `KNOWN_ISSUES.md`). It is gitignored by `data/*.db*` and, as
