@@ -5,10 +5,12 @@ report and asked whether the verdict label can be made sensible and somewhat tru
 session widened into "what is this project for?", settled a purpose with the owner, and
 prototyped a weekly brief on paper, with simulated investors reading it.
 
-**Status (updated 2026-10-12)**: open, partly implemented. The rules part is done: Rules 4, 5 and 6 were
-rewritten and the brief disclaimer added by `align-rules-with-weekly-brief` (archived 2026-10-12). No brief
-code exists yet. The **current plan and the list of what is left are in "Status record (2026-10-12)" at the
-end of this file**; where an earlier section disagrees with it, the status record and the notes marked
+**Status (updated 2026-10-13)**: built, reviewed and tested; not yet used. The rules part was done by
+`align-rules-with-weekly-brief` (archived 2026-10-12). The brief itself is implemented by three changes (N1 and N2a
+fully applied, N3 at 29 of 30 tasks) and the band study E1 is archived. Nothing has been run on real holdings, so the
+4-week check has not started. **Start with `docs/WEEKLY_BRIEF_HANDOVER_2026-10-13.md`** (what was built, the
+concerns, what is open, how to continue); the table and notes in "Status record (2026-10-12)" at the end of this file
+carry the history and the evidence, and the "applied" paragraphs near its end say what happened to each change; where an earlier section disagrees with it, the status record and the notes marked
 "Update" win. This file records what was found, what the owner chose, what is only proposed, and what is
 unverified, so a later session can continue without redoing it. Anything that changes a domain rule or the
 product shape is `/opsx:propose` territory (`CLAUDE.md`: ask before changing a rule).
@@ -1628,10 +1630,10 @@ shows no active change.
 
 | Order | Change | Holds | Depends on | Status |
 |---|---|---|---|---|
-| 1 | `add-weekly-holdings-brief` (N1) | Core script: holdings file outside the repo plus a `.gitignore` line, refresh before computing, band in VND, the week just ended and whether last week's range held, issued-brief log, the investor's levels checked against the Friday close, fixed sentences, output not under `reports/`, no model call. Also `--redact` mode, the brief-disclaimer guard test, narrowing `TRANSACTION_VERBS`, re-reading the three agents. | R1 (done) | Next; not started |
-| 2 | `add-dividend-and-ex-date-lines` (N2a) | **Split from N2 on 2026-10-12** (see "N1 and N2 shaping session" at the end). One feed adapter, dividend list since purchase, ex-date and share-issue lines with the shifted range, feed "last fetched" line, "level set before ex-date" note, the count-changing-issue rule, the week-1 recompute fallback. Amends the company-feed spec and its isolation test. | N1 | Not started |
-| 2b | `add-dividend-totals-and-share-count` (N2b) | Net line, dividends times running share count, share count and cost per share after an issue. | N2a, 4-week check | Gated (owner may pull forward) |
-| 3 | `add-announcement-tags-and-insider-sizing` (N3) | Type tags, "needs a look" versus "for information", insider event parsing, shares outstanding from `ratio_summary()` cross-checked with `overview()`, benchmark and fallback, source-health line. | N1, N2a (not N2b) | Not started |
+| 1 | `add-weekly-holdings-brief` (N1) | Core script: holdings file outside the repo plus a `.gitignore` line, refresh before computing, band in VND, the week just ended and whether last week's range held, issued-brief log, the investor's levels checked against the Friday close, fixed sentences, output not under `reports/`, no model call. Also `--redact` mode, the brief-disclaimer guard test, narrowing `TRANSACTION_VERBS`, re-reading the three agents. | R1 (done) | **Applied 2026-10-12 (42 of 42), reviewed and fixed.** |
+| 2 | `add-dividend-and-ex-date-lines` (N2a) | **Split from N2 on 2026-10-12** (see "N1 and N2 shaping session" at the end). One feed adapter, dividend list since purchase, ex-date and share-issue lines with the shifted range, feed "last fetched" line, "level set before ex-date" note, the count-changing-issue rule, the week-1 recompute fallback. Amends the company-feed spec and its isolation test. | N1 | **Applied 2026-10-12 (35 of 35).** |
+| 2b | `add-dividend-totals-and-share-count` (N2b) | Net line, dividends times running share count, share count and cost per share after an issue. | N2a, 4-week check | Gated (owner may pull forward); not started. |
+| 3 | `add-announcement-tags-and-insider-sizing` (N3) | Type tags, "needs a look" versus "for information", insider event parsing, shares outstanding from `ratio_summary()` cross-checked with `overview()`, benchmark and fallback, source-health line. | N1, N2a (not N2b) | **Applied 2026-10-13 (29 of 30); task 5.2, the first real run, is deferred.** |
 | any | `evaluate-band-against-trailing-stdev` (E1) | Read-only study with a kill criterion stated first; the band may be no better than a plain trailing-stdev band (0.431 vs 0.424). | none | **Run 2026-10-12** (208 symbols, 2020 to 2026, 334,341 windows). Against the trailing 20-session band: `NOT_BETTER` (relative gain +0.6%, 97.5% month-block interval -0.4% to +1.7%, so the study neither shows the HAR band better nor the trailing band better; the pre-registered 2% margin is ruled out). Against the fitted constant band: `HAR_BETTER` (+9.0%, +7.0% to +11.1%, positive in 7 of 7 years). Per the pre-registered consequence this allows a follow-up change that swaps in the simpler trailing band, only if the owner decides; it does not stop the weekly brief. Detail: the change's `design.md` ("Result" and "Decision record") and `docs/MODEL_CARD.md`. |
 | gate | `retire-debate-engine-and-verdict-ui` (C1) | Removes the debate engine and verdict UI; needs a band-only log writer first; must also delete the Agreement clause of Rule 4 and the "agreement label is transitional" requirement. | 4-week check | Waiting |
 | gate | `archive-experiments-and-dead-model` (C2) | Small cleanup of the retired XGBoost code and one-off scripts. Scope is a guess from file names only: `backend/app/ml/training.py`, `feature_engineering.py`, `docs/MODEL_CARD.md`, and the one-off scripts in `backend/scripts/`. HAR-RV (`volatility.py`, `train_har_rv.py`) stays. Needs a read-only inventory of what imports what before it is written. | 4-week check | Waiting |
@@ -1643,14 +1645,19 @@ shows no active change.
   discussion docs). Nothing is committed yet.
 
 **Open items outside the proposals**
-- Personal-use premise (task 1.2 of R1, deferred): confirm account and machine ownership, the vendor licence and the
-  "not to be shared" note on the company-feed log with legal or compliance before anyone else receives output.
+- Personal-use premise: the owner stated on 2026-10-12 that the tool is for their own use only, not commercial. That
+  is a statement, not a verified fact: account and machine ownership, the vendor licence and the "not to be shared"
+  note on the company-feed log are still worth confirming with legal or compliance before anyone else receives
+  output (not legal advice).
 - The 3-question real-people check of the brief has not been run; only simulated readers have tried it, and they
   are not evidence about real users.
-- The 4-week check needs real briefs, so N1 starts that clock.
+- The 4-week check needs real briefs; it starts at the first real run, which has not happened (N3 task 5.2, deferred
+  on 2026-10-13 while the owner explores a holdings database and UI; see the handover doc, sections 9 and 10).
 
-**Suggested order:** small tasks and commits, then N1, then N2 and N3, E1 whenever convenient; C1 and C2 wait for
-the check.
+**Suggested order (updated 2026-10-13):** done: small tasks, N1, N2a, N3 (except 5.2), E1, commits. Next: decide the
+git-history question and the other pending owner decisions (handover doc, section 11); settle how holdings are
+entered (section 9); run the brief on real holdings (5.2) to start the 4-week clock; sync and archive N1, then N2a,
+then N3. Later, after the check: N2b, C1, C2, and possibly a swap to the simpler trailing band that E1 allows.
 
 ### Where each part of the v5.3 brief goes (added 2026-10-12)
 
