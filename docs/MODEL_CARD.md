@@ -291,3 +291,15 @@ The model behind the 5-session band, in `backend/app/ml/volatility.py`
   and 73.0% in the out-of-time test. Re-run the script rather than trusting
   these figures; the earlier exploratory numbers in
   `docs/DISCUSSION_model_direction.md` are not the shipped model's.
+- **Comparison with simpler bands (2026-10-12)**: `backend/scripts/evaluate_band_against_trailing_stdev.py`
+  (read-only; change `evaluate-band-against-trailing-stdev`) scored the served band against a trailing
+  20-session standard-deviation band (own multiplier fitted on the same folds to 0.68) and a constant band
+  (fitted per fold to 0.68), with the pinball loss at 0.68 on `|ln(close[t+5]/close[t])|`, over the seven
+  out-of-time test years 2020 to 2026 (the expanding walk-forward of `train_har_rv.py`; 208 modelling-universe
+  tickers; 334,341 windows in 82 distinct test months; database last date 2026-10-12). The served band's loss
+  was 0.61% lower than the trailing band's (month-block 97.5% interval -0.4% to +1.7%; positive in 4 of 7
+  years): outcome `NOT_BETTER`, meaning a gain as large as the 2% margin fixed beforehand is not supported on
+  this history (the interval also includes zero). It was 9.0% lower than the fitted constant band's (interval
+  +7.0% to +11.1%; positive in all 7 years): outcome `HAR_BETTER`. Both comparisons are about the size of
+  moves and say nothing about direction. Measured on this history; not a guarantee of future coverage. The
+  full figures and the decision record are in the change's `design.md`.
